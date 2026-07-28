@@ -1,0 +1,361 @@
+#version 460
+#extension GL_EXT_ray_query : require
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+layout(set = 0, binding = 1, rgba8) uniform image2D targetImage;
+
+struct BlockAabb {
+    vec4 minimumAndMaximumX;
+    vec4 maximumYZColorFlags;
+};
+
+layout(std430, set = 0, binding = 2) readonly buffer BlockBuffer {
+    BlockAabb blocks[];
+};
+
+layout(std140, set = 0, binding = 3) uniform FrameData {
+    vec4 cameraPosition;
+    vec4 cameraForward;
+    vec4 cameraRight;
+    vec4 cameraUp;
+    vec4 renderParameters; // tanHalfFov, aspect, maxDistance, reflection enabled
+    vec4 sunDirectionAndSamples;
+} frame;
+layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D noisyColorImage;
+layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D diffuseAlbedoImage;
+layout(set = 0, binding = 6, rgba16f) uniform writeonly image2D specularAlbedoImage;
+layout(set = 0, binding = 7, rgba16f) uniform writeonly image2D normalRoughnessImage;
+layout(set = 0, binding = 8, r16f) uniform writeonly image2D specularHitDistanceImage;
+layout(set = 0, binding = 9) uniform sampler2D rasterDepth;
+
+struct Hit {
+    float distance;
+    uint primitive;
+    vec3 normal;
+    bool valid;
+};
+
+float intersectAabb(vec3 origin, vec3 direction, vec3 minimum, vec3 maximum, out vec3 normal) {
+    vec3 inverseDirection = 1.0 / direction;
+    vec3 t0 = (minimum - origin) * inverseDirection;
+    vec3 t1 = (maximum - origin) * inverseDirection;
+    vec3 nearValues = min(t0, t1);
+    vec3 farValues = max(t0, t1);
+    float nearDistance = max(max(nearValues.x, nearValues.y), nearValues.z);
+    float farDistance = min(min(farValues.x, farValues.y), farValues.z);
+
+    normal = vec3(0.0);
+    if (nearDistance > 0.0 && nearDistance <= farDistance) {
+        vec3 hit = origin + direction * nearDistance;
+        vec3 center = (minimum + maximum) * 0.5;
+        vec3 local = hit - center;
+        vec3 extent = max((maximum - minimum) * 0.5, vec3(0.0001));
+        vec3 axis = abs(local / extent);
+        if (axis.x >= axis.y && axis.x >= axis.z) {
+            normal.x = sign(local.x);
+        } else if (axis.y >= axis.z) {
+            normal.y = sign(local.y);
+        } else {
+            normal.z = sign(local.z);
+        }
+        return nearDistance;
+    }
+    return -1.0;
+}
+
+Hit traceScene(vec3 origin, vec3 direction, float minimumDistance, float maximumDistance) {
+    rayQueryEXT query;
+    rayQueryInitializeEXT(
+        query,
+        scene,
+        gl_RayFlagsOpaqueEXT,
+        0xff,
+        origin,
+        minimumDistance,
+        direction,
+        maximumDistance
+    );
+
+    while (rayQueryProceedEXT(query)) {
+        if (rayQueryGetIntersectionTypeEXT(query, false)
+                == gl_RayQueryCandidateIntersectionAABBEXT) {
+            uint primitive = rayQueryGetIntersectionPrimitiveIndexEXT(query, false);
+            vec3 unusedNormal;
+            float distance = intersectAabb(
+                origin,
+                direction,
+                blocks[primitive].minimumAndMaximumX.xyz,
+                vec3(
+                    blocks[primitive].minimumAndMaximumX.w,
+                    blocks[primitive].maximumYZColorFlags.xy
+                ),
+                unusedNormal
+            );
+            if (distance >= minimumDistance && distance <= maximumDistance) {
+                rayQueryGenerateIntersectionEXT(query, distance);
+            }
+        }
+    }
+
+    Hit hit;
+    hit.valid = rayQueryGetIntersectionTypeEXT(query, true)
+            != gl_RayQueryCommittedIntersectionNoneEXT;
+    if (!hit.valid) {
+        hit.distance = maximumDistance;
+        hit.primitive = 0u;
+        hit.normal = vec3(0.0);
+        return hit;
+    }
+
+    hit.distance = rayQueryGetIntersectionTEXT(query, true);
+    hit.primitive = rayQueryGetIntersectionPrimitiveIndexEXT(query, true);
+    vec3 ignored;
+    intersectAabb(
+        origin,
+        direction,
+        blocks[hit.primitive].minimumAndMaximumX.xyz,
+        vec3(
+            blocks[hit.primitive].minimumAndMaximumX.w,
+            blocks[hit.primitive].maximumYZColorFlags.xy
+        ),
+        ignored
+    );
+    vec3 point = origin + direction * hit.distance;
+    vec3 minimum = blocks[hit.primitive].minimumAndMaximumX.xyz;
+    vec3 maximum = vec3(
+        blocks[hit.primitive].minimumAndMaximumX.w,
+        blocks[hit.primitive].maximumYZColorFlags.xy
+    );
+    vec3 center = (minimum + maximum) * 0.5;
+    vec3 extent = max((maximum - minimum) * 0.5, vec3(0.0001));
+    vec3 axis = abs((point - center) / extent);
+    if (axis.x >= axis.y && axis.x >= axis.z) {
+        hit.normal = vec3(sign(point.x - center.x), 0.0, 0.0);
+    } else if (axis.y >= axis.z) {
+        hit.normal = vec3(0.0, sign(point.y - center.y), 0.0);
+    } else {
+        hit.normal = vec3(0.0, 0.0, sign(point.z - center.z));
+    }
+    return hit;
+}
+
+vec3 unpackColor(float packedAsFloat) {
+    uint packed = floatBitsToUint(packedAsFloat);
+    return vec3(
+        float((packed >> 16u) & 255u),
+        float((packed >> 8u) & 255u),
+        float(packed & 255u)
+    ) / 255.0;
+}
+
+vec3 srgbToLinear(vec3 value) {
+    vec3 low = value / 12.92;
+    vec3 high = pow(
+        max((value + 0.055) / 1.055, vec3(0.0)),
+        vec3(2.4)
+    );
+    return mix(high, low, lessThanEqual(value, vec3(0.04045)));
+}
+
+vec3 linearToSrgb(vec3 value) {
+    vec3 low = value * 12.92;
+    vec3 high = 1.055 * pow(
+        max(value, vec3(0.0)),
+        vec3(1.0 / 2.4)
+    ) - 0.055;
+    return mix(high, low, lessThanEqual(value, vec3(0.0031308)));
+}
+
+vec3 toneMapAces(vec3 hdr) {
+    return clamp(
+        (hdr * (2.51 * hdr + 0.03))
+            / (hdr * (2.43 * hdr + 0.59) + 0.14),
+        0.0,
+        1.0
+    );
+}
+
+vec3 rayDirectionForPixel(ivec2 pixel, ivec2 size) {
+    vec2 uv = (vec2(pixel) + vec2(0.5)) / vec2(size);
+    vec2 ndc = uv * 2.0 - 1.0;
+    ndc.y = -ndc.y;
+    return normalize(
+        frame.cameraForward.xyz
+        + frame.cameraRight.xyz * ndc.x * frame.renderParameters.y
+            * frame.renderParameters.x
+        + frame.cameraUp.xyz * ndc.y * frame.renderParameters.x
+    );
+}
+
+float rayDistanceForDepth(float hardwareDepth, vec3 direction) {
+    if (hardwareDepth <= 0.0) {
+        return frame.cameraUp.w;
+    }
+    float nearPlane = frame.cameraRight.w;
+    float farPlane = frame.cameraUp.w;
+    float linearViewDepth = nearPlane * farPlane
+        / max(nearPlane + hardwareDepth * (farPlane - nearPlane), 1.0e-5);
+    return linearViewDepth
+        / max(dot(direction, frame.cameraForward.xyz), 0.05);
+}
+
+vec3 reconstructRasterNormal(
+    ivec2 pixel,
+    ivec2 size,
+    float centerDepth,
+    vec3 centerDirection
+) {
+    if (centerDepth <= 0.0) {
+        return -centerDirection;
+    }
+    ivec2 rightPixel = min(pixel + ivec2(1, 0), size - ivec2(1));
+    ivec2 downPixel = min(pixel + ivec2(0, 1), size - ivec2(1));
+    float rightDepth = texelFetch(rasterDepth, rightPixel, 0).r;
+    float downDepth = texelFetch(rasterDepth, downPixel, 0).r;
+    if (rightDepth <= 0.0 || downDepth <= 0.0) {
+        return -centerDirection;
+    }
+
+    vec3 rightDirection = rayDirectionForPixel(rightPixel, size);
+    vec3 downDirection = rayDirectionForPixel(downPixel, size);
+    vec3 centerPosition = centerDirection
+        * rayDistanceForDepth(centerDepth, centerDirection);
+    vec3 rightPosition = rightDirection
+        * rayDistanceForDepth(rightDepth, rightDirection);
+    vec3 downPosition = downDirection
+        * rayDistanceForDepth(downDepth, downDirection);
+    vec3 normal = normalize(cross(
+        downPosition - centerPosition,
+        rightPosition - centerPosition
+    ));
+    if (dot(normal, -centerDirection) < 0.0) {
+        normal = -normal;
+    }
+    return normal;
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(targetImage);
+    if (pixel.x >= size.x || pixel.y >= size.y) {
+        return;
+    }
+
+    vec3 direction = rayDirectionForPixel(pixel, size);
+
+    Hit primary = traceScene(
+        frame.cameraPosition.xyz,
+        direction,
+        0.03,
+        frame.renderParameters.z
+    );
+    vec4 raster = imageLoad(targetImage, pixel);
+    vec3 linearRaster = srgbToLinear(max(raster.rgb, vec3(0.0)));
+    float hardwareDepth = texelFetch(rasterDepth, pixel, 0).r;
+    float rasterRayDistance =
+        rayDistanceForDepth(hardwareDepth, direction);
+    bool rasterGeometryIsCloser = hardwareDepth > 0.0
+        && primary.valid
+        && rasterRayDistance + 0.15 < primary.distance;
+    if (rasterGeometryIsCloser) {
+        primary.valid = false;
+    }
+    if (!primary.valid) {
+        imageStore(noisyColorImage, pixel, vec4(linearRaster, 1.0));
+        imageStore(diffuseAlbedoImage, pixel, vec4(linearRaster, 1.0));
+        imageStore(specularAlbedoImage, pixel, vec4(0.0, 0.0, 0.0, 1.0));
+        imageStore(
+            normalRoughnessImage,
+            pixel,
+            vec4(
+                reconstructRasterNormal(
+                    pixel,
+                    size,
+                    hardwareDepth,
+                    direction
+                ),
+                1.0
+            )
+        );
+        imageStore(specularHitDistanceImage, pixel, vec4(0.0));
+        return;
+    }
+
+    vec3 point = frame.cameraPosition.xyz + direction * primary.distance;
+    vec3 sunDirection = normalize(frame.sunDirectionAndSamples.xyz);
+    int sampleCount = clamp(int(frame.sunDirectionAndSamples.w), 1, 8);
+    float visibility = 0.0;
+    for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+        float angle = 6.2831853 * (
+            float(sampleIndex) + fract(sin(dot(vec2(pixel), vec2(12.9898, 78.233))) * 43758.5453)
+        ) / float(sampleCount);
+        float radius = 0.012 * sqrt((float(sampleIndex) + 0.5) / float(sampleCount));
+        vec3 tangent = normalize(abs(sunDirection.y) < 0.95
+            ? cross(sunDirection, vec3(0.0, 1.0, 0.0))
+            : cross(sunDirection, vec3(1.0, 0.0, 0.0)));
+        vec3 bitangent = cross(sunDirection, tangent);
+        vec3 sampleDirection = normalize(
+            sunDirection
+            + tangent * cos(angle) * radius
+            + bitangent * sin(angle) * radius
+        );
+        Hit shadow = traceScene(
+            point + primary.normal * 0.03,
+            sampleDirection,
+            0.03,
+            frame.renderParameters.z
+        );
+        visibility += shadow.valid ? 0.0 : 1.0;
+    }
+    visibility /= float(sampleCount);
+
+    float directLight = mix(0.42, 1.0, visibility);
+    directLight *= 0.55 + 0.45 * max(dot(primary.normal, sunDirection), 0.0);
+    vec3 result = linearRaster * directLight;
+
+    uint flags = floatBitsToUint(
+        blocks[primary.primitive].maximumYZColorFlags.w
+    );
+    float roughness = (flags & 1u) != 0u ? 0.16 : 0.82;
+    vec3 specularAlbedo = (flags & 1u) != 0u
+        ? vec3(0.62)
+        : vec3(0.035);
+    float specularHitDistance = 0.0;
+    if (frame.renderParameters.w > 0.5) {
+        vec3 reflectionDirection = reflect(direction, primary.normal);
+        Hit reflection = traceScene(
+            point + primary.normal * 0.04,
+            reflectionDirection,
+            0.04,
+            frame.renderParameters.z * (0.25 + 0.12 * frame.cameraForward.w)
+        );
+        vec3 reflectionColor = reflection.valid
+            ? srgbToLinear(unpackColor(
+                    blocks[reflection.primitive].maximumYZColorFlags.z))
+            : srgbToLinear(vec3(0.32, 0.48, 0.72));
+        float reflectivity = (flags & 1u) != 0u ? 0.38 : 0.08;
+        result = mix(result, reflectionColor, reflectivity);
+        specularHitDistance = reflection.valid ? reflection.distance : 0.0;
+    }
+
+    imageStore(
+        targetImage,
+        pixel,
+        vec4(linearToSrgb(toneMapAces(result)), raster.a)
+    );
+    imageStore(noisyColorImage, pixel, vec4(result, 1.0));
+    imageStore(diffuseAlbedoImage, pixel, vec4(linearRaster, 1.0));
+    imageStore(specularAlbedoImage, pixel, vec4(specularAlbedo, 1.0));
+    imageStore(
+        normalRoughnessImage,
+        pixel,
+        vec4(normalize(primary.normal), roughness)
+    );
+    imageStore(
+        specularHitDistanceImage,
+        pixel,
+        vec4(specularHitDistance, 0.0, 0.0, 0.0)
+    );
+}

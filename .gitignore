@@ -1,0 +1,41 @@
+# Gradle and IDE output
+.gradle/
+build/
+/bin/
+/out/
+*.class
+*.iml
+
+# Minecraft development instance (includes local worlds and settings)
+/run/
+/config/
+/crash-reports/
+/screenshots/
+
+# Local analysis and logs
+/graphify-out/
+/logs/
+run-client*.log
+*.log
+hs_err_pid*
+replay_pid*
+
+# IDE-local metadata
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+
+# Native build output
+native/build/
+native/CMakeFiles/
+native/CMakeCache.txt
+native/cmake_install.cmake
+
+# Local credentials and machine-specific overrides
+.env
+.env.*
+!.env.example
+*.keystore
+*.p12
+*.pem

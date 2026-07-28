@@ -1,0 +1,19 @@
+OptiScaler v0.9.4 is conveyed unmodified under GNU GPL version 3.
+
+The complete corresponding source, including the exact submodule revisions and
+build scripts, is available without charge at:
+
+https://github.com/optiscaler/OptiScaler/tree/v0.9.4
+
+Exact upstream commit:
+7534ad00bf9e590eedb99e8dd9fd8c89dae3654f
+
+To obtain a machine-readable local copy:
+
+git clone --branch v0.9.4 --recurse-submodules \
+  https://github.com/optiscaler/OptiScaler.git
+
+The embedded binary has not been modified by this Minecraft mod. OptiScaler and
+the Minecraft mod remain separate works collected in one distribution archive.
+The OptiScaler license applies to OptiScaler; the license of each additional
+runtime library is included beside that library under runtime/Licenses.

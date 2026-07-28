@@ -1,0 +1,12 @@
+OptiScaler version: v0.9.4
+Release date: 2026-07-18
+Upstream commit: 7534ad00bf9e590eedb99e8dd9fd8c89dae3654f
+Official release:
+https://github.com/optiscaler/OptiScaler/releases/tag/v0.9.4
+
+Official release archive SHA-256:
+575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad
+
+This directory contains an unmodified, focused subset of the official release
+needed by this mod's Vulkan FFX input route. Files which implement unrelated
+game injection, fake NVAPI, DX12 frame generation, or setup scripts are omitted.

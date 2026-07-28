@@ -1,0 +1,148 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D currentDepth;
+layout(set = 0, binding = 1) uniform sampler2D currentColor;
+layout(set = 0, binding = 2) uniform sampler2D previousDepth;
+layout(set = 0, binding = 3) uniform sampler2D previousColor;
+layout(rg16f, set = 0, binding = 4) uniform writeonly image2D motionOutput;
+
+layout(std140, set = 0, binding = 5) uniform FrameParameters {
+    mat4 clipToPreviousClip;
+    vec2 renderSize;
+    vec2 jitterDeltaPixels;
+    uint resetHistory;
+    uint searchRadius;
+} frame;
+
+float colorError(vec3 a, vec3 b) {
+    vec3 difference = abs(a - b);
+    return dot(difference, vec3(0.299, 0.587, 0.114));
+}
+
+float candidateScore(
+    vec3 currentRgb,
+    ivec2 candidate,
+    float expectedDepth,
+    vec2 offset
+) {
+    vec3 previousRgb = texelFetch(previousColor, candidate, 0).rgb;
+    float previousZ = texelFetch(previousDepth, candidate, 0).r;
+    return colorError(currentRgb, previousRgb)
+        + abs(previousZ - expectedDepth) * 2.0
+        + length(offset) * 0.0035;
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    // The storage image is authoritative. Using the uniform render size here
+    // made the whole dispatch silently return when a malformed/stale uniform
+    // upload decoded the dimensions as zero.
+    ivec2 size = imageSize(motionOutput);
+    vec2 renderSize = vec2(size);
+    if (any(greaterThanEqual(pixel, size))) {
+        return;
+    }
+
+    if (frame.resetHistory != 0u) {
+        imageStore(motionOutput, pixel, vec4(0.0));
+        return;
+    }
+
+    vec2 currentUv = (vec2(pixel) + vec2(0.5)) / renderSize;
+    float depth = texelFetch(currentDepth, pixel, 0).r;
+    // Texture/GUI Y grows downwards, while the JOML camera projection used by
+    // the renderer has clip-space Y growing upwards. Convert both directions
+    // explicitly; treating Y like X mirrors vertical and diagonal motion.
+    vec2 currentNdc = vec2(
+        currentUv.x * 2.0 - 1.0,
+        1.0 - currentUv.y * 2.0
+    );
+    vec4 previousClip = frame.clipToPreviousClip * vec4(currentNdc, depth, 1.0);
+
+    if (abs(previousClip.w) < 1.0e-6) {
+        imageStore(motionOutput, pixel, vec4(0.0));
+        return;
+    }
+
+    vec2 predictedPreviousNdc = previousClip.xy / previousClip.w;
+    vec2 predictedPreviousUv = vec2(
+        predictedPreviousNdc.x * 0.5 + 0.5,
+        0.5 - predictedPreviousNdc.y * 0.5
+    );
+    vec2 predictedPreviousPixel = predictedPreviousUv * renderSize - vec2(0.5);
+    vec3 currentRgb = texelFetch(currentColor, pixel, 0).rgb;
+
+    ivec2 predictedPixel = clamp(
+        ivec2(round(predictedPreviousPixel)),
+        ivec2(0),
+        size - 1
+    );
+    ivec2 bestPixel = predictedPixel;
+    int radius = int(clamp(frame.searchRadius, 0u, 8u));
+    float expectedDepth = previousClip.z / previousClip.w;
+    float seedScore = candidateScore(
+        currentRgb,
+        predictedPixel,
+        expectedDepth,
+        vec2(0.0)
+    );
+    float bestScore = seedScore;
+    int coarseStep = max(1, radius / 2);
+
+    // Camera reprojection supplies the initial vector. Most static pixels
+    // already match and avoid all optical-flow work. A mismatching pixel gets
+    // a coarse pass plus 3x3 refinement (at most 34 candidates for radius 4,
+    // instead of the previous 81 candidates at every render pixel).
+    if (seedScore > 0.04) {
+        for (int y = -radius; y <= radius; y += coarseStep) {
+            for (int x = -radius; x <= radius; x += coarseStep) {
+                ivec2 candidate = clamp(
+                    predictedPixel + ivec2(x, y),
+                    ivec2(0),
+                    size - 1
+                );
+                float score = candidateScore(
+                    currentRgb,
+                    candidate,
+                    expectedDepth,
+                    vec2(x, y)
+                );
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestPixel = candidate;
+                }
+            }
+        }
+        ivec2 coarseBest = bestPixel;
+        for (int y = -1; y <= 1; ++y) {
+            for (int x = -1; x <= 1; ++x) {
+                ivec2 candidate = clamp(
+                    coarseBest + ivec2(x, y),
+                    ivec2(0),
+                    size - 1
+                );
+                vec2 offset = vec2(candidate - predictedPixel);
+                float score = candidateScore(
+                    currentRgb,
+                    candidate,
+                    expectedDepth,
+                    offset
+                );
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestPixel = candidate;
+                }
+            }
+        }
+        if (seedScore - bestScore < 0.01) {
+            bestPixel = predictedPixel;
+        }
+    }
+
+    // SDK convention: current pixel plus motion vector locates the same
+    // surface in the previous frame. Jitter is removed in pixel space.
+    vec2 motionPixels = vec2(bestPixel - pixel) - frame.jitterDeltaPixels;
+    imageStore(motionOutput, pixel, vec4(motionPixels, 0.0, 0.0));
+}

@@ -1,0 +1,405 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version '1.17.16'
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    runs {
+        client {
+            def quickPlayWorld = System.getenv("DLSS_FG_QUICK_PLAY_WORLD")
+            if (quickPlayWorld) {
+                programArgs "--quickPlaySingleplayer", quickPlayWorld
+            }
+        }
+    }
+
+    mods {
+        "dlss_fg" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+fabricApi {
+    configureDataGeneration {
+        client = true
+    }
+}
+
+repositories {
+    // Add repositories to retrieve artifacts from in here.
+    // You should only use this when depending on other mods because
+    // Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
+    // See https://docs.gradle.org/current/userguide/declaring_repositories.html
+    // for more information about repositories.
+    maven {
+        name = "TerraformersMC"
+        url = "https://maven.terraformersmc.com/releases/"
+    }
+}
+
+dependencies {
+    // To change the versions see the gradle.properties file
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    clientCompileOnly "com.terraformersmc:modmenu:20.0.1"
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+def nativeSourceDirectory = layout.projectDirectory.dir("native")
+def nativeBuildDirectory = layout.buildDirectory.dir("native")
+
+def findCMakeExecutable = {
+    def executableName = System.getProperty("os.name").toLowerCase().contains("windows")
+            ? "cmake.exe"
+            : "cmake"
+    def candidates = []
+    def pathValue = System.getenv("PATH")
+    if (pathValue) {
+        pathValue.split(File.pathSeparator).each { entry ->
+            if (entry) {
+                candidates.add(new File(entry, executableName))
+            }
+        }
+    }
+    if (executableName == "cmake.exe") {
+        candidates.add(new File("C:/Program Files/CMake/bin/cmake.exe"))
+    }
+    candidates.find { it.isFile() }?.absolutePath
+}
+
+def cmakeExecutable = findCMakeExecutable()
+def nativeBridgeSourcesPresent = {
+    nativeSourceDirectory.file("CMakeLists.txt").asFile.isFile()
+            && file("native/streamline").isDirectory()
+}
+
+tasks.register("buildNative", Exec) {
+    group = "build"
+    description = "Builds the JNI bridge when its source and SDK files are present."
+    dependsOn("configureNative")
+    onlyIf(nativeBridgeSourcesPresent)
+    doFirst {
+        if (cmakeExecutable == null) {
+            throw new GradleException("CMake is required to build the JNI bridge. Install CMake or add it to PATH.")
+        }
+    }
+    commandLine cmakeExecutable ?: "cmake", "--build", nativeBuildDirectory.get().asFile, "--config", "Release"
+}
+
+tasks.register("configureNative", Exec) {
+    group = "build"
+    description = "Configures the JNI bridge when its source and SDK files are present."
+    onlyIf(nativeBridgeSourcesPresent)
+    doFirst {
+        if (cmakeExecutable == null) {
+            throw new GradleException("CMake is required to build the JNI bridge. Install CMake or add it to PATH.")
+        }
+    }
+    commandLine cmakeExecutable ?: "cmake", "-S", nativeSourceDirectory.asFile, "-B", nativeBuildDirectory.get().asFile
+}
+
+tasks.register("copyNative", Copy) {
+    group = "build"
+    description = "Copies the JNI native library into resource folder."
+    dependsOn("buildNative")
+    onlyIf(nativeBridgeSourcesPresent)
+
+    from(nativeBuildDirectory) {
+        include "Release/dlss_fg_native.dll"
+        include "libdlss_fg_native.so"
+        include "libdlss_fg_native.dylib"
+    }
+    into layout.buildDirectory.dir("native-resources/natives")
+    
+    eachFile { FileCopyDetails details ->
+        def name = details.name
+        if (name.endsWith(".dll")) {
+            details.relativePath = new RelativePath(true, "windows", name)
+        } else if (name.endsWith(".so")) {
+            details.relativePath = new RelativePath(true, "linux", name)
+        } else if (name.endsWith(".dylib")) {
+            details.relativePath = new RelativePath(true, "macos", name)
+        }
+    }
+    includeEmptyDirs = false
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+}
+
+// Copy Streamline SDK runtime DLLs (interposer, plugins, NGX binaries) into natives
+tasks.register("copyStreamlineRuntime", Copy) {
+    group = "build"
+    description = "Copies NVIDIA Streamline SDK runtime DLLs into native resource folder."
+    onlyIf { file("native/streamline/bin/x64").isDirectory() }
+
+    from("native/streamline/bin/x64") {
+        include "sl.interposer.dll"
+        include "sl.common.dll"
+        include "sl.dlss_g.dll"
+        include "sl.dlss.dll"
+        include "sl.dlss_d.dll"
+        include "sl.reflex.dll"
+        include "sl.pcl.dll"
+        include "nvngx_dlssg.dll"
+        include "nvngx_dlss.dll"
+        include "nvngx_dlssd.dll"
+        include "NvLowLatencyVk.dll"
+    }
+    into layout.buildDirectory.dir("native-resources/natives/windows")
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+}
+
+def optiScalerVersion = "v0.9.4"
+def optiScalerVendorDirectory =
+        layout.projectDirectory.dir("vendor/optiscaler/${optiScalerVersion}")
+def optiScalerRuntimeDirectory = optiScalerVendorDirectory.dir("runtime")
+def requiredOptiScalerFiles = [
+        "OptiScaler.dll",
+        "OptiScaler.ini",
+        "amd_fidelityfx_dx12.dll",
+        "amd_fidelityfx_upscaler_dx12.dll",
+        "amd_fidelityfx_vk.dll",
+        "libxess.dll",
+        "D3D12_Optiscaler/D3D12Core.dll",
+        "Licenses/DirectX_LICENSE.txt",
+        "Licenses/FidelityFX_v1_LICENSE.md",
+        "Licenses/FidelityFX_v2_LICENSE.md",
+    "Licenses/XeSS_LICENSE.txt",
+]
+
+// The exact same signed Vulkan provider belongs to the verified OptiScaler
+// bundle. Reuse that one source file instead of maintaining a second binary
+// copy under native/fidelityfx.
+tasks.register("copyFidelityFxRuntime", Copy) {
+    group = "build"
+    description = "Copies the bundled AMD FidelityFX Vulkan runtime into the native resource folder."
+    dependsOn("copyOptiScalerBundle")
+
+    from(optiScalerRuntimeDirectory) {
+        include "amd_fidelityfx_vk.dll"
+    }
+    into layout.buildDirectory.dir("native-resources/natives/windows")
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+}
+
+tasks.register("copyOptiScalerBundle", Copy) {
+    group = "build"
+    description = "Packages the verified OptiScaler runtime and redistribution notices for one-JAR installation."
+
+    inputs.files(requiredOptiScalerFiles.collect {
+        optiScalerRuntimeDirectory.file(it)
+    })
+    inputs.files(
+            optiScalerVendorDirectory.file("VERSION.txt"),
+            optiScalerVendorDirectory.file("SHA256SUMS.txt"),
+            optiScalerVendorDirectory.file("legal/GPL-3.0.txt"),
+            optiScalerVendorDirectory.file("legal/CORRESPONDING_SOURCE.txt")
+    )
+
+    doFirst {
+        def missing = requiredOptiScalerFiles.findAll {
+            !optiScalerRuntimeDirectory.file(it).asFile.isFile()
+        }
+        if (!missing.isEmpty()) {
+            throw new GradleException(
+                    "The embedded OptiScaler ${optiScalerVersion} bundle is incomplete: "
+                            + missing.join(", ")
+            )
+        }
+    }
+
+    from(optiScalerRuntimeDirectory) {
+        into "optiscaler/windows"
+    }
+    from(optiScalerVendorDirectory) {
+        include "VERSION.txt"
+        include "SHA256SUMS.txt"
+        include "legal/GPL-3.0.txt"
+        include "legal/CORRESPONDING_SOURCE.txt"
+        into "META-INF/optiscaler/${optiScalerVersion}"
+    }
+    into layout.buildDirectory.dir("optiscaler-resources")
+    includeEmptyDirs = false
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+}
+
+tasks.register("compileShaders") {
+    group = "build"
+    description = "Compiles GLSL Vulkan shader sources to SPIR-V using glslc."
+    
+    def shaderSourceDir = file("src/main/resources/assets/dlss_fg/shaders/source")
+    def shaderOutputDir = layout.buildDirectory.dir("shader-resources/assets/dlss_fg/shaders")
+
+    if (shaderSourceDir.exists()) {
+        inputs.dir(shaderSourceDir).optional()
+    }
+    outputs.dir(shaderOutputDir)
+
+    doLast {
+        if (!shaderSourceDir.exists()) {
+            return
+        }
+
+        // Find glslc executable
+        def glslcPath = null
+        def vulkanSdk = System.getenv("VULKAN_SDK")
+        if (vulkanSdk != null) {
+            def osName = System.getProperty("os.name").toLowerCase(Locale.ROOT)
+            def exeExtension = osName.contains("win") ? ".exe" : ""
+            def sdkGlslc = new File(vulkanSdk, "bin/glslc${exeExtension}")
+            if (sdkGlslc.exists()) {
+                glslcPath = sdkGlslc.absolutePath
+            }
+        }
+
+        if (glslcPath == null) {
+            // Check PATH
+            try {
+                def process = "glslc --version".execute()
+                process.waitFor()
+                if (process.exitValue() == 0) {
+                    glslcPath = "glslc"
+                }
+            } catch (Exception ignored) {}
+        }
+
+        def shaderFiles = shaderSourceDir.listFiles()
+        if (shaderFiles == null || shaderFiles.length == 0) {
+            return
+        }
+
+        if (glslcPath == null) {
+            logger.lifecycle("Standalone glslc not found; runtime shaderc will compile active Vulkan shaders.")
+            return
+        }
+
+        def outputDirFile = shaderOutputDir.get().asFile
+        if (!outputDirFile.exists()) {
+            outputDirFile.mkdirs()
+        }
+
+        shaderFiles.each { File file ->
+            if (file.isFile() && (file.name.endsWith(".comp") || file.name.endsWith(".vert") || file.name.endsWith(".frag"))) {
+                def outputFile = new File(outputDirFile, "${file.name}.spv")
+                println "Compiling Vulkan shader: ${file.name} -> ${outputFile.name}"
+                def process = [glslcPath, file.absolutePath, "-o", outputFile.absolutePath].execute()
+                process.waitFor()
+                if (process.exitValue() != 0) {
+                    throw new GradleException("Failed to compile shader ${file.name}:\n${process.errorStream.text}")
+                }
+            }
+        }
+    }
+}
+
+processResources {
+    dependsOn(compileShaders)
+    dependsOn(copyNative)
+    dependsOn(copyStreamlineRuntime)
+    dependsOn(copyFidelityFxRuntime)
+    dependsOn(copyOptiScalerBundle)
+
+    // Include JNI native libraries if they were built
+    from(layout.buildDirectory.dir("native-resources")) {
+        include "natives/**"
+        duplicatesStrategy = DuplicatesStrategy.INCLUDE
+    }
+
+    // Include compiled shaders if they were built
+    from(layout.buildDirectory.dir("shader-resources")) {
+        include "assets/dlss_fg/shaders/**"
+        duplicatesStrategy = DuplicatesStrategy.INCLUDE
+    }
+
+    from(layout.buildDirectory.dir("optiscaler-resources")) {
+        include "optiscaler/**"
+        include "META-INF/optiscaler/**"
+        duplicatesStrategy = DuplicatesStrategy.FAIL
+    }
+
+    from("native/streamline") {
+        include "license.txt"
+        include "3rd-party-licenses.md"
+        into "META-INF/licenses/nvidia-streamline"
+        duplicatesStrategy = DuplicatesStrategy.FAIL
+    }
+    from("native/streamline/bin/x64") {
+        include "nvngx_dlss.license.txt"
+        include "reflex.license.txt"
+        into "META-INF/licenses/nvidia-streamline"
+        duplicatesStrategy = DuplicatesStrategy.FAIL
+    }
+
+    inputs.property "version", project.version
+    inputs.property "minecraft_version", project.minecraft_version
+    inputs.property "loader_version", project.loader_version
+    filteringCharset "UTF-8"
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version,
+                "minecraft_version": project.minecraft_version,
+                "loader_version": project.loader_version
+    }
+}
+
+def targetJavaVersion = 25
+tasks.withType(JavaCompile).configureEach {
+    // ensure that the encoding is set to UTF-8, no matter what the system default is
+    // this fixes some edge cases with special characters not displaying correctly
+    // see http://yodaconditions.net/blog/fix-for-java-file-encoding-problems-with-gradle.html
+    // If Javadoc is generated, this must be specified in that task too.
+    it.options.encoding = "UTF-8"
+    if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
+        it.options.release.set(targetJavaVersion)
+    }
+}
+
+java {
+    def javaVersion = JavaVersion.toVersion(targetJavaVersion)
+    if (JavaVersion.current() < javaVersion) {
+        toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    }
+    // Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
+    // if it is present.
+    // If you remove this line, sources will not be generated.
+    withSourcesJar()
+}
+
+jar {
+    from("LICENSE.txt") {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+    from("THIRD_PARTY_NOTICES.md")
+}
+
+// configure the maven publication
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+
+    repositories {
+    }
+}

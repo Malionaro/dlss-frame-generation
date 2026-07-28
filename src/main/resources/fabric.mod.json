@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "dlss_fg",
+  "version": "${version}",
+  "name": "Vulkan Frame Generation Integration",
+  "description": "Experimental, capability-gated Vulkan integration for NVIDIA Streamline, AMD FidelityFX, Intel/FSR compatibility, OptiScaler and hybrid hardware ray queries.",
+  "authors": [
+    "Malionaro"
+  ],
+  "icon": "assets/dlss_fg/icon.png",
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "org.malionaro.dlss_frame_generation.client.FrameGenMod"
+    ],
+    "modmenu": [
+      "org.malionaro.dlss_frame_generation.client.compat.ModMenuIntegration"
+    ]
+  },
+  "mixins": [
+    {
+      "config": "dlss_fg.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  },
+  "suggests": {
+    "sodium": "*",
+    "iris": "*",
+    "modmenu": "*"
+  }
+}
