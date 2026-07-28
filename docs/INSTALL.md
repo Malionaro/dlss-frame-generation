@@ -39,9 +39,23 @@
 > Vulkan interposer are bundled; frame generation remains fail-closed until
 > Streamline accepts all mandatory render inputs. The FidelityFX FSR 3.1
 > Vulkan proxy is bundled for AMD and as a named cross-vendor fallback on Intel
-> GPUs. FSR 4 frame generation and native XeSS-FG currently require a separate
-> D3D12 renderer. See
+> GPUs. An optional same-adapter Vulkan→D3D12 presenter is included, but the
+> bundled files do not contain the official FSR 4 FG or XeSS-FG/XeLL provider
+> runtimes. Those two providers therefore remain unavailable. See
 > [BACKENDS.md](BACKENDS.md).
+
+#### Optional hybrid Vulkan → D3D12 presentation
+
+On Windows, open **Frame Generation → Graphics → Vulkan → D3D12**. The toggle
+becomes available only after the mod confirms the exact same GPU by LUID and
+all Vulkan external-memory/semaphore requirements. Enabling it requires a game
+restart.
+
+This mode keeps Minecraft rendering on Vulkan and moves only presentation to a
+DXGI flip-model swapchain using GPU-shared images and fences. It is experimental,
+SDR-only and automatically falls back to normal Vulkan WSI when setup fails.
+It cannot be combined with a Vulkan frame-generation proxy. The transport alone
+does not enable FSR 4 FG or XeSS-FG.
 
 #### Bundled OptiScaler
 
@@ -96,9 +110,24 @@ performance upscaling modes are not exposed yet. A manually installed
 > Vulkan-Interposer ist enthalten; Frame Generation bleibt fail-closed, bis
 > Streamline alle Pflichtdaten des Renderers annimmt. Der
 > FidelityFX-FSR-3.1-Vulkan-Proxy ist für AMD und als ausdrücklich benannter
-> FSR-Fallback auf Intel-GPUs enthalten. FSR-4-Frame-Generation und echtes
-> XeSS-FG benötigen derzeit einen separaten D3D12-Renderer. Details stehen in
+> FSR-Fallback auf Intel-GPUs enthalten. Eine optionale Vulkan→D3D12-
+> Präsentations-Bridge ist enthalten; im Paket fehlen jedoch die offiziellen
+> FSR-4-FG- beziehungsweise XeSS-FG-/XeLL-Provider-Laufzeiten. Beide Provider
+> bleiben deshalb deaktiviert. Details stehen in
 > [BACKENDS.md](BACKENDS.md).
+
+#### Optionale hybride Vulkan→D3D12-Präsentation
+
+Öffne unter Windows **Frame Generation → Graphics → Vulkan→D3D12**. Der Schalter
+wird erst freigegeben, wenn die Mod über die LUID exakt dieselbe GPU sowie alle
+Vulkan-External-Memory-/Semaphore-Anforderungen bestätigt hat. Die Aktivierung
+erfordert einen Neustart.
+
+Minecraft rendert dabei weiter mit Vulkan; nur die Präsentation läuft über
+GPU-geteilte Bilder und Fences in einer DXGI-Flip-Model-Swapchain. Der Modus ist
+experimentell, derzeit SDR-exklusiv und fällt bei einem Setup-Fehler automatisch
+auf Vulkan-WSI zurück. Er kann nicht gleichzeitig mit einem Vulkan-FG-Proxy
+laufen. Der Transport allein aktiviert weder FSR 4 FG noch XeSS-FG.
 
 #### Mitgeliefertes OptiScaler
 

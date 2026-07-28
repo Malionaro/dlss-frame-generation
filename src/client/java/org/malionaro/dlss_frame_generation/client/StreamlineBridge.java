@@ -209,6 +209,63 @@ public final class StreamlineBridge {
     public static native String nGetActiveProviderName();
 
     /**
+     * Native provider state using ProviderLifecycle.State ordinal values.
+     */
+    public static native int nGetProviderLifecycleState();
+
+    public static native String nGetProviderLifecycleDetail();
+
+    public static native void nBeginProviderDrain();
+
+    public static native boolean nProbeD3D12Presentation(
+        long vkPhysicalDevice,
+        long vkDevice,
+        long vkGraphicsQueue,
+        int graphicsQueueFamily
+    );
+
+    public static native int nGetD3D12PresentationStage();
+
+    public static native int nGetD3D12PresentationCapabilities();
+
+    public static native String nGetD3D12PresentationStatus();
+
+    public static native String nGetD3D12AdapterLuid();
+
+    public static native boolean
+            nCanCreateD3D12PresentationSwapchain();
+
+    public static native boolean
+            nOwnsD3D12PresentationSwapchain(long swapchain);
+
+    public static native int nCreateD3D12PresentationSwapchain(
+        long window,
+        long createInfoAddress,
+        long swapchainAddress
+    );
+
+    public static native void nDestroyD3D12PresentationSwapchain(
+        long swapchain
+    );
+
+    public static native int nGetD3D12PresentationSwapchainImages(
+        long swapchain,
+        long countAddress,
+        long imagesAddress
+    );
+
+    public static native int nAcquireD3D12PresentationImage(
+        long swapchain,
+        long semaphore,
+        long imageIndexAddress
+    );
+
+    public static native int nQueuePresentD3D12(
+        long queue,
+        long presentInfoAddress
+    );
+
+    /**
      * Generic proxy-swapchain API used by every provider that owns Vulkan
      * presentation. It currently routes AMD and Intel adapters through the
      * FidelityFX FSR 3.1 provider.

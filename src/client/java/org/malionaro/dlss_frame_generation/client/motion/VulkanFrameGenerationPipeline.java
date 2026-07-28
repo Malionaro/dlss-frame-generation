@@ -7,6 +7,8 @@ import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
+import org.malionaro.dlss_frame_generation.client.FrameIdentity;
+import org.malionaro.dlss_frame_generation.client.FrameResourceSet;
 import org.malionaro.dlss_frame_generation.client.FrameGenerationBackend;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 import org.malionaro.dlss_frame_generation.client.access.VulkanDeviceAccess;
@@ -70,6 +72,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private long capturedFrameCount;
     private long providerAcceptedFrameCount;
     private int pendingUiSlot = -1;
+    private FrameIdentity pendingUiIdentity = FrameIdentity.INVALID;
+    private long activeSwapchainGeneration;
+    private FrameIdentity lastCapturedIdentity = FrameIdentity.INVALID;
+    private FrameIdentity lastProviderAcceptedIdentity = FrameIdentity.INVALID;
 
     public VulkanFrameGenerationPipeline(VulkanDevice minecraftDevice, Logger logger) {
         this.logger = logger;
@@ -82,6 +88,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     }
 
     public MotionVectorResource captureAndDispatch(
+            FrameResourceSet frameResources,
             VkCommandBuffer commandBuffer,
             VulkanGpuTextureView sourceColor,
             VulkanGpuTextureView sourceDepth,
@@ -89,8 +96,6 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             RayReconstructionResources rayReconstructionResources,
             int reconstructionMode,
             int vendorId,
-            long backbufferImage,
-            int backbufferFormat,
             float[] viewToClip,
             float[] clipToView,
             float[] clipToPreviousClip,
@@ -125,19 +130,48 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             boolean uiWillBeProvided,
             boolean debugReadbackRequested
     ) {
-        if (failed || commandBuffer == null || sourceColor == null || sourceDepth == null
+        if (failed || frameResources == null
+                || commandBuffer == null || sourceColor == null || sourceDepth == null
                 || outputColor == null || sourceColor.texture() == null
                 || sourceDepth.texture() == null || outputColor.texture() == null) {
             return null;
         }
 
-        int renderWidth = sourceColor.getWidth(0);
-        int renderHeight = sourceColor.getHeight(0);
-        int sourceColorFormat = vulkanFormat(sourceColor);
-        int sourceDepthFormat = vulkanFormat(sourceDepth);
-        int displayWidth = outputColor.getWidth(0);
-        int displayHeight = outputColor.getHeight(0);
-        int destinationFormat = vulkanFormat(outputColor);
+        FrameResourceSet.Validation validation = frameResources.validate();
+        if (!validation.accepted()) {
+            status = "Frame skipped: " + validation.reason();
+            return null;
+        }
+        if (frameResources.commandBuffer() != commandBuffer.address()
+                || frameResources.color().image()
+                        != sourceColor.texture().vkImage()
+                || frameResources.depth().image()
+                        != sourceDepth.texture().vkImage()
+                || frameResources.output().image()
+                        != outputColor.texture().vkImage()) {
+            status = "Frame skipped: renderer handles changed during capture";
+            return null;
+        }
+        FrameIdentity identity = frameResources.identity();
+        if (lastCapturedIdentity.isValid()
+                && identity.swapchainGeneration()
+                        == lastCapturedIdentity.swapchainGeneration()
+                && identity.frameSerial()
+                        <= lastCapturedIdentity.frameSerial()) {
+            status = "Frame skipped: duplicate or out-of-order frame identity";
+            return null;
+        }
+        if (activeSwapchainGeneration != identity.swapchainGeneration()) {
+            onSwapchainGenerationChanged(identity.swapchainGeneration());
+        }
+
+        int renderWidth = frameResources.color().width();
+        int renderHeight = frameResources.color().height();
+        int sourceColorFormat = frameResources.color().format();
+        int sourceDepthFormat = frameResources.depth().format();
+        int displayWidth = frameResources.output().width();
+        int displayHeight = frameResources.output().height();
+        int destinationFormat = frameResources.output().format();
         if (renderWidth <= 0 || renderHeight <= 0
                 || displayWidth <= 0 || displayHeight <= 0) return null;
 
@@ -167,8 +201,8 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
 
             copySnapshots(
                     commandBuffer,
-                    sourceColor.texture().vkImage(),
-                    sourceDepth.texture().vkImage(),
+                    frameResources.color(),
+                    frameResources.depth(),
                     current
             );
             uploadFrameParameters(
@@ -279,10 +313,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                 copyUpscaledToSource(
                         commandBuffer,
                         current.upscaled,
-                        outputColor.texture().vkImage()
+                        frameResources.output()
                 );
-            } else if (sourceColor.texture().vkImage()
-                    != outputColor.texture().vkImage()) {
+            } else if (frameResources.color().image()
+                    != frameResources.output().image()) {
                 blitSnapshotToOwnedOutput(
                         commandBuffer,
                         current.color,
@@ -291,7 +325,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                 copyUpscaledToSource(
                         commandBuffer,
                         current.upscaled,
-                        outputColor.texture().vkImage()
+                        frameResources.output()
                 );
                 fullResolutionFallback = true;
             }
@@ -306,7 +340,8 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             boolean accepted = StreamlineBridge.nSubmitFrameGenerationInputs(
                     vendorId,
                     commandBuffer.address(),
-                    backbufferImage, backbufferFormat,
+                    frameResources.backbuffer().image(),
+                    frameResources.backbuffer().format(),
                     hudlessColor.image, hudlessColor.memory, hudlessColor.view,
                     upscalingAccepted ? outputFormat : colorFormat,
                     current.depth.image, current.depth.memory, current.depth.view, depthFormat,
@@ -331,14 +366,19 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             pendingUiSlot = uiRecomposition && uiWillBeProvided
                     ? currentIndex
                     : -1;
+            pendingUiIdentity = pendingUiSlot >= 0
+                    ? identity
+                    : FrameIdentity.INVALID;
             if (debugReadbackRequested) {
                 recordDebugReadback(commandBuffer, current);
             }
 
             frameNumber++;
             capturedFrameCount++;
+            lastCapturedIdentity = identity;
             if (accepted) {
                 providerAcceptedFrameCount++;
+                lastProviderAcceptedIdentity = identity;
             }
             current.inUseUntilPresentSerial = completedPresentSerial + 1;
             historyValid = true;
@@ -373,6 +413,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     }
 
     public boolean captureUiAndFinalize(
+            FrameIdentity identity,
             VkCommandBuffer commandBuffer,
             VulkanGpuTextureView uiColor,
             int vendorId,
@@ -381,7 +422,15 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             boolean uiRecomposition
     ) {
         if (failed || pendingUiSlot < 0 || commandBuffer == null
+                || identity == null
+                || !pendingUiIdentity.belongsToSameFrame(identity)
                 || uiColor == null || uiColor.texture() == null) {
+            if (pendingUiSlot >= 0) {
+                status = "UI recomposition skipped: UI and world resources "
+                        + "do not belong to the same frame";
+                pendingUiSlot = -1;
+                pendingUiIdentity = FrameIdentity.INVALID;
+            }
             return false;
         }
         FrameSlot slot = slots[pendingUiSlot];
@@ -389,6 +438,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                 || uiColor.getWidth(0) != outputWidth
                 || uiColor.getHeight(0) != outputHeight) {
             pendingUiSlot = -1;
+            pendingUiIdentity = FrameIdentity.INVALID;
             status = "UI recomposition skipped because UI dimensions changed";
             return false;
         }
@@ -470,6 +520,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                 uiRecomposition
         );
         pendingUiSlot = -1;
+        pendingUiIdentity = FrameIdentity.INVALID;
         if (accepted) {
             status = "Dense GPU inputs and full-resolution UI accepted by native provider";
         } else {
@@ -500,6 +551,26 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
 
     public void resetHistory() {
         historyValid = false;
+    }
+
+    public void onSwapchainGenerationChanged(long generation) {
+        if (generation <= 0L) {
+            return;
+        }
+        activeSwapchainGeneration = generation;
+        historyValid = false;
+        pendingUiSlot = -1;
+        pendingUiIdentity = FrameIdentity.INVALID;
+        lastCapturedIdentity = FrameIdentity.INVALID;
+        status = "Waiting for a frame from swapchain generation " + generation;
+    }
+
+    public FrameIdentity lastCapturedIdentity() {
+        return lastCapturedIdentity;
+    }
+
+    public FrameIdentity lastProviderAcceptedIdentity() {
+        return lastProviderAcceptedIdentity;
     }
 
     private void ensureResources(
@@ -609,6 +680,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         capturedFrameCount = 0;
         providerAcceptedFrameCount = 0;
         pendingUiSlot = -1;
+        pendingUiIdentity = FrameIdentity.INVALID;
         latestDebugSnapshot = null;
         status = "Dense GPU input resources allocated";
         logger.info(
@@ -903,11 +975,35 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
 
     private void copySnapshots(
             VkCommandBuffer commandBuffer,
-            long sourceColor,
-            long sourceDepth,
+            FrameResourceSet.ImageResource sourceColor,
+            FrameResourceSet.ImageResource sourceDepth,
             FrameSlot current
     ) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            transitionExternalImage(
+                    commandBuffer,
+                    sourceColor.image(),
+                    VK_IMAGE_ASPECT_COLOR_BIT,
+                    sourceColor.layout(),
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                    VK_ACCESS_TRANSFER_READ_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    stack
+            );
+            transitionExternalImage(
+                    commandBuffer,
+                    sourceDepth.image(),
+                    VK_IMAGE_ASPECT_DEPTH_BIT,
+                    sourceDepth.layout(),
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                    VK_ACCESS_TRANSFER_READ_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    stack
+            );
             transitionImage(
                     commandBuffer, current.color,
                     current.color.layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -927,10 +1023,28 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                             : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, stack);
 
-            copyImage(commandBuffer, sourceColor, current.color.image,
-                    VK_IMAGE_ASPECT_COLOR_BIT, width, height, stack);
-            copyImage(commandBuffer, sourceDepth, current.depth.image,
-                    VK_IMAGE_ASPECT_DEPTH_BIT, width, height, stack);
+            copyImageWithLayouts(
+                    commandBuffer,
+                    sourceColor.image(),
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    current.color.image,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_IMAGE_ASPECT_COLOR_BIT,
+                    width,
+                    height,
+                    stack
+            );
+            copyImageWithLayouts(
+                    commandBuffer,
+                    sourceDepth.image(),
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    current.depth.image,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_IMAGE_ASPECT_DEPTH_BIT,
+                    width,
+                    height,
+                    stack
+            );
 
             transitionImage(
                     commandBuffer, current.color,
@@ -946,6 +1060,30 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, stack);
+            transitionExternalImage(
+                    commandBuffer,
+                    sourceColor.image(),
+                    VK_IMAGE_ASPECT_COLOR_BIT,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    sourceColor.layout(),
+                    VK_ACCESS_TRANSFER_READ_BIT,
+                    VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    stack
+            );
+            transitionExternalImage(
+                    commandBuffer,
+                    sourceDepth.image(),
+                    VK_IMAGE_ASPECT_DEPTH_BIT,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    sourceDepth.layout(),
+                    VK_ACCESS_TRANSFER_READ_BIT,
+                    VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    stack
+            );
         }
     }
 
@@ -1083,7 +1221,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private void copyUpscaledToSource(
             VkCommandBuffer commandBuffer,
             NativeImage upscaled,
-            long destinationImage
+            FrameResourceSet.ImageResource destination
     ) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             transitionImage(
@@ -1099,9 +1237,9 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             );
             transitionExternalImage(
                     commandBuffer,
-                    destinationImage,
+                    destination.image(),
                     VK_IMAGE_ASPECT_COLOR_BIT,
-                    VK_IMAGE_LAYOUT_GENERAL,
+                    destination.layout(),
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
                     VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -1114,7 +1252,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     commandBuffer,
                     upscaled.image,
                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    destinationImage,
+                    destination.image(),
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     VK_IMAGE_ASPECT_COLOR_BIT,
                     outputWidth,
@@ -1124,10 +1262,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
 
             transitionExternalImage(
                     commandBuffer,
-                    destinationImage,
+                    destination.image(),
                     VK_IMAGE_ASPECT_COLOR_BIT,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    VK_IMAGE_LAYOUT_GENERAL,
+                    destination.layout(),
                     VK_ACCESS_TRANSFER_WRITE_BIT,
                     VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT,

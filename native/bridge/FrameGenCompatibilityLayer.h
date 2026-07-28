@@ -27,6 +27,17 @@ enum class ProviderId : int32_t {
     CrossVendorFsr31Vulkan = 5
 };
 
+enum class ProviderState : int32_t {
+    Unavailable = 0,
+    Detected = 1,
+    Initializing = 2,
+    Ready = 3,
+    Active = 4,
+    Draining = 5,
+    Failed = 6,
+    Shutdown = 7
+};
+
 constexpr int32_t kNotHandled = INT32_MIN;
 constexpr int32_t kCapUpscaling = 1;
 constexpr int32_t kCapFrameGeneration = 1 << 1;
@@ -46,6 +57,12 @@ bool initializeVulkan(
 
 void shutdown();
 ProviderId activeProvider();
+ProviderState providerState();
+std::string providerStateDetail();
+void markProviderReady(const std::string& detail);
+void markProviderActive(const std::string& detail);
+void markProviderDraining(const std::string& detail);
+void markProviderFailed(const std::string& detail);
 const char* providerName(ProviderId provider);
 std::string statusForVendor(uint32_t vendorId);
 int32_t capabilitiesForVendor(uint32_t vendorId);

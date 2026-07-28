@@ -36,6 +36,7 @@ add_library(dlss_fg_native SHARED
     bridge/FidelityFxBridge.cpp
     bridge/FrameGenCompatibilityLayer.cpp
     bridge/StreamlineBridge.cpp
+    bridge/WindowsDxgiPresenter.cpp
 )
 
 # Header includes
@@ -48,6 +49,12 @@ target_include_directories(dlss_fg_native PRIVATE
 
 # Link NVIDIA Streamline SDK import library and Windows DirectX 12 libraries
 if(WIN32)
+    target_compile_definitions(
+        dlss_fg_native PRIVATE
+        VK_USE_PLATFORM_WIN32_KHR
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
     find_library(SL_LIB NAMES sl sl_wrapper sl_interop sl.interposer
         PATHS "${STREAMLINE_SDK_DIR}/lib/x64" "${STREAMLINE_SDK_DIR}/lib"
         REQUIRED

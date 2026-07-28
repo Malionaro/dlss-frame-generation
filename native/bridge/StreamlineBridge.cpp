@@ -1,5 +1,6 @@
 #include <jni.h>
 #include "FrameGenCompatibilityLayer.h"
+#include "WindowsDxgiPresenter.h"
 #include "FidelityFxBridge.h"
 #include <algorithm>
 #include <iostream>
@@ -237,6 +238,11 @@ static bool finalizeDlssgFrame(
             ? "DLSS-G active with HUD-less color and a separate UI layer"
             : "DLSS-G active with renderer-owned depth, motion vectors and HUD-less color"
         : "DLSS-G inputs valid; Frame Generation is disabled in settings";
+    if (g_dlssgEnabled && g_dlssgRuntimeReady) {
+        framegen::markProviderActive(g_nvidiaStatus);
+    } else {
+        framegen::markProviderReady(g_nvidiaStatus);
+    }
     return true;
 }
 
@@ -360,6 +366,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
    jint queueFamilyIndex, jint vendorId, jstring pluginsPath) {
     if (instance == 0 || physicalDevice == 0 || device == 0 || queue == 0 || queueFamilyIndex < 0) {
         g_nvidiaStatus = "Invalid Vulkan handles supplied to Streamline";
+        framegen::markProviderFailed(g_nvidiaStatus);
         return JNI_FALSE;
     }
 
@@ -387,6 +394,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         static_cast<uint32_t>(queueFamilyIndex)
     );
     if (!initializeCore(env, pluginsPath)) {
+        framegen::markProviderFailed(g_nvidiaStatus);
         return JNI_FALSE;
     }
 
@@ -407,6 +415,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
     sl::Result res = slSetVulkanInfo(vkInfo);
     if (res != sl::Result::eOk) {
         g_nvidiaStatus = "slSetVulkanInfo failed (" + std::to_string(static_cast<int>(res)) + ")";
+        framegen::markProviderFailed(g_nvidiaStatus);
         std::cerr << "[DLSS_FG_Native] " << g_nvidiaStatus << std::endl;
         return JNI_FALSE;
     }
@@ -448,8 +457,14 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
     std::cout << "[DLSS_FG_Native] " << g_nvidiaStatus << std::endl;
     // The Streamline core can still provide DLSS-SR and Reflex even while the
     // frame-generation input contract is not complete.
-    return (g_dlssSupported || g_dlssRrSupported || g_reflexSupported ||
-            g_dlssgSupported) ? JNI_TRUE : JNI_FALSE;
+    const bool anyFeature = g_dlssSupported || g_dlssRrSupported ||
+        g_reflexSupported || g_dlssgSupported;
+    if (anyFeature) {
+        framegen::markProviderReady(g_nvidiaStatus);
+    } else {
+        framegen::markProviderFailed(g_nvidiaStatus);
+    }
+    return anyFeature ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetBackendCapabilities
@@ -521,6 +536,7 @@ extern "C" JNIEXPORT jstring JNICALL Java_org_malionaro_dlss_1frame_1generation_
 
 extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nShutdown
   (JNIEnv* env, jclass clazz) {
+    dxgipresenter::shutdown();
     framegen::shutdown();
     if (!g_coreInitialized) return;
 
@@ -552,11 +568,17 @@ extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
 
 extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nRecreateSwapchain
   (JNIEnv* env, jclass clazz, jlong swapchain, jint width, jint height) {
-    if (!g_initialized) return;
+    if (!g_initialized && framegen::activeProvider() ==
+            framegen::ProviderId::NvidiaStreamlineVulkan) {
+        return;
+    }
 
     // The caller disables FG before reconfiguration and restores the selected
     // mode after the new swapchain is live. Do not toggle it here: doing so
     // after recreation is the inverse of Streamline's required lifecycle.
+    framegen::markProviderReady(
+        "Provider swapchain resources were rebuilt"
+    );
 }
 
 extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nSubmitFrameGenerationInputs
@@ -1621,6 +1643,24 @@ extern "C" JNIEXPORT jstring JNICALL Java_org_malionaro_dlss_1frame_1generation_
     return env->NewStringUTF(framegen::providerName(framegen::activeProvider()));
 }
 
+extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetProviderLifecycleState
+  (JNIEnv*, jclass) {
+    return static_cast<jint>(framegen::providerState());
+}
+
+extern "C" JNIEXPORT jstring JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetProviderLifecycleDetail
+  (JNIEnv* env, jclass) {
+    const std::string detail = framegen::providerStateDetail();
+    return env->NewStringUTF(detail.c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nBeginProviderDrain
+  (JNIEnv*, jclass) {
+    framegen::markProviderDraining(
+        "Provider is draining before swapchain reconfiguration"
+    );
+}
+
 extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nProxySwapchainAvailable
   (JNIEnv*, jclass) {
     // NVIDIA swapchain calls already travel through Streamline because LWJGL's
@@ -1630,6 +1670,96 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
     return framegen::proxyAvailable()
         ? JNI_TRUE
         : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nProbeD3D12Presentation
+  (JNIEnv*, jclass, jlong physicalDevice, jlong device,
+   jlong graphicsQueue, jint graphicsQueueFamily) {
+    return dxgipresenter::probe(
+        reinterpret_cast<VkPhysicalDevice>(physicalDevice),
+        reinterpret_cast<VkDevice>(device),
+        reinterpret_cast<VkQueue>(graphicsQueue),
+        static_cast<uint32_t>(graphicsQueueFamily)
+    ) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetD3D12PresentationStage
+  (JNIEnv*, jclass) {
+    return static_cast<jint>(dxgipresenter::stage());
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetD3D12PresentationCapabilities
+  (JNIEnv*, jclass) {
+    return static_cast<jint>(dxgipresenter::capabilities());
+}
+
+extern "C" JNIEXPORT jstring JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetD3D12PresentationStatus
+  (JNIEnv* env, jclass) {
+    const std::string value = dxgipresenter::status();
+    return env->NewStringUTF(value.c_str());
+}
+
+extern "C" JNIEXPORT jstring JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetD3D12AdapterLuid
+  (JNIEnv* env, jclass) {
+    const std::string value = dxgipresenter::adapterLuid();
+    return env->NewStringUTF(value.c_str());
+}
+
+extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nCanCreateD3D12PresentationSwapchain
+  (JNIEnv*, jclass) {
+    return dxgipresenter::canCreatePresentationSwapchain()
+        ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nOwnsD3D12PresentationSwapchain
+  (JNIEnv*, jclass, jlong swapchain) {
+    return dxgipresenter::ownsSwapchain(
+        reinterpret_cast<VkSwapchainKHR>(swapchain)
+    ) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nCreateD3D12PresentationSwapchain
+  (JNIEnv*, jclass, jlong window, jlong createInfo,
+   jlong swapchainOut) {
+    return dxgipresenter::createSwapchain(
+        reinterpret_cast<void*>(window),
+        reinterpret_cast<const VkSwapchainCreateInfoKHR*>(
+            createInfo),
+        reinterpret_cast<VkSwapchainKHR*>(swapchainOut)
+    );
+}
+
+extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nDestroyD3D12PresentationSwapchain
+  (JNIEnv*, jclass, jlong swapchain) {
+    dxgipresenter::destroySwapchain(
+        reinterpret_cast<VkSwapchainKHR>(swapchain));
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetD3D12PresentationSwapchainImages
+  (JNIEnv*, jclass, jlong swapchain, jlong count, jlong images) {
+    return dxgipresenter::getSwapchainImages(
+        reinterpret_cast<VkSwapchainKHR>(swapchain),
+        reinterpret_cast<uint32_t*>(count),
+        reinterpret_cast<VkImage*>(images)
+    );
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nAcquireD3D12PresentationImage
+  (JNIEnv*, jclass, jlong swapchain, jlong semaphore,
+   jlong imageIndex) {
+    return dxgipresenter::acquireNextImage(
+        reinterpret_cast<VkSwapchainKHR>(swapchain),
+        reinterpret_cast<VkSemaphore>(semaphore),
+        reinterpret_cast<uint32_t*>(imageIndex)
+    );
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nQueuePresentD3D12
+  (JNIEnv*, jclass, jlong queue, jlong presentInfo) {
+    return dxgipresenter::queuePresent(
+        reinterpret_cast<VkQueue>(queue),
+        reinterpret_cast<const VkPresentInfoKHR*>(presentInfo)
+    );
 }
 
 extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nCreateProxySwapchain

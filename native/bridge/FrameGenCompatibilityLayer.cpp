@@ -14,6 +14,8 @@ constexpr uint32_t kIntelVendorId = 0x8086;
 std::mutex g_mutex;
 ProviderId g_activeProvider = ProviderId::None;
 uint32_t g_activeVendorId = 0;
+ProviderState g_providerState = ProviderState::Unavailable;
+std::string g_providerStateDetail = "No provider detected";
 
 bool isFidelityFxVulkanProvider(ProviderId provider) {
     return provider == ProviderId::AmdFsr31Vulkan ||
@@ -48,10 +50,25 @@ bool initializeVulkan(
         std::lock_guard lock(g_mutex);
         g_activeVendorId = vendorId;
         g_activeProvider = selected;
+        g_providerState = selected == ProviderId::None
+            ? ProviderState::Unavailable
+            : ProviderState::Detected;
+        g_providerStateDetail = selected == ProviderId::None
+            ? "No Vulkan provider matches the active adapter"
+            : std::string(providerName(selected)) + " detected";
+        if (selected != ProviderId::None) {
+            g_providerState = ProviderState::Initializing;
+            g_providerStateDetail =
+                std::string(providerName(selected)) + " is initializing";
+        }
     }
 
     if (!isFidelityFxVulkanProvider(selected)) {
-        return selected == ProviderId::NvidiaStreamlineVulkan;
+        if (selected != ProviderId::NvidiaStreamlineVulkan) {
+            markProviderFailed("No supported Vulkan provider was selected");
+            return false;
+        }
+        return true;
     }
 
     if (!fidelityfx::initialize(
@@ -63,8 +80,11 @@ bool initializeVulkan(
         )) {
         std::lock_guard lock(g_mutex);
         g_activeProvider = ProviderId::None;
+        g_providerState = ProviderState::Failed;
+        g_providerStateDetail = fidelityfx::status();
         return false;
     }
+    markProviderReady(fidelityfx::status());
     return true;
 }
 
@@ -73,11 +93,65 @@ void shutdown() {
     std::lock_guard lock(g_mutex);
     g_activeProvider = ProviderId::None;
     g_activeVendorId = 0;
+    g_providerState = ProviderState::Shutdown;
+    g_providerStateDetail = "Provider shut down";
 }
 
 ProviderId activeProvider() {
     std::lock_guard lock(g_mutex);
     return g_activeProvider;
+}
+
+ProviderState providerState() {
+    std::lock_guard lock(g_mutex);
+    return g_providerState;
+}
+
+std::string providerStateDetail() {
+    std::lock_guard lock(g_mutex);
+    return g_providerStateDetail;
+}
+
+void markProviderReady(const std::string& detail) {
+    std::lock_guard lock(g_mutex);
+    if (g_activeProvider == ProviderId::None ||
+        g_providerState == ProviderState::Shutdown) {
+        return;
+    }
+    g_providerState = ProviderState::Ready;
+    g_providerStateDetail = detail;
+}
+
+void markProviderActive(const std::string& detail) {
+    std::lock_guard lock(g_mutex);
+    if (g_activeProvider == ProviderId::None ||
+        (g_providerState != ProviderState::Ready &&
+         g_providerState != ProviderState::Active)) {
+        return;
+    }
+    g_providerState = ProviderState::Active;
+    g_providerStateDetail = detail;
+}
+
+void markProviderDraining(const std::string& detail) {
+    std::lock_guard lock(g_mutex);
+    if (g_activeProvider == ProviderId::None ||
+        (g_providerState != ProviderState::Ready &&
+         g_providerState != ProviderState::Active &&
+         g_providerState != ProviderState::Draining)) {
+        return;
+    }
+    g_providerState = ProviderState::Draining;
+    g_providerStateDetail = detail;
+}
+
+void markProviderFailed(const std::string& detail) {
+    std::lock_guard lock(g_mutex);
+    if (g_providerState == ProviderState::Shutdown) {
+        return;
+    }
+    g_providerState = ProviderState::Failed;
+    g_providerStateDetail = detail;
 }
 
 const char* providerName(ProviderId provider) {
@@ -167,7 +241,15 @@ bool submitFrameGenerationInputs(
     if (vendorId != activeVendor || !isFidelityFxVulkanProvider(provider)) {
         return false;
     }
-    return fidelityfx::submitFrameGenerationInputs(inputs);
+    const bool accepted = fidelityfx::submitFrameGenerationInputs(inputs);
+    if (accepted) {
+        if (inputs.enabled) {
+            markProviderActive(fidelityfx::status());
+        } else {
+            markProviderReady(fidelityfx::status());
+        }
+    }
+    return accepted;
 }
 
 void setUpscalingMode(uint32_t vendorId, int mode, float sharpness) {

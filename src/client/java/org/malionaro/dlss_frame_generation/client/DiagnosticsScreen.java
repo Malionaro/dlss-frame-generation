@@ -23,6 +23,9 @@ public final class DiagnosticsScreen extends Screen {
     private static final int COLOR_WHITE = 0xFFFFFFFF;
     private static final int COLOR_PASS = 0xFF55FF55;
     private static final int COLOR_FAIL = 0xFFFF5555;
+    private static final int COLOR_INFO = 0xFF55DDFF;
+    private static final int COLOR_SKIPPED = 0xFFAAAAAA;
+    private static final int COLOR_PENDING = 0xFFFFCC55;
     private static final int COLOR_DETAILS = 0xFFDDDDDD;
 
     private final Screen parent;
@@ -104,14 +107,27 @@ public final class DiagnosticsScreen extends Screen {
         int passed = (int) results.stream().filter(
                 FrameGenTestRunner.TestResult::passed
         ).count();
-        int summaryColor = passed == results.size() ? COLOR_PASS : COLOR_FAIL;
+        int failed = (int) results.stream().filter(
+                FrameGenTestRunner.TestResult::failed
+        ).count();
+        int pending = results.size() - passed - failed;
+        boolean hardwareValidated =
+                FrameGenTestRunner.hardwarePathValidated(results);
+        int summaryColor = hardwareValidated
+                ? COLOR_PASS
+                : failed > 0 ? COLOR_FAIL : COLOR_PENDING;
         extractor.centeredText(font, title, width / 2, 7, COLOR_WHITE);
         extractor.centeredText(
                 font,
                 Component.translatable(
                         "dlss_fg.diagnostics.summary",
                         passed,
-                        results.size()
+                        failed,
+                        pending,
+                        Component.translatable(
+                                hardwareValidated
+                                        ? "dlss_fg.diagnostics.validated"
+                                        : "dlss_fg.diagnostics.not_validated")
                 ),
                 width / 2,
                 22,
@@ -129,7 +145,12 @@ public final class DiagnosticsScreen extends Screen {
             int clippedTop = Math.max(CONTENT_TOP, y);
             int clippedBottom = Math.min(contentBottom(), y + cardHeight);
             if (clippedBottom > clippedTop) {
-                int background = result.passed() ? 0x80204020 : 0x80602020;
+                int background = switch (result.outcome()) {
+                    case PASS -> 0x80204020;
+                    case FAIL -> 0x80602020;
+                    case INFO -> 0x80204060;
+                    case SKIPPED -> 0x80404040;
+                };
                 extractor.fill(
                         left,
                         clippedTop,
@@ -144,15 +165,13 @@ public final class DiagnosticsScreen extends Screen {
                     Component.translatable(
                             "dlss_fg.diagnostics.result",
                             Component.translatable(
-                                    result.passed()
-                                            ? "dlss_fg.diagnostics.pass"
-                                            : "dlss_fg.diagnostics.fail"
+                                    outcomeTranslation(result.outcome())
                             ),
                             translatedResultName(result.name())
                     ),
                     left + 6,
                     y + 5,
-                    result.passed() ? COLOR_PASS : COLOR_FAIL
+                    outcomeColor(result.outcome())
             );
             int lineY = y + 17;
             for (String line : messageLines) {
@@ -187,16 +206,23 @@ public final class DiagnosticsScreen extends Screen {
 
     private Component translatedResultName(String name) {
         return switch (name) {
-            case "Native capability query" ->
-                    Component.translatable("dlss_fg.diagnostics.test.capabilities");
-            case "Renderer input pipeline" ->
-                    Component.translatable("dlss_fg.diagnostics.test.renderer_inputs");
-            case "Reflex Pacer Latency Tracker" ->
-                    Component.translatable("dlss_fg.diagnostics.test.reflex");
-            case "AI Optical Flow Artifact Corrector" ->
-                    Component.translatable("dlss_fg.diagnostics.test.optical_flow");
-            case "Ultrawide Lens Distortion Corrector" ->
-                    Component.translatable("dlss_fg.diagnostics.test.ultrawide");
+            case "Runtime environment" -> Component.translatable(
+                    "dlss_fg.diagnostics.test.environment");
+            case "Renderer integration" -> Component.translatable(
+                    "dlss_fg.diagnostics.test.renderer");
+            case "Native provider lifecycle" -> Component.translatable(
+                    "dlss_fg.diagnostics.test.provider");
+            case "Atomic Vulkan frame resources" -> Component.translatable(
+                    "dlss_fg.diagnostics.test.resources");
+            case "Depth and motion conventions" -> Component.translatable(
+                    "dlss_fg.diagnostics.test.conventions");
+            case "Hybrid Vulkan to D3D12 presentation" ->
+                    Component.translatable(
+                            "dlss_fg.diagnostics.test.d3d12");
+            case "D3D12 provider runtimes" -> Component.translatable(
+                    "dlss_fg.diagnostics.test.provider_runtimes");
+            case "End-to-end frame generation" -> Component.translatable(
+                    "dlss_fg.diagnostics.test.end_to_end");
             default -> Component.literal(name);
         };
     }
@@ -206,6 +232,9 @@ public final class DiagnosticsScreen extends Screen {
             int maxWidth
     ) {
         List<Component> details = new ArrayList<>();
+        if (result.message() != null && !result.message().isBlank()) {
+            details.add(Component.literal(result.message().trim()));
+        }
         if (!result.backendChecks().isEmpty()) {
             boolean hasSelectedBackend = result.backendChecks().stream()
                     .anyMatch(FrameGenTestRunner.BackendCheck::selected);
@@ -236,13 +265,10 @@ public final class DiagnosticsScreen extends Screen {
                         status
                 ));
             }
-        } else {
-            details.add(Component.literal(
-                    result.message() == null || result.message().isBlank()
-                            ? Component.translatable(
-                                    "dlss_fg.diagnostics.no_details"
-                            ).getString()
-                            : result.message().trim()
+        }
+        if (details.isEmpty()) {
+            details.add(Component.translatable(
+                    "dlss_fg.diagnostics.no_details"
             ));
         }
 
@@ -294,6 +320,26 @@ public final class DiagnosticsScreen extends Screen {
 
     private int contentBottom() {
         return Math.max(CONTENT_TOP + 12, height - FOOTER_HEIGHT);
+    }
+
+    private static String outcomeTranslation(
+            FrameGenTestRunner.Outcome outcome
+    ) {
+        return switch (outcome) {
+            case PASS -> "dlss_fg.diagnostics.pass";
+            case FAIL -> "dlss_fg.diagnostics.fail";
+            case INFO -> "dlss_fg.diagnostics.info";
+            case SKIPPED -> "dlss_fg.diagnostics.skipped";
+        };
+    }
+
+    private static int outcomeColor(FrameGenTestRunner.Outcome outcome) {
+        return switch (outcome) {
+            case PASS -> COLOR_PASS;
+            case FAIL -> COLOR_FAIL;
+            case INFO -> COLOR_INFO;
+            case SKIPPED -> COLOR_SKIPPED;
+        };
     }
 
     private int maxScroll() {

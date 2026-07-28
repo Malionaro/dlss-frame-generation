@@ -2,7 +2,8 @@
 
 [English](#english) · [Deutsch](#deutsch) ·
 [Installation](docs/INSTALL.md) · [Backend details](docs/BACKENDS.md) ·
-[Capability audit](docs/CAPABILITY_AUDIT.md)
+[Capability audit](docs/CAPABILITY_AUDIT.md) ·
+[Sodium/Iris status](docs/SODIUM_IRIS_COMPATIBILITY.md)
 
 ## English
 
@@ -19,11 +20,12 @@ screen for NVIDIA DLSS, AMD FSR and Intel XeSS frame-generation backends.
 | Backend | Status |
 |---|---|
 | NVIDIA Streamline 2.12 | True DLSS Super Resolution renders the world at Streamline's optimal input size and writes a display-resolution result before a native-resolution HUD is drawn. DLSS-G receives rotating HUD-less colour/depth/motion slots plus a separate transparent UI layer. Reflex pacing, resize resets and DLSS Ray Reconstruction with HDR/material guides are connected and remain capability-gated. |
-| AMD FSR 4 | The current public FSR 4 provider path is **DirectX 12**, not a native replacement for Minecraft's `VkSwapchainKHR`. The mod therefore keeps FSR 4 out of its Vulkan frame-generation labels. |
+| Hybrid Vulkan → D3D12 presentation | Optional Windows-only path. Minecraft still renders with Vulkan, then same-adapter shared images and two shared GPU fences hand frames to a D3D12 queue and DXGI flip-model swapchain. There is no production CPU copy. It is disabled by default, requires a restart, and falls back to normal Vulkan WSI if capability checks fail. This transport is not itself a frame-generation provider. |
+| AMD FSR 4 | The hybrid presenter provides the required D3D12 transport foundation, but the bundled OptiScaler/FidelityFX set does **not** contain `amd_fidelityfx_framegeneration_dx12.dll`. FSR 4 FG therefore remains unavailable rather than being simulated or mislabeled. |
 | AMD FidelityFX FSR 3.1 | The signed FidelityFX Vulkan runtime is bundled. Proxy-swapchain presentation and the prepare/configure dispatches receive renderer-owned colour, depth and dense motion vectors. Activation remains gated until the provider accepts them; driver and pacing tests on AMD hardware are still required. |
-| Intel XeSS-FG / Intel GPUs | Native XeSS-FG remains unavailable because Intel exposes it only through D3D12, `IDXGISwapChain4` and XeLL. On Intel hardware the Vulkan swapchain can instead use the explicitly named cross-vendor **FSR 3.1 fallback**. The UI never labels this fallback as XeSS-FG. |
+| Intel XeSS-FG / Intel GPUs | The D3D12 transport exists, but the required `libxess_fg.dll` and `libxell.dll` are not bundled. Native XeSS-FG remains unavailable until the official runtime, XeLL lifecycle and Intel proxy swapchain can all be integrated and accepted. On Intel hardware the Vulkan swapchain can instead use the explicitly named cross-vendor **FSR 3.1 fallback**. |
 | Bundled OptiScaler 0.9.4 bridge | On AMD it selects the `fsr31` Vulkan upscaler; on Intel it selects `xess`. It is loaded before FidelityFX and intercepts the mod's standard FFX Vulkan upscaling calls. NVIDIA stays on native Streamline. The render path currently exposes **Native AA (1:1)** only; the Vulkan bridge does not make XeFG available. |
-| Expandable compatibility layer | Minecraft's swapchain mixins now call a vendor-neutral provider API. Provider IDs cover NVIDIA Streamline Vulkan, AMD FSR 3.1 Vulkan, cross-vendor FSR 3.1 Vulkan, and future AMD FSR 4 / Intel XeSS-FG D3D12 routes. New providers can be added without rewriting the renderer mixins. |
+| Expandable compatibility layer | Minecraft's swapchain mixins call a vendor-neutral provider API with an explicit lifecycle and exclusive ownership. Atomic frame identities prevent colour, depth, motion and swapchain generations from different frames being combined. Optional renderer/material interfaces prepare Aperture interop without claiming that Aperture is supported today. |
 | Hybrid hardware ray tracing | Implemented with Vulkan acceleration structures and hardware ray queries for block shadows and reflections. Exact block/fluid `VoxelShape` boxes, raster-depth rejection and block-change invalidation are used. It activates only when the GPU exposes `VK_KHR_acceleration_structure` and `VK_KHR_ray_query`. |
 
 ### Build
@@ -46,6 +48,29 @@ the Vulkan shaders, runs the unit tests and then packages the single mod JAR.
 The resulting mod JAR is written to:
 
 `build/libs/dlss-frame-generation-1.0-SNAPSHOT.jar`
+
+### Source layout and repository integrity
+
+This is a client-only Fabric mod using Loom's split environment source sets.
+All runtime Java code therefore belongs under `src/client/java`. Seeing
+`compileJava NO-SOURCE` in Gradle output is expected; `compileClientJava` is the
+task that compiles the mod.
+
+The repository was audited on 2026-07-29:
+
+- all 76 top-level client source classes are present in the built JAR;
+- both Fabric entrypoints and all 16 Mixins are registered;
+- all 53 Java native declarations have matching JNI exports;
+- every native `.cpp` file is part of the CMake target;
+- all three Vulkan shaders are loaded by production code and compiled by tests;
+- the JAR contains no duplicate ZIP entries;
+- the unused `UltrawideLensCorrector` class was removed.
+
+`RendererIntegration` and `MaterialProvider` intentionally have no active
+Aperture implementation yet. They are the typed, frame-atomic extension
+boundary documented in [the Sodium/Iris compatibility plan](docs/SODIUM_IRIS_COMPATIBILITY.md),
+not forgotten runtime classes. Build output, development worlds, IDE files and
+local logs are excluded through `.gitignore`.
 
 ### Bundled OptiScaler
 
@@ -100,9 +125,11 @@ also open the same screen when it is installed.
 The settings screen adapts to small window sizes. Use the mouse wheel or the
 arrow buttons beside **Done** to reach every option.
 
-The mod screen has separate **Frame Gen** and **Graphics** sections. The
-Graphics section contains **Hardware Raytracing** with persistent mode,
-quality, distance and sampling settings. On supported hardware the mod:
+The mod screen has separate **Frame Gen** and **Graphics** sections. Graphics
+contains the **Hardware Raytracing** and **Vulkan → D3D12** subtabs. The latter
+shows the real bridge stage, adapter LUID and runtime audit. Its toggle is
+available only after same-GPU D3D12 and Vulkan external-memory capabilities
+have been confirmed. On supported hardware the ray-tracing path:
 
 - enables acceleration structures, ray queries and buffer device addresses
   during Vulkan device creation;
@@ -143,7 +170,10 @@ shows local motion magnitude: blue is slow, green is medium and red is fast.
 
 The settings screen includes **Run Diagnostics**. Backend availability depends
 on the detected GPU, the renderer and the native runtime. A visible option does
-not guarantee that vendor frame generation can be activated.
+not guarantee that vendor frame generation can be activated. The report
+distinguishes informational/skipped checks from passes and failures, wraps and
+scrolls long native messages, and reports a provider as hardware-validated only
+after it accepted an actual frame and completed presentation.
 
 For the detailed backend contracts and remaining implementation work, see
 [BACKENDS.md](docs/BACKENDS.md).
@@ -169,11 +199,12 @@ XeSS bereit.
 | Backend | Status |
 |---|---|
 | NVIDIA Streamline 2.12 | Echtes DLSS Super Resolution rendert die Welt in der von Streamline gelieferten optimalen Eingabeauflösung und schreibt das Ergebnis in voller Anzeigeauflösung, bevor das HUD nativ gerendert wird. DLSS-G erhält rotierende HUD-lose Farb-/Tiefen-/Motion-Slots plus eine getrennte transparente UI-Ebene. Reflex-Pacing, Resize-Resets und DLSS Ray Reconstruction mit HDR-/Material-Guides sind angebunden und Capability-gesteuert. |
-| AMD FSR 4 | Der aktuelle öffentliche FSR-4-Providerpfad verwendet **DirectX 12** und ist kein nativer Ersatz für Minecrafts `VkSwapchainKHR`. Die Mod bezeichnet ihren Vulkan-FG-Pfad deshalb nicht als FSR 4. |
+| Hybride Vulkan→D3D12-Präsentation | Optionaler, Windows-exklusiver Pfad. Minecraft rendert weiter mit Vulkan; gemeinsam genutzte Bilder auf derselben GPU und zwei GPU-Fences übergeben Frames an eine D3D12-Queue und eine DXGI-Flip-Model-Swapchain. Es gibt keine CPU-Kopie im Produktionspfad. Der Pfad ist standardmäßig aus, erfordert einen Neustart und fällt bei fehlenden Fähigkeiten sicher auf Vulkan-WSI zurück. Dieser Transport ist noch kein FG-Provider. |
+| AMD FSR 4 | Die Hybrid-Bridge stellt die D3D12-Transportgrundlage bereit. Im mitgelieferten OptiScaler-/FidelityFX-Paket fehlt jedoch `amd_fidelityfx_framegeneration_dx12.dll`. FSR-4-FG bleibt daher ehrlich nicht verfügbar. |
 | AMD FidelityFX FSR 3.1 | Die signierte FidelityFX-Vulkan-Laufzeit ist enthalten. Proxy-Swapchain sowie Prepare-/Configure-Dispatch erhalten Farbe, Tiefe und dichte Motion Vectors aus dem Renderer. Aktiviert wird erst nach Annahme durch den Provider; Treiber- und Pacing-Tests auf AMD-Hardware stehen noch aus. |
-| Intel XeSS-FG / Intel-GPUs | Echtes XeSS-FG bleibt nicht verfügbar, weil Intel dafür ausschließlich D3D12, `IDXGISwapChain4` und XeLL bereitstellt. Auf Intel-Hardware kann die Vulkan-Swapchain stattdessen den ausdrücklich benannten **FSR-3.1-Fallback** verwenden. Die UI bezeichnet diesen Fallback nicht als XeSS-FG. |
+| Intel XeSS-FG / Intel-GPUs | Der D3D12-Transport ist vorhanden, aber `libxess_fg.dll` und `libxell.dll` fehlen im mitgelieferten Paket. Echtes XeSS-FG bleibt deaktiviert, bis offizielle Runtime, XeLL-Lifecycle und Intel-Proxy-Swapchain vollständig integriert und vom Provider akzeptiert sind. Auf Intel-Hardware bleibt der ausdrücklich benannte **FSR-3.1-Fallback** verfügbar. |
 | Mitgelieferte OptiScaler-0.9.4-Bridge | Auf AMD wählt sie den Vulkan-Upscaler `fsr31`, auf Intel `xess`. Sie wird vor FidelityFX geladen und fängt die standardisierten FFX-Vulkan-Upscaling-Aufrufe der Mod ab. NVIDIA bleibt bei nativem Streamline. Der Renderpfad bietet derzeit ausschließlich **Native AA (1:1)**; XeFG wird dadurch unter Vulkan nicht verfügbar. |
-| Erweiterbarer Kompatibilitäts-Layer | Die Minecraft-Swapchain-Mixins verwenden jetzt eine herstellerneutrale Provider-API. Provider-IDs existieren für NVIDIA Streamline Vulkan, AMD FSR 3.1 Vulkan, den herstellerübergreifenden FSR-3.1-Vulkan-Fallback sowie zukünftige AMD-FSR-4-/Intel-XeSS-FG-D3D12-Routen. Neue Provider benötigen keine erneute Änderung der Renderer-Mixins. |
+| Erweiterbarer Kompatibilitäts-Layer | Die Minecraft-Swapchain-Mixins verwenden eine herstellerneutrale Provider-API mit eindeutigem Lifecycle und exklusivem Present-Besitz. Atomare Frame-Identitäten verhindern das Mischen von Farbe, Tiefe, Motion und Swapchain-Generationen verschiedener Frames. Optionale Renderer-/Material-Schnittstellen bereiten Aperture-Interop vor, ohne heutigen Aperture-Support zu behaupten. |
 | Hybrides Hardware-Raytracing | Mit Vulkan-Beschleunigungsstrukturen und Hardware-Ray-Queries für Blockschatten und Reflexionen umgesetzt. Exakte Block-/Fluid-`VoxelShape`-Boxen, Raster-Tiefenprüfung und Blockänderungs-Invalidierung werden verwendet. Aktivierung nur mit `VK_KHR_acceleration_structure` und `VK_KHR_ray_query`. |
 
 ### Build
@@ -197,6 +228,31 @@ einzelne Mod-JAR.
 Die fertige Mod-JAR liegt anschließend unter:
 
 `build/libs/dlss-frame-generation-1.0-SNAPSHOT.jar`
+
+### Quellstruktur und Repository-Integrität
+
+Dies ist eine reine Fabric-Client-Mod mit getrennten Loom-Source-Sets. Der
+gesamte Java-Laufzeitcode gehört deshalb nach `src/client/java`.
+`compileJava NO-SOURCE` in der Gradle-Ausgabe ist erwartetes Verhalten;
+`compileClientJava` kompiliert die eigentliche Mod.
+
+Das Repository wurde am 29.07.2026 vollständig geprüft:
+
+- alle 76 Top-Level-Clientklassen befinden sich in der gebauten JAR;
+- beide Fabric-Einstiegspunkte und alle 16 Mixins sind registriert;
+- alle 53 nativen Java-Deklarationen besitzen einen passenden JNI-Export;
+- jede native `.cpp`-Datei ist dem CMake-Target zugeordnet;
+- alle drei Vulkan-Shader werden vom Produktivcode geladen und in Tests
+  kompiliert;
+- die JAR enthält keine doppelten ZIP-Einträge;
+- die unbenutzte Klasse `UltrawideLensCorrector` wurde entfernt.
+
+`RendererIntegration` und `MaterialProvider` besitzen absichtlich noch keine
+aktive Aperture-Implementierung. Sie sind die typisierte, frame-atomare
+Erweiterungsgrenze aus dem
+[Sodium-/Iris-Kompatibilitätsplan](docs/SODIUM_IRIS_COMPATIBILITY.md) und keine
+vergessenen Laufzeitklassen. Build-Ausgaben, Entwicklungswelten, IDE-Dateien
+und lokale Logs werden über `.gitignore` ausgeschlossen.
 
 ### Mitgeliefertes OptiScaler
 
@@ -255,9 +311,11 @@ Der Einstellungsbildschirm passt sich kleinen Fenstern an. Mit Mausrad oder den
 Pfeiltasten neben **Fertig** erreichst du alle Optionen.
 
 Der Mod-Bildschirm besitzt getrennte Bereiche für **Frame Gen** und
-**Graphics**. Unter Graphics liegt **Hardware Raytracing** mit gespeicherten
-Einstellungen für Modus, Qualität, Distanz und Sampling. Auf
-unterstützter Hardware erledigt die Mod Folgendes:
+**Graphics**. Graphics enthält die Untertabs **Hardware Raytracing** und
+**Vulkan→D3D12**. Der zweite zeigt den echten Bridge-Zustand, die Adapter-LUID
+und das Runtime-Audit. Sein Schalter wird erst verfügbar, wenn das D3D12-Gerät
+auf derselben GPU und die Vulkan-External-Memory-Fähigkeiten bestätigt sind.
+Auf unterstützter Hardware erledigt der Raytracing-Pfad Folgendes:
 
 - Aktivierung von Acceleration Structures, Ray Queries und Buffer Device
   Addresses beim Erstellen des Vulkan-Geräts;
@@ -301,7 +359,10 @@ langsam, Grün mittel und Rot schnell.
 Der Einstellungsbildschirm enthält **Run Diagnostics**. Ob ein Backend verfügbar
 ist, hängt von erkannter GPU, Renderer und nativer Laufzeit ab. Eine sichtbare
 Option bedeutet nicht automatisch, dass die Frame Generation aktiviert werden
-kann.
+kann. Der Bericht trennt Hinweise/übersprungene Prüfungen von Erfolgen und
+Fehlern, bricht lange native Meldungen um und ist scrollbar. „Auf Hardware
+validiert“ erscheint erst, nachdem der Provider einen echten Frame angenommen
+und dessen Präsentation abgeschlossen hat.
 
 Die genauen Backend-Verträge und offenen Arbeiten stehen in
 [BACKENDS.md](docs/BACKENDS.md).

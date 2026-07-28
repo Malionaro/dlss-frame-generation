@@ -69,6 +69,20 @@ public class FrameGenConfig {
     // OptiScaler is bundled as a separate GPLv3 work and enabled by default,
     // but the runtime vendor gate loads it only on an actual AMD/Intel device.
     public boolean optiScalerEnabled = true;
+    // Optional Windows presentation transport. It replaces Vulkan WSI with
+    // shared Vulkan/D3D12 images and DXGI Present, but does not by itself
+    // provide FSR 4 or XeSS frame generation.
+    public boolean hybridD3D12PresentationEnabled = false;
+
+    public void setHybridD3D12PresentationEnabled(boolean enabled) {
+        hybridD3D12PresentationEnabled = enabled;
+        if (enabled) {
+            // Until a real D3D12 FG runtime owns the DXGI swapchain, no Vulkan
+            // FG proxy may compete for presentation ownership.
+            setFrameGenerationEnabled(
+                    FrameGenerationBackend.GpuVendor.UNKNOWN, false);
+        }
+    }
 
     public void applyPreset(Preset preset) {
         this.activePreset = preset;
@@ -79,7 +93,9 @@ public class FrameGenConfig {
                 this.reflexInputMarkerEnabled = true;
                 this.targetFps = 240;
                 this.motionBlurEnabled = false;
-                this.dlssUpscalingMode = 1; // DLAA at native resolution
+                setUpscalerMode(
+                        FrameGenerationBackend.GpuVendor.NVIDIA, 1
+                ); // DLAA at native resolution
                 this.projectionJitterEnabled = true;
             }
             case CINEMA -> {
@@ -87,7 +103,9 @@ public class FrameGenConfig {
                 this.hdrEnabled = true;
                 this.motionBlurEnabled = true;
                 this.motionBlurIntensity = 0.6f;
-                this.dlssUpscalingMode = 2; // Quality
+                setUpscalerMode(
+                        FrameGenerationBackend.GpuVendor.NVIDIA, 2
+                ); // Quality
                 this.projectionJitterEnabled = true;
             }
             case MAX_PERFORMANCE -> {
@@ -100,7 +118,9 @@ public class FrameGenConfig {
                 this.frameMultiplier = 4; // 4x MFG
                 this.amdFsrMultiplier = 2;
                 this.intelXessMfgMultiplier = 2;
-                this.dlssUpscalingMode = 4; // Performance
+                setUpscalerMode(
+                        FrameGenerationBackend.GpuVendor.NVIDIA, 4
+                ); // Performance
                 this.projectionJitterEnabled = true;
                 this.drsEnabled = true;
                 this.targetFps = 144;
@@ -187,6 +207,12 @@ public class FrameGenConfig {
             FrameGenerationBackend.GpuVendor vendor,
             boolean enabled
     ) {
+        if (enabled && hybridD3D12PresentationEnabled) {
+            dlssFgEnabled = false;
+            amdFsrFgEnabled = false;
+            intelXessFgEnabled = false;
+            return;
+        }
         if (enabled) {
             dlssFgEnabled = vendor == FrameGenerationBackend.GpuVendor.NVIDIA;
             amdFsrFgEnabled = vendor == FrameGenerationBackend.GpuVendor.AMD;
@@ -216,6 +242,55 @@ public class FrameGenConfig {
             case INTEL -> intelXessFgEnabled;
             case UNKNOWN -> false;
         };
+    }
+
+    /**
+     * Selects one temporal upscaler. A non-zero mode atomically disables the
+     * other vendor routes so two reconstruction passes cannot process the same
+     * output image.
+     */
+    public void setUpscalerMode(
+            FrameGenerationBackend.GpuVendor vendor,
+            int mode
+    ) {
+        int normalizedMode = Math.max(0, mode);
+        if (normalizedMode != 0) {
+            dlssUpscalingMode = 0;
+            amdFsrMode = 0;
+            intelXessMode = 0;
+        }
+        switch (vendor) {
+            case NVIDIA -> dlssUpscalingMode =
+                    clamp(normalizedMode, 0, 6);
+            case AMD -> amdFsrMode = normalizedMode == 0 ? 0 : 1;
+            case INTEL -> intelXessMode = normalizedMode == 0 ? 0 : 1;
+            case UNKNOWN -> {
+                dlssUpscalingMode = 0;
+                amdFsrMode = 0;
+                intelXessMode = 0;
+            }
+        }
+    }
+
+    public FrameGenerationBackend.GpuVendor selectedUpscalerVendor() {
+        FrameGenerationBackend.GpuVendor selected =
+                FrameGenerationBackend.GpuVendor.UNKNOWN;
+        if (dlssUpscalingMode != 0) {
+            selected = FrameGenerationBackend.GpuVendor.NVIDIA;
+        }
+        if (amdFsrMode != 0) {
+            if (selected != FrameGenerationBackend.GpuVendor.UNKNOWN) {
+                return FrameGenerationBackend.GpuVendor.UNKNOWN;
+            }
+            selected = FrameGenerationBackend.GpuVendor.AMD;
+        }
+        if (intelXessMode != 0) {
+            if (selected != FrameGenerationBackend.GpuVendor.UNKNOWN) {
+                return FrameGenerationBackend.GpuVendor.UNKNOWN;
+            }
+            selected = FrameGenerationBackend.GpuVendor.INTEL;
+        }
+        return selected;
     }
 
     public FrameGenerationBackend.GpuVendor conflictingFrameGenerationVendor(
@@ -262,30 +337,45 @@ public class FrameGenConfig {
         boolean oldNvidia = dlssFgEnabled;
         boolean oldAmd = amdFsrFgEnabled;
         boolean oldIntel = intelXessFgEnabled;
+        int oldDlssMode = dlssUpscalingMode;
+        int oldAmdMode = amdFsrMode;
+        int oldIntelMode = intelXessMode;
 
         switch (detectedVendor) {
             case NVIDIA -> {
                 amdFsrFgEnabled = false;
                 intelXessFgEnabled = false;
+                amdFsrMode = 0;
+                intelXessMode = 0;
             }
             case AMD -> {
                 dlssFgEnabled = false;
                 intelXessFgEnabled = false;
+                dlssUpscalingMode = 0;
+                intelXessMode = 0;
             }
             case INTEL -> {
                 dlssFgEnabled = false;
                 amdFsrFgEnabled = false;
+                dlssUpscalingMode = 0;
+                amdFsrMode = 0;
             }
             case UNKNOWN -> {
                 dlssFgEnabled = false;
                 amdFsrFgEnabled = false;
                 intelXessFgEnabled = false;
+                dlssUpscalingMode = 0;
+                amdFsrMode = 0;
+                intelXessMode = 0;
             }
         }
 
         return oldNvidia != dlssFgEnabled
                 || oldAmd != amdFsrFgEnabled
-                || oldIntel != intelXessFgEnabled;
+                || oldIntel != intelXessFgEnabled
+                || oldDlssMode != dlssUpscalingMode
+                || oldAmdMode != amdFsrMode
+                || oldIntelMode != intelXessMode;
     }
 
     public static FrameGenConfig getInstance() {
@@ -330,10 +420,36 @@ public class FrameGenConfig {
                     )
             );
         }
+        if (hybridD3D12PresentationEnabled) {
+            setFrameGenerationEnabled(
+                    FrameGenerationBackend.GpuVendor.UNKNOWN, false);
+        }
         reflexMode = clamp(reflexMode, 0, 2);
         dlssUpscalingMode = clamp(dlssUpscalingMode, 0, 6);
         amdFsrMode = amdFsrMode == 0 ? 0 : 1;
         intelXessMode = intelXessMode == 0 ? 0 : 1;
+        int enabledUpscalers = (dlssUpscalingMode == 0 ? 0 : 1)
+                + (amdFsrMode == 0 ? 0 : 1)
+                + (intelXessMode == 0 ? 0 : 1);
+        if (enabledUpscalers > 1) {
+            if (activeVendorId == 0) {
+                setUpscalerMode(
+                        FrameGenerationBackend.GpuVendor.UNKNOWN, 0
+                );
+            } else {
+                FrameGenerationBackend.GpuVendor vendor =
+                        FrameGenerationBackend.GpuVendor.fromVendorId(
+                                activeVendorId
+                        );
+                int retainedMode = switch (vendor) {
+                    case NVIDIA -> dlssUpscalingMode;
+                    case AMD -> amdFsrMode;
+                    case INTEL -> intelXessMode;
+                    case UNKNOWN -> 0;
+                };
+                setUpscalerMode(vendor, retainedMode);
+            }
+        }
         frameMultiplier = clamp(frameMultiplier, 2, 4);
         amdFsrMultiplier = 2;
         intelXessMfgMultiplier = 2;

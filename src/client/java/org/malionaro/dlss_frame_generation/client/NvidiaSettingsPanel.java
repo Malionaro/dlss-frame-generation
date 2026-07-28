@@ -58,7 +58,9 @@ public final class NvidiaSettingsPanel {
                             }
                             screen.refreshSettingsWidgets();
                         });
-        btnFg.active = fgSupported && !frameGenerationConflict;
+        btnFg.active = fgSupported
+                && !frameGenerationConflict
+                && !config.hybridD3D12PresentationEnabled;
         screen.addSettingsWidget(
                 btnFg,
                 screen.frameGenerationTooltip(
@@ -104,7 +106,15 @@ public final class NvidiaSettingsPanel {
                             screen.refreshSettingsWidgets();
                         });
         btnReflex.active = reflexSupported;
-        screen.addSettingsWidget(btnReflex, "dlss_fg.tooltip.nvidia.reflex");
+        screen.addSettingsWidget(
+                btnReflex,
+                screen.capabilityTooltip(
+                        FrameGenerationBackend.GpuVendor.NVIDIA,
+                        capabilities,
+                        StreamlineBridge.CAP_LOW_LATENCY,
+                        "dlss_fg.tooltip.nvidia.reflex"
+                )
+        );
 
         var btnDlssMode = CycleButton.builder((Integer value) -> {
                     return switch (value) {
@@ -121,7 +131,10 @@ public final class NvidiaSettingsPanel {
                 .withValues(0, 1, 2, 3, 4, 5, 6)
                 .create(leftX, topY + 25, columnWidth, 20,
                         Component.translatable("dlss_fg.option.nvidia.dlss_mode"), (button, value) -> {
-                            config.dlssUpscalingMode = value;
+                            config.setUpscalerMode(
+                                    FrameGenerationBackend.GpuVendor.NVIDIA,
+                                    value
+                            );
                             config.projectionJitterEnabled = value != 0;
                             if (value < 2) {
                                 // Ray Reconstruction only accepts a
@@ -136,7 +149,15 @@ public final class NvidiaSettingsPanel {
                             }
                         });
         btnDlssMode.active = upscalingSupported;
-        screen.addSettingsWidget(btnDlssMode, "dlss_fg.tooltip.nvidia.dlss_mode");
+        screen.addSettingsWidget(
+                btnDlssMode,
+                screen.capabilityTooltip(
+                        FrameGenerationBackend.GpuVendor.NVIDIA,
+                        capabilities,
+                        StreamlineBridge.CAP_UPSCALING,
+                        "dlss_fg.tooltip.nvidia.dlss_mode"
+                )
+        );
 
         Component dlssStatusLabel = upscalingSupported
                 ? Component.translatable("dlss_fg.status.dlss.supported")
@@ -175,7 +196,8 @@ public final class NvidiaSettingsPanel {
                         });
         btnMultiplier.active = fgSupported
                 && config.dlssFgEnabled
-                && !frameGenerationConflict;
+                && !frameGenerationConflict
+                && !config.hybridD3D12PresentationEnabled;
         screen.addSettingsWidget(
                 btnMultiplier,
                 screen.frameGenerationDependentTooltip(
@@ -192,6 +214,14 @@ public final class NvidiaSettingsPanel {
                             config.save();
                         });
         btnPacing.active = reflexSupported;
-        screen.addSettingsWidget(btnPacing, "dlss_fg.tooltip.nvidia.reflex_pacing");
+        screen.addSettingsWidget(
+                btnPacing,
+                screen.capabilityTooltip(
+                        FrameGenerationBackend.GpuVendor.NVIDIA,
+                        capabilities,
+                        StreamlineBridge.CAP_LOW_LATENCY,
+                        "dlss_fg.tooltip.nvidia.reflex_pacing"
+                )
+        );
     }
 }

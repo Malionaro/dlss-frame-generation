@@ -76,8 +76,10 @@ failure.
 
 Primary references:
 
-- [FSR 3.1 Super Resolution and Frame Interpolation](https://gpuopen.com/manuals/fidelityfx_sdk/techniques/super-resolution-interpolation/)
-- [FSR 3.1 migration guide](https://gpuopen.com/manuals/fidelityfx_sdk/getting-started/migrating-to-fsr-3-1/)
+- [FidelityFX SDK manual](https://gpuopen.com/manuals/fsr_sdk/)
+- [FidelityFX API setup](https://gpuopen.com/manuals/fsr_sdk/getting-started/ffx-api/)
+- [Frame Interpolation ML](https://gpuopen.com/manuals/fsr_sdk/techniques/frame-interpolation-ml/)
+- [Frame-interpolation swapchain](https://gpuopen.com/manuals/fsr_sdk/techniques/frame-interpolation-swap-chain/)
 - [FidelityFX SDK repository](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK)
 
 Implemented checks and calls:
@@ -91,8 +93,37 @@ Implemented checks and calls:
   Minecraft currently renders scene and UI at the same display resolution.
 - Provider failure remains fail-closed and is surfaced in native status text.
 
-FSR 4 is not advertised as the Vulkan frame-generation backend. Its current
-public provider route cannot simply replace Minecraft's `VkSwapchainKHR`.
+FSR 4 is not advertised as the Vulkan frame-generation backend. The hybrid
+D3D12 presenter is present, but the runtime audit still requires both
+`amd_fidelityfx_dx12.dll` and
+`amd_fidelityfx_framegeneration_dx12.dll`. The latter is not in the verified
+OptiScaler 0.9.4 bundle, so no FSR 4 FG context or proxy swapchain is claimed.
+
+## Hybrid Vulkan/D3D12 presenter
+
+Primary references:
+
+- [Vulkan external memory on Windows](https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_external_memory_win32.html)
+- [Vulkan external semaphore handle types](https://docs.vulkan.org/refpages/latest/refpages/source/VkExternalSemaphoreHandleTypeFlagBits.html)
+- [D3D12 shared handles](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-createsharedhandle)
+- [D3D12 command-queue synchronization](https://learn.microsoft.com/en-us/windows/win32/direct3d12/executing-and-synchronizing-command-lists)
+- [DXGI swapchains with D3D12](https://learn.microsoft.com/en-us/windows/win32/direct3d12/swap-chains)
+
+Implemented capability gates:
+
+- Windows and a valid Vulkan physical/logical device;
+- `VK_KHR_external_memory`,
+  `VK_KHR_external_memory_win32`, `VK_KHR_external_semaphore` and
+  `VK_KHR_external_semaphore_win32` enabled on the logical device;
+- exact Vulkan/DXGI adapter LUID match;
+- shareable D3D12 texture format/usage and Vulkan import;
+- two shared D3D12 fences imported as Vulkan timeline semaphores;
+- D3D12 command queue, DXGI flip-discard swapchain and zero-copy frame path.
+
+`D3D12_DEVICE_READY` is not reported as presentation success.
+`PRESENTATION_READY` additionally requires all shared images, synchronization
+objects and swapchain resources. Any failed stage preserves the reason and
+returns to normal Vulkan WSI instead of enabling a nonfunctional button.
 
 ## OptiScaler
 
@@ -125,15 +156,16 @@ not remove the need for separate reduced-resolution world rendering.
 
 Primary references:
 
-- [Intel XeSS Frame Generation developer guide](https://www.intel.com/content/www/us/en/developer/articles/technical/xess-fg-developer-guide.html)
-- [Intel XeSS platform/API support](https://www.intel.com/content/www/us/en/developer/topic-technology/gamedev/xess.html)
+- [Intel XeSS-FG developer guide source](https://github.com/intel/xess/blob/main/doc/xess_fg_developer_guide_english.md)
+- [Intel XeLL developer guide](https://www.intel.com/content/www/us/en/developer/articles/technical/xell-developer-guide.html)
 - [Intel XeSS releases](https://github.com/intel/xess/releases)
 
 Intel exposes XeSS Super Resolution on Vulkan, but XeSS Frame Generation uses a
-D3D12 proxy swapchain and XeLL. Minecraft's current renderer owns a Vulkan
-swapchain, so the mod labels its Intel Vulkan frame-generation route as an FSR
-3.1 fallback. OptiScaler may select XeSS for Vulkan reconstruction, but cannot
-provide native XeSS-FG presentation.
+D3D12 proxy swapchain and XeLL. The hybrid bridge can provide a same-adapter
+D3D12 queue and presentation chain, but the bundled files contain only
+`libxess.dll`; `libxess_fg.dll` and `libxell.dll` are absent. The runtime audit
+therefore rejects native XeSS-FG before initialization. OptiScaler may select
+XeSS for Vulkan reconstruction, but cannot provide native XeSS-FG presentation.
 
 ## Vulkan hardware ray tracing
 
@@ -172,18 +204,39 @@ The runtime status remains “waiting” until a world/camera exists and becomes
 
 ## Verification state
 
-Automated verification covers Java compilation, native C++ compilation, shader
-compilation through runtime shaderc tests, config migration, motion-vector
-conventions, OptiScaler configuration/hashes and capability selection.
+### 1. Statically implemented and built
 
-Local runtime testing on a GTX 1660 SUPER on 2026-07-28 confirms normal Vulkan
-startup, acceptance of all current Mixins, world loading, swapchain resize,
-Streamline/Reflex initialization and correct rejection of unsupported DLSS and
-ray-query features. An earlier RTX 4080 SUPER log confirmed GPU detection and
-ray-query capability, but came from the old Vulkan-1.2-requesting build and
-therefore cannot validate the corrected DLSS/FG/RR output.
+- actual-device renderer detection, optional Iris API probing and fail-closed
+  shader/backend states;
+- atomic frame identity/resources with layout, queue owner and swapchain
+  generation;
+- exclusive provider lifecycle and safe swapchain transitions;
+- Windows Vulkan/D3D12 same-adapter presenter and provider-runtime audit;
+- explicit depth/motion conventions and future renderer/material contracts;
+- localized disabled-control reasons and scrollable diagnostics.
 
-The remaining hardware validation is deliberately narrow:
+### 2. Automatically tested
+
+Gradle tests compile Java, native C++ and shaders and cover renderer-state
+routing, provider exclusivity/lifecycle, stale frame/swapchain generations,
+missing Vulkan interop extensions, missing provider DLLs, language-key parity,
+reversed-Z/motion conventions and existing capability/config behavior.
+
+### 3. Locally runtime tested
+
+On a GTX 1660 SUPER on 2026-07-28 the current build completed Vulkan startup,
+all Mixins, world loading and a live resize. The optional hybrid path matched the
+same adapter LUID, reached all seven presenter capabilities (`0x7f`), rebuilt
+its shared images/fences, presented thousands of frames through DXGI and exited
+cleanly with the D3D12 debug layer enabled. No CPU frame copy, D3D12 debug
+message, Vulkan validation error or device removal was observed.
+
+The same GPU correctly rejects unsupported DLSS-G and ray-query features. An
+earlier RTX 4080 SUPER log confirmed detection/ray-query capability, but came
+from an older Vulkan-1.2-requesting build and cannot validate current
+DLSS/FG/RR output.
+
+### 4. Hardware validation still required
 
 - RTX 40: validate DLSS optimal-resolution output, DLSS-G present interception,
   RT depth rejection and DLSS-RR guide acceptance with Vulkan validation
@@ -191,3 +244,9 @@ The remaining hardware validation is deliberately narrow:
 - AMD: validate FidelityFX proxy-swapchain pacing, resize and fullscreen.
 - Intel: validate OptiScaler XeSS Native AA plus the explicitly named FSR 3.1
   frame-generation fallback.
+- Sodium 0.9.1/Iris 1.11.2: run their real 26.2 mod JARs through world load,
+  renderer reload, resize/fullscreen and shaderpack fail-closed cases.
+- Minecraft 26.3: inspect its final renderer ABI and add a separate guarded
+  source set/Mixin configuration if class or frame-boundary hooks changed.
+- FSR 4 FG and XeSS-FG: cannot be provider-tested until the respective official,
+  redistributable D3D12 FG runtime (and XeLL for Intel) is available.

@@ -17,6 +17,11 @@ headers. They expose the FidelityFX Vulkan upscaling and FSR 3.1
 frame-generation proxy-swapchain API. No unverified upstream SDK tag is claimed
 for this binary.
 
+The collected runtime also contains generic D3D12/upscaler components, but does
+not contain `amd_fidelityfx_framegeneration_dx12.dll`, `libxess_fg.dll` or
+`libxell.dll`. This project does not redistribute or claim AMD FSR 4 Frame
+Generation or Intel XeSS Frame Generation/XeLL provider binaries.
+
 Copyright (C) 2024 Advanced Micro Devices, Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of

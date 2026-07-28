@@ -42,7 +42,9 @@ public final class IntelSettingsPanel {
                             }
                             screen.refreshSettingsWidgets();
                         });
-        btnFgXeSS.active = fsrFallbackReady && !frameGenerationConflict;
+        btnFgXeSS.active = fsrFallbackReady
+                && !frameGenerationConflict
+                && !config.hybridD3D12PresentationEnabled;
         screen.addSettingsWidget(
                 btnFgXeSS,
                 screen.frameGenerationTooltip(
@@ -70,7 +72,8 @@ public final class IntelSettingsPanel {
                         });
         btnMfg.active = fsrFallbackReady
                 && config.intelXessFgEnabled
-                && !frameGenerationConflict;
+                && !frameGenerationConflict
+                && !config.hybridD3D12PresentationEnabled;
         screen.addSettingsWidget(
                 btnMfg,
                 screen.frameGenerationDependentTooltip(
@@ -91,7 +94,10 @@ public final class IntelSettingsPanel {
                 .withValues(0, 1)
                 .create(leftX, topY + 25, columnWidth, 20,
                         Component.translatable("dlss_fg.option.intel.upscaling"), (button, value) -> {
-                            config.intelXessMode = value;
+                            config.setUpscalerMode(
+                                    FrameGenerationBackend.GpuVendor.INTEL,
+                                    value
+                            );
                             config.save();
                             try {
                                 StreamlineBridge.nSetUpscalingMode(FrameGenerationBackend.GpuVendor.INTEL.vendorId(), value, config.intelXessSharpness);
@@ -100,7 +106,15 @@ public final class IntelSettingsPanel {
                             }
                         });
         btnXessMode.active = xessUpscalingSupported;
-        screen.addSettingsWidget(btnXessMode, "dlss_fg.tooltip.intel.upscaling");
+        screen.addSettingsWidget(
+                btnXessMode,
+                screen.capabilityTooltip(
+                        FrameGenerationBackend.GpuVendor.INTEL,
+                        capabilities,
+                        StreamlineBridge.CAP_UPSCALING,
+                        "dlss_fg.tooltip.intel.upscaling"
+                )
+        );
 
         // Row 2 Right: XeSS Sharpness Slider
         var sliderXessSharpness = new AbstractSliderButton(
@@ -132,7 +146,15 @@ public final class IntelSettingsPanel {
             }
         };
         sliderXessSharpness.active = xessUpscalingSupported;
-        screen.addSettingsWidget(sliderXessSharpness, "dlss_fg.tooltip.aa_sharpness");
+        screen.addSettingsWidget(
+                sliderXessSharpness,
+                screen.capabilityTooltip(
+                        FrameGenerationBackend.GpuVendor.INTEL,
+                        capabilities,
+                        StreamlineBridge.CAP_UPSCALING,
+                        "dlss_fg.tooltip.aa_sharpness"
+                )
+        );
 
         // Row 3 Left: UI Recomposition
         var btnRecomp = CycleButton.onOffBuilder(config.uiRecomposition)
@@ -146,8 +168,17 @@ public final class IntelSettingsPanel {
                                 // Ignore
                             }
                         });
-        btnRecomp.active = fsrFallbackReady;
-        screen.addSettingsWidget(btnRecomp, "dlss_fg.tooltip.ui_recomposition");
+        btnRecomp.active = fsrFallbackReady
+                && config.intelXessFgEnabled
+                && !frameGenerationConflict
+                && !config.hybridD3D12PresentationEnabled;
+        screen.addSettingsWidget(
+                btnRecomp,
+                screen.frameGenerationDependentTooltip(
+                        FrameGenerationBackend.GpuVendor.INTEL,
+                        "dlss_fg.tooltip.ui_recomposition"
+                )
+        );
 
         // XeSS-FG cannot consume a Vulkan swapchain. Show the compatible
         // cross-vendor FSR transport separately so it is never mislabeled.

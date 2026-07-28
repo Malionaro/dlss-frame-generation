@@ -1,5 +1,9 @@
 package org.malionaro.dlss_frame_generation.client;
 
+import com.mojang.blaze3d.pipeline.RenderTarget;
+
+import java.util.Optional;
+
 /**
  * Adapter specifically tailored for Sodium Vulkan.
  * In Minecraft 26.2, Sodium operates on top of the same Vulkan device, queue, and swapchain
@@ -8,6 +12,28 @@ package org.malionaro.dlss_frame_generation.client;
  */
 public final class SodiumVulkanAdapter implements RendererBackendAdapter {
     private final VanillaVulkanAdapter delegate = new VanillaVulkanAdapter();
+
+    @Override
+    public Optional<FrameResourceSet> captureFrameResources(
+            RenderTarget renderTarget,
+            RenderTarget outputTarget,
+            FrameIdentity identity
+    ) {
+        return delegate.captureFrameResources(
+                renderTarget, outputTarget, identity
+        ).map(resources -> new FrameResourceSet(
+                resources.identity(),
+                FrameResourceSet.Source.SODIUM_VULKAN,
+                resources.commandBuffer(),
+                resources.color(),
+                resources.depth(),
+                resources.output(),
+                resources.backbuffer(),
+                resources.acquireSemaphore(),
+                resources.presentSemaphore(),
+                resources.outsideRenderPass()
+        ));
+    }
 
     @Override
     public long getVulkanInstance() { return delegate.getVulkanInstance(); }

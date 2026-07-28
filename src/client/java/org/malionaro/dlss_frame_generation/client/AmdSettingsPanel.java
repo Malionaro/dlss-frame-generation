@@ -40,7 +40,9 @@ public final class AmdSettingsPanel {
                             }
                             screen.refreshSettingsWidgets();
                         });
-        btnFgFsr.active = amdSupported && !frameGenerationConflict;
+        btnFgFsr.active = amdSupported
+                && !frameGenerationConflict
+                && !config.hybridD3D12PresentationEnabled;
         screen.addSettingsWidget(
                 btnFgFsr,
                 screen.frameGenerationTooltip(
@@ -69,7 +71,8 @@ public final class AmdSettingsPanel {
                         });
         btnMult.active = amdSupported
                 && config.amdFsrFgEnabled
-                && !frameGenerationConflict;
+                && !frameGenerationConflict
+                && !config.hybridD3D12PresentationEnabled;
         screen.addSettingsWidget(
                 btnMult,
                 screen.frameGenerationDependentTooltip(
@@ -89,7 +92,10 @@ public final class AmdSettingsPanel {
                 .withValues(0, 1)
                 .create(leftX, topY + 25, columnWidth, 20,
                         Component.translatable("dlss_fg.option.amd.upscaling"), (button, value) -> {
-                            config.amdFsrMode = value;
+                            config.setUpscalerMode(
+                                    FrameGenerationBackend.GpuVendor.AMD,
+                                    value
+                            );
                             config.save();
                             try {
                                 StreamlineBridge.nSetUpscalingMode(FrameGenerationBackend.GpuVendor.AMD.vendorId(), value, config.amdFsrSharpness);
@@ -98,7 +104,15 @@ public final class AmdSettingsPanel {
                             }
                         });
         btnFsrMode.active = upscalingSupported;
-        screen.addSettingsWidget(btnFsrMode, "dlss_fg.tooltip.amd.upscaling");
+        screen.addSettingsWidget(
+                btnFsrMode,
+                screen.capabilityTooltip(
+                        FrameGenerationBackend.GpuVendor.AMD,
+                        capabilities,
+                        StreamlineBridge.CAP_UPSCALING,
+                        "dlss_fg.tooltip.amd.upscaling"
+                )
+        );
 
         // Row 2 Right: FSR Sharpness (Slider)
         var sliderFsrSharpness = new net.minecraft.client.gui.components.AbstractSliderButton(
@@ -130,7 +144,15 @@ public final class AmdSettingsPanel {
             }
         };
         sliderFsrSharpness.active = upscalingSupported;
-        screen.addSettingsWidget(sliderFsrSharpness, "dlss_fg.tooltip.aa_sharpness");
+        screen.addSettingsWidget(
+                sliderFsrSharpness,
+                screen.capabilityTooltip(
+                        FrameGenerationBackend.GpuVendor.AMD,
+                        capabilities,
+                        StreamlineBridge.CAP_UPSCALING,
+                        "dlss_fg.tooltip.aa_sharpness"
+                )
+        );
 
         // Row 3 Left: UI Recomposition
         var btnRecomp = CycleButton.onOffBuilder(config.uiRecomposition)
@@ -144,8 +166,17 @@ public final class AmdSettingsPanel {
                                 // Ignore
                             }
                         });
-        btnRecomp.active = amdSupported;
-        screen.addSettingsWidget(btnRecomp, "dlss_fg.tooltip.ui_recomposition");
+        btnRecomp.active = amdSupported
+                && config.amdFsrFgEnabled
+                && !frameGenerationConflict
+                && !config.hybridD3D12PresentationEnabled;
+        screen.addSettingsWidget(
+                btnRecomp,
+                screen.frameGenerationDependentTooltip(
+                        FrameGenerationBackend.GpuVendor.AMD,
+                        "dlss_fg.tooltip.ui_recomposition"
+                )
+        );
 
         var proxyStatus = CycleButton.onOffBuilder(proxyReady)
                 .create(rightX, topY + 50, columnWidth, 20,

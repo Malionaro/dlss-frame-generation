@@ -3,19 +3,25 @@ package org.malionaro.dlss_frame_generation.client.mixin;
 import com.mojang.blaze3d.vulkan.VulkanDevice;
 import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
 import com.mojang.blaze3d.vulkan.VulkanGpuSurface;
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
 import org.malionaro.dlss_frame_generation.client.FrameGenerationCompatibilityLayer;
 import org.malionaro.dlss_frame_generation.client.FrameGenMod;
+import org.malionaro.dlss_frame_generation.client.D3D12PresentationBridge;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 import org.malionaro.dlss_frame_generation.client.VulkanRegistry;
+import org.lwjgl.glfw.GLFWNativeWin32;
 import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.system.Platform;
 import org.lwjgl.vulkan.KHRSwapchain;
+import org.lwjgl.vulkan.KHRSynchronization2;
 import org.lwjgl.vulkan.VkAllocationCallbacks;
 import org.lwjgl.vulkan.VkDevice;
+import org.lwjgl.vulkan.VkDependencyInfo;
+import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkPresentInfoKHR;
 import org.lwjgl.vulkan.VkQueue;
 import org.lwjgl.vulkan.VkSwapchainCreateInfoKHR;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
@@ -26,6 +32,9 @@ import java.nio.LongBuffer;
 
 @Mixin(value = VulkanGpuSurface.class, remap = false)
 public class VulkanGpuSurfaceMixin {
+    @Unique
+    private long dlss_fg$windowHandle;
+
     private static boolean useProviderProxy() {
         return FrameGenerationCompatibilityLayer.proxySwapchainAvailable();
     }
@@ -43,6 +52,20 @@ public class VulkanGpuSurfaceMixin {
         VkAllocationCallbacks allocator,
         LongBuffer swapchain
     ) {
+        if (D3D12PresentationBridge.canCreateProxySwapchain()) {
+            long nativeWindow = Platform.get() == Platform.WINDOWS
+                    ? GLFWNativeWin32.glfwGetWin32Window(
+                            dlss_fg$windowHandle)
+                    : 0L;
+            int result = D3D12PresentationBridge.createSwapchain(
+                    nativeWindow,
+                    createInfo.address(),
+                    MemoryUtil.memAddress(swapchain)
+            );
+            if (result != StreamlineBridge.NATIVE_NOT_HANDLED) {
+                return result;
+            }
+        }
         if (useProviderProxy()) {
             int result = FrameGenerationCompatibilityLayer.createProxySwapchain(
                 createInfo.address(),
@@ -66,6 +89,10 @@ public class VulkanGpuSurfaceMixin {
         long swapchain,
         VkAllocationCallbacks allocator
     ) {
+        if (D3D12PresentationBridge.ownsSwapchain(swapchain)) {
+            D3D12PresentationBridge.destroySwapchain(swapchain);
+            return;
+        }
         if (useProviderProxy()) {
             FrameGenerationCompatibilityLayer.destroyProxySwapchain(
                 device.address(),
@@ -90,6 +117,13 @@ public class VulkanGpuSurfaceMixin {
         IntBuffer count,
         LongBuffer images
     ) {
+        if (D3D12PresentationBridge.ownsSwapchain(swapchain)) {
+            return D3D12PresentationBridge.getSwapchainImages(
+                    swapchain,
+                    MemoryUtil.memAddress(count),
+                    images == null ? 0L : MemoryUtil.memAddress(images)
+            );
+        }
         if (useProviderProxy()) {
             int result = FrameGenerationCompatibilityLayer.getProxySwapchainImages(
                 device.address(),
@@ -117,6 +151,16 @@ public class VulkanGpuSurfaceMixin {
         long fence,
         IntBuffer imageIndex
     ) {
+        if (D3D12PresentationBridge.ownsSwapchain(swapchain)) {
+            if (fence != 0L) {
+                return org.lwjgl.vulkan.VK10.VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            return D3D12PresentationBridge.acquireNextImage(
+                    swapchain,
+                    semaphore,
+                    MemoryUtil.memAddress(imageIndex)
+            );
+        }
         if (useProviderProxy()) {
             int result = FrameGenerationCompatibilityLayer.acquireProxySwapchainImage(
                 device.address(),
@@ -141,6 +185,12 @@ public class VulkanGpuSurfaceMixin {
         )
     )
     private int presentProviderProxyImage(VkQueue queue, VkPresentInfoKHR presentInfo) {
+        if (presentInfo.swapchainCount() == 1
+                && D3D12PresentationBridge.ownsSwapchain(
+                        presentInfo.pSwapchains().get(0))) {
+            return D3D12PresentationBridge.queuePresent(
+                    queue.address(), presentInfo.address());
+        }
         if (useProviderProxy()) {
             int result = FrameGenerationCompatibilityLayer.queueProxyPresent(
                 queue.address(), presentInfo.address()
@@ -152,7 +202,32 @@ public class VulkanGpuSurfaceMixin {
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void onInit(VulkanDevice device, long surfaceHandle, CallbackInfo ci) {
+        this.dlss_fg$windowHandle = surfaceHandle;
         VulkanRegistry.registerSurface((VulkanGpuSurface) (Object) this);
+    }
+
+    @Redirect(
+        method = "blitFromTexture",
+        at = @At(
+            value = "INVOKE",
+            target = "Lorg/lwjgl/vulkan/KHRSynchronization2;vkCmdPipelineBarrier2KHR(Lorg/lwjgl/vulkan/VkCommandBuffer;Lorg/lwjgl/vulkan/VkDependencyInfo;)V"
+        )
+    )
+    private void adjustHybridD3D12ImageBarrier(
+            VkCommandBuffer commandBuffer,
+            VkDependencyInfo dependencyInfo
+    ) {
+        var compatibility = FrameGenMod.compatibilityManager();
+        if (compatibility != null
+                && compatibility.adapter() != null) {
+            D3D12PresentationBridge.adjustBlitBarrier(
+                    dependencyInfo,
+                    compatibility.adapter()
+                            .getGraphicsQueueFamilyIndex()
+            );
+        }
+        KHRSynchronization2.vkCmdPipelineBarrier2KHR(
+                commandBuffer, dependencyInfo);
     }
 
     @Inject(method = "configure", at = @At("HEAD"))
@@ -188,12 +263,4 @@ public class VulkanGpuSurfaceMixin {
         }
     }
 
-    @Inject(method = "blitFromTexture", at = @At("HEAD"))
-    private void onBlit(com.mojang.blaze3d.systems.CommandEncoderBackend encoder, com.mojang.blaze3d.textures.GpuTextureView textureView, CallbackInfo ci) {
-        if (textureView instanceof VulkanGpuTextureView vulkanView) {
-            if (vulkanView.texture() != null) {
-                VulkanRegistry.registerColorImage(vulkanView.texture().vkImage());
-            }
-        }
-    }
 }

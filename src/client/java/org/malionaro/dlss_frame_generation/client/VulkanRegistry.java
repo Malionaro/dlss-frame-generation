@@ -21,8 +21,21 @@ public final class VulkanRegistry {
     private static VulkanDevice activeDevice;
     private static VulkanGpuSurface activeSurface;
     private static VulkanCommandEncoder activeEncoder;
-    private static long activeColorImage;
     private static VulkanFrameGenerationPipeline frameGenerationPipeline;
+    private static long swapchainGeneration;
+    private static long currentFrameSerial;
+    private static int physicalDeviceVendorId;
+    private static String physicalDeviceName = "No Vulkan device";
+    private static int physicalDeviceApiVersion;
+    private static java.util.Set<String> enabledDeviceExtensions =
+            java.util.Set.of();
+    private static FrameResourceSet currentFrameResources;
+    private static FrameIdentity lastAcceptedFrameIdentity =
+            FrameIdentity.INVALID;
+    private static FrameIdentity lastCapturedFrameIdentity =
+            FrameIdentity.INVALID;
+    private static String lastFrameResourceRejection =
+            "No renderer frame has been captured";
     private static MotionVectorResource activeMotionVectors;
     private static MotionVectorSnapshot activeMotionVectorSnapshot;
     private static MotionVectorValidator.ValidationResult motionVectorValidation;
@@ -38,14 +51,35 @@ public final class VulkanRegistry {
         LOGGER.info("Registered active VulkanDevice context: {}", device);
         frameGenerationPipeline = new VulkanFrameGenerationPipeline(device, LOGGER);
 
-        if (FrameGenMod.rayTracingManager() != null) {
+        CompatibilityManager comp = FrameGenMod.compatibilityManager();
+        if (comp != null) {
+            comp.activateVulkanAdapter(device);
+        }
+
+        if (device instanceof VulkanDeviceAccess access
+                && access.dlss_fg$getPhysicalDevice() != null) {
+            var properties = access.dlss_fg$getPhysicalDevice()
+                    .vkPhysicalDeviceProperties();
+            physicalDeviceVendorId = properties.vendorID();
+            physicalDeviceName = properties.deviceNameString();
+            physicalDeviceApiVersion = properties.apiVersion();
+            enabledDeviceExtensions =
+                    java.util.Set.copyOf(access.dlss_fg$getEnabledExtensions());
+        } else {
+            physicalDeviceVendorId = 0;
+            physicalDeviceName = "Vulkan device metadata unavailable";
+            physicalDeviceApiVersion = 0;
+            enabledDeviceExtensions = java.util.Set.of();
+        }
+
+        if (FrameGenMod.rayTracingManager() != null
+                && (comp == null
+                    || comp.rendererDetection().allowsVulkanFeatures())) {
             FrameGenMod.rayTracingManager().onDeviceRegistered(device);
         }
         
         // Dynamic initialization of the selected vendor-neutral native provider.
-        CompatibilityManager comp = FrameGenMod.compatibilityManager();
         if (comp != null) {
-            comp.activateVulkanAdapter();
             RendererBackendAdapter adapter = comp.adapter();
             if (adapter != null) {
                 long instance = adapter.getVulkanInstance();
@@ -63,6 +97,32 @@ public final class VulkanRegistry {
                 comp.selectBackendForVendorId(vendorId);
                 FrameGenerationBackend.GpuVendor detectedVendor =
                         FrameGenerationBackend.GpuVendor.fromVendorId(vendorId);
+                if (!comp.rendererDetection().allowsVulkanFeatures()) {
+                    LOGGER.warn(
+                            "Vulkan FG/RT initialization blocked: {}",
+                            comp.rendererDetection().blockingReason()
+                    );
+                    return;
+                }
+                FrameGenerationCompatibilityLayer.ProviderId provider =
+                        switch (detectedVendor) {
+                            case NVIDIA ->
+                                    FrameGenerationCompatibilityLayer.ProviderId
+                                            .NVIDIA_STREAMLINE_VULKAN;
+                            case AMD ->
+                                    FrameGenerationCompatibilityLayer.ProviderId
+                                            .AMD_FSR31_VULKAN;
+                            case INTEL ->
+                                    FrameGenerationCompatibilityLayer.ProviderId
+                                            .CROSS_VENDOR_FSR31_VULKAN;
+                            case UNKNOWN ->
+                                    FrameGenerationCompatibilityLayer.ProviderId
+                                            .NONE;
+                        };
+                comp.beginProviderInitialization(
+                        provider,
+                        "Detected " + provider.displayName()
+                );
                 OptiScalerIntegration.Status optiScalerStatus =
                         OptiScalerIntegration.loadConfiguredForVendor(
                                 FrameGenConfig.getInstance(),
@@ -87,6 +147,25 @@ public final class VulkanRegistry {
                                 success ? "SUCCESS" : "FAILED/NO SUPPORTED FEATURE");
                         LOGGER.info("Selected Vulkan compatibility route: {}",
                                 StreamlineBridge.nGetActiveProviderName());
+                        D3D12PresentationBridge.Status d3d12Status =
+                                D3D12PresentationBridge.probe(
+                                        physicalDevice,
+                                        logicalDevice,
+                                        queue,
+                                        queueFamily
+                                );
+                        LOGGER.info(
+                                "Hybrid D3D12 bootstrap: stage={}, capabilities=0x{}, LUID={}, detail={}",
+                                d3d12Status.stage(),
+                                Integer.toHexString(
+                                        d3d12Status.capabilities()),
+                                d3d12Status.adapterLuid(),
+                                d3d12Status.detail()
+                        );
+                        comp.completeProviderInitialization(
+                                success,
+                                StreamlineBridge.nGetBackendStatus(vendorId)
+                        );
                         if (success) {
                             int capabilities =
                                     StreamlineBridge.nGetBackendCapabilities(vendorId);
@@ -144,6 +223,10 @@ public final class VulkanRegistry {
                             }
                         }
                     } catch (UnsatisfiedLinkError e) {
+                        comp.failProvider(
+                                "Native initialization entry point unavailable: "
+                                        + e.getMessage()
+                        );
                         LOGGER.error("Failed to call native nInit (bridge not loaded yet): {}", e.getMessage());
                     }
                 } else {
@@ -159,6 +242,7 @@ public final class VulkanRegistry {
 
     public static void registerSurface(VulkanGpuSurface surface) {
         activeSurface = surface;
+        currentFrameResources = null;
         LOGGER.info("Registered active VulkanGpuSurface context: {}", surface);
     }
 
@@ -183,7 +267,21 @@ public final class VulkanRegistry {
     }
 
     public static void notifySwapchainReconfigureStarting() {
+        currentFrameResources = null;
+        lastFrameResourceRejection =
+                "Swapchain reconfiguration is in progress";
         CompatibilityManager comp = FrameGenMod.compatibilityManager();
+        if (comp != null) {
+            comp.beginProviderDrain(swapchainGeneration);
+        }
+        try {
+            StreamlineBridge.nBeginProviderDrain();
+        } catch (UnsatisfiedLinkError error) {
+            LOGGER.warn(
+                    "Native provider drain entry point unavailable: {}",
+                    error.getMessage()
+            );
+        }
         if (comp == null || comp.activeVendorBackend() == null
                 || comp.activeVendorBackend().vendor()
                 != FrameGenerationBackend.GpuVendor.NVIDIA) {
@@ -207,10 +305,33 @@ public final class VulkanRegistry {
     }
 
     public static void notifySwapchainRecreated() {
+        swapchainGeneration++;
+        currentFrameResources = null;
+        lastAcceptedFrameIdentity = FrameIdentity.INVALID;
+        lastCapturedFrameIdentity = FrameIdentity.INVALID;
+        lastFrameResourceRejection =
+                "Waiting for the first frame of swapchain generation "
+                        + swapchainGeneration;
+        if (frameGenerationPipeline != null) {
+            frameGenerationPipeline.onSwapchainGenerationChanged(
+                    swapchainGeneration
+            );
+        }
         CompatibilityManager comp = FrameGenMod.compatibilityManager();
         if (comp != null) {
             RendererBackendAdapter adapter = comp.adapter();
             if (adapter != null && adapter.getSwapchain() != 0) {
+                if (D3D12PresentationBridge.ownsSwapchain(
+                        adapter.getSwapchain())) {
+                    LOGGER.info(
+                            "DXGI owns swapchain generation {}; "
+                                    + "skipping Vulkan provider swapchain notification",
+                            swapchainGeneration
+                    );
+                    return;
+                }
+                comp.completeProviderSwapchainRebuild(
+                        swapchainGeneration);
                 LOGGER.info("Notifying JNI bridge of Vulkan Swapchain recreation: target={}, dim={}x{}",
                         Long.toHexString(adapter.getSwapchain()), adapter.getRenderWidth(), adapter.getRenderHeight());
                 try {
@@ -258,6 +379,7 @@ public final class VulkanRegistry {
     private static float cameraAspect = 1.6f;
     private static boolean worldReset = true;
     private static boolean resetForCurrentFrame = true;
+    private static volatile FrameGuideConventions lastGuideConventions;
 
     public static void setWorldReset() {
         worldReset = true;
@@ -461,6 +583,8 @@ public final class VulkanRegistry {
     }
 
     public static void beginWorldFrame(GameRenderState gameRenderState) {
+        currentFrameSerial++;
+        currentFrameResources = null;
         updateCameraState(gameRenderState);
         updateSubPixelJitter(
                 activeResolution.renderWidth(),
@@ -525,14 +649,7 @@ public final class VulkanRegistry {
         if (frameGenerationPipeline != null) {
             frameGenerationPipeline.onPresentCompleted();
         }
-    }
-
-    public static void registerColorImage(long image) {
-        activeColorImage = image;
-    }
-
-    public static long getActiveColorImage() {
-        return activeColorImage;
+        currentFrameResources = null;
     }
 
     public static void captureFrameGenerationInputs(
@@ -559,7 +676,10 @@ public final class VulkanRegistry {
 
         org.lwjgl.vulkan.VkCommandBuffer commandBuffer =
                 encoderAccess.dlss_fg$getCurrentCommandBuffer();
-        if (commandBuffer == null) return;
+        if (commandBuffer == null) {
+            rejectFrameResources("No command buffer at the pre-HUD boundary");
+            return;
+        }
 
         long now = System.nanoTime();
         float frameTimeMs = previousCaptureNanos == 0
@@ -570,6 +690,12 @@ public final class VulkanRegistry {
 
         FrameGenerationBackend backend = compatibility.activeVendorBackend();
         if (backend == null) return;
+        if (!compatibility.rendererDetection().allowsVulkanFeatures()) {
+            rejectFrameResources(
+                    compatibility.rendererDetection().blockingReason()
+            );
+            return;
+        }
         FrameGenConfig config = FrameGenConfig.getInstance();
         boolean paused = minecraft.isPaused();
         if (paused) {
@@ -587,19 +713,59 @@ public final class VulkanRegistry {
                 // The normal unsupported-provider path remains fail-closed.
             }
         }
-        long backbufferImage = 0;
-        int backbufferFormat = 0;
-        if (activeSurface instanceof
-                org.malionaro.dlss_frame_generation.client.mixin.VulkanGpuSurfaceAccessor
-                surfaceAccess) {
-            int imageIndex = surfaceAccess.dlss_fg$getCurrentImageIndex();
-            if (imageIndex >= 0
-                    && imageIndex < surfaceAccess.dlss_fg$getSwapchainImages().size()) {
-                backbufferImage = surfaceAccess.dlss_fg$getSwapchainImages()
-                        .getLong(imageIndex);
-                backbufferFormat = surfaceAccess.dlss_fg$getSwapchainImageFormat();
-            }
+        RendererBackendAdapter adapter = compatibility.adapter();
+        int imageIndex = adapter != null
+                ? adapter.getCurrentFrameIndex()
+                : -1;
+        FrameIdentity identity = new FrameIdentity(
+                currentFrameSerial,
+                swapchainGeneration,
+                imageIndex
+        );
+        FrameResourceSet resources = adapter == null
+                ? null
+                : adapter.captureFrameResources(
+                        renderTarget, outputTarget, identity
+                ).orElse(null);
+        if (resources == null) {
+            rejectFrameResources(
+                    "Renderer adapter could not create an atomic frame snapshot"
+            );
+            return;
         }
+        FrameResourceSet.Validation resourceValidation = resources.validate();
+        if (!resourceValidation.accepted()) {
+            rejectFrameResources(resourceValidation.reason());
+            return;
+        }
+        FrameGuideConventions guideConventions =
+                new FrameGuideConventions(
+                        FrameGuideConventions.DepthConvention
+                                .REVERSED_ZERO_TO_ONE,
+                        FrameGuideConventions.MotionDirection
+                                .CURRENT_PIXEL_TO_PREVIOUS_PIXEL,
+                        FrameGuideConventions.MotionUnits.RENDER_PIXELS,
+                        FrameGuideConventions.AxisDirection.DOWN,
+                        true,
+                        FrameGuideConventions.ObjectMotionSource
+                                .CAMERA_REPROJECTION_WITH_TEMPORAL_IMAGE_ESTIMATE,
+                        nearPlane,
+                        farPlane,
+                        renderTarget.width,
+                        renderTarget.height,
+                        outputTarget.width,
+                        outputTarget.height
+                );
+        FrameGuideConventions.Validation guideValidation =
+                guideConventions.validate();
+        if (!guideValidation.accepted()) {
+            rejectFrameResources(guideValidation.reason());
+            return;
+        }
+        currentFrameResources = resources;
+        lastCapturedFrameIdentity = resources.identity();
+        lastFrameResourceRejection = "";
+        lastGuideConventions = guideConventions;
         boolean enabled;
         int multiplier;
         switch (backend.vendor()) {
@@ -635,6 +801,7 @@ public final class VulkanRegistry {
                     != org.malionaro.dlss_frame_generation.client.motion.MotionVectorDebugRenderer.DebugMode.OFF;
             long acceptedBefore = frameGenerationPipeline.providerAcceptedFrameCount();
             activeMotionVectors = frameGenerationPipeline.captureAndDispatch(
+                    resources,
                     commandBuffer,
                     colorView,
                     depthView,
@@ -642,8 +809,6 @@ public final class VulkanRegistry {
                     rayReconstructionResources,
                     activeResolution.mode(),
                     backend.vendor().vendorId(),
-                    backbufferImage,
-                    backbufferFormat,
                     viewToClipArr,
                     clipToViewArr,
                     clipToPrevClipArr,
@@ -674,6 +839,15 @@ public final class VulkanRegistry {
             motionVectorValidation = MOTION_VECTOR_VALIDATOR.validate(activeMotionVectors);
             boolean providerAccepted =
                     frameGenerationPipeline.providerAcceptedFrameCount() > acceptedBefore;
+            if (providerAccepted) {
+                lastAcceptedFrameIdentity = resources.identity();
+                lastFrameResourceRejection = "";
+                compatibility.markProviderFrameAccepted(
+                        resources.identity(),
+                        "Native provider accepted frame "
+                                + resources.identity().frameSerial()
+                );
+            }
             if (lastProviderFrameAccepted == null
                     || lastProviderFrameAccepted != providerAccepted) {
                 String providerStatus;
@@ -703,6 +877,14 @@ public final class VulkanRegistry {
         }
     }
 
+    private static void rejectFrameResources(String reason) {
+        currentFrameResources = null;
+        if (!reason.equals(lastFrameResourceRejection)) {
+            LOGGER.warn("Skipping unsafe frame-generation capture: {}", reason);
+        }
+        lastFrameResourceRejection = reason;
+    }
+
     public static void captureFrameGenerationUi(
             com.mojang.blaze3d.pipeline.RenderTarget uiTarget
     ) {
@@ -713,6 +895,7 @@ public final class VulkanRegistry {
         if (frameGenerationPipeline == null || uiTarget == null
                 || backend == null
                 || backend.vendor() != FrameGenerationBackend.GpuVendor.NVIDIA
+                || currentFrameResources == null
                 || !(uiTarget.getColorTextureView() instanceof
                         com.mojang.blaze3d.vulkan.VulkanGpuTextureView uiView)
                 || !(activeEncoder instanceof
@@ -728,6 +911,7 @@ public final class VulkanRegistry {
         FrameGenConfig config = FrameGenConfig.getInstance();
         try {
             frameGenerationPipeline.captureUiAndFinalize(
+                    currentFrameResources.identity(),
                     commandBuffer,
                     uiView,
                     backend.vendor().vendorId(),
@@ -776,6 +960,46 @@ public final class VulkanRegistry {
                 ? 0L : frameGenerationPipeline.completedPresentCount();
     }
 
+    public static long getSwapchainGeneration() {
+        return swapchainGeneration;
+    }
+
+    public static int getPhysicalDeviceVendorId() {
+        return physicalDeviceVendorId;
+    }
+
+    public static String getPhysicalDeviceName() {
+        return physicalDeviceName;
+    }
+
+    public static int getPhysicalDeviceApiVersion() {
+        return physicalDeviceApiVersion;
+    }
+
+    public static java.util.Set<String> getEnabledDeviceExtensions() {
+        return enabledDeviceExtensions;
+    }
+
+    public static FrameIdentity getLastAcceptedFrameIdentity() {
+        return lastAcceptedFrameIdentity;
+    }
+
+    public static FrameGuideConventions getLastGuideConventions() {
+        return lastGuideConventions;
+    }
+
+    public static FrameIdentity getLastCapturedFrameIdentity() {
+        return lastCapturedFrameIdentity;
+    }
+
+    public static String getLastFrameResourceRejection() {
+        return lastFrameResourceRejection;
+    }
+
+    public static FrameResourceSet getCurrentFrameResources() {
+        return currentFrameResources;
+    }
+
     public static void shutdown() {
         if (frameGenerationPipeline != null) {
             frameGenerationPipeline.close();
@@ -785,5 +1009,19 @@ public final class VulkanRegistry {
         activeMotionVectorSnapshot = null;
         motionVectorValidation = null;
         lastProviderFrameAccepted = null;
+        currentFrameResources = null;
+        lastAcceptedFrameIdentity = FrameIdentity.INVALID;
+        lastCapturedFrameIdentity = FrameIdentity.INVALID;
+        lastGuideConventions = null;
+        lastFrameResourceRejection = "Renderer has shut down";
+        physicalDeviceVendorId = 0;
+        physicalDeviceName = "No Vulkan device";
+        physicalDeviceApiVersion = 0;
+        enabledDeviceExtensions = java.util.Set.of();
+        CompatibilityManager compatibility =
+                FrameGenMod.compatibilityManager();
+        if (compatibility != null) {
+            compatibility.shutdownProvider();
+        }
     }
 }

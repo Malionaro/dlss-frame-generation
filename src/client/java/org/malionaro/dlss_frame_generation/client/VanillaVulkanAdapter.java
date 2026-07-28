@@ -6,7 +6,14 @@ import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import net.minecraft.client.Minecraft;
 import org.malionaro.dlss_frame_generation.client.access.VulkanDeviceAccess;
+import org.malionaro.dlss_frame_generation.client.mixin.VulkanCommandEncoderAccessor;
 import org.malionaro.dlss_frame_generation.client.mixin.VulkanGpuSurfaceAccessor;
+import org.lwjgl.vulkan.VkCommandBuffer;
+
+import java.util.Optional;
+
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
 
 public final class VanillaVulkanAdapter implements RendererBackendAdapter {
 
@@ -16,6 +23,112 @@ public final class VanillaVulkanAdapter implements RendererBackendAdapter {
 
     private VulkanGpuSurface getSurface() {
         return VulkanRegistry.getActiveSurface();
+    }
+
+    @Override
+    public Optional<FrameResourceSet> captureFrameResources(
+            RenderTarget renderTarget,
+            RenderTarget outputTarget,
+            FrameIdentity identity
+    ) {
+        VulkanDevice device = getDevice();
+        VulkanGpuSurface surface = getSurface();
+        if (device == null
+                || surface == null
+                || renderTarget == null
+                || outputTarget == null
+                || identity == null
+                || !(renderTarget.getColorTextureView()
+                        instanceof VulkanGpuTextureView colorView)
+                || !(renderTarget.getDepthTextureView()
+                        instanceof VulkanGpuTextureView depthView)
+                || !(outputTarget.getColorTextureView()
+                        instanceof VulkanGpuTextureView outputView)
+                || !(surface instanceof VulkanGpuSurfaceAccessor surfaceAccess)
+                || !(VulkanRegistry.getActiveEncoder()
+                        instanceof VulkanCommandEncoderAccessor encoderAccess)) {
+            return Optional.empty();
+        }
+
+        VkCommandBuffer commandBuffer =
+                encoderAccess.dlss_fg$getCurrentCommandBuffer();
+        int imageIndex = surfaceAccess.dlss_fg$getCurrentImageIndex();
+        if (commandBuffer == null
+                || encoderAccess.dlss_fg$getCurrentRenderPass() != null
+                || imageIndex < 0
+                || imageIndex >= surfaceAccess.dlss_fg$getSwapchainImages().size()
+                || identity.swapchainImageIndex() != imageIndex) {
+            return Optional.empty();
+        }
+
+        int queueFamily = getGraphicsQueueFamilyIndex();
+        FrameResourceSet.ImageResource color = textureResource(
+                colorView, queueFamily, VK_IMAGE_LAYOUT_GENERAL);
+        FrameResourceSet.ImageResource depth = textureResource(
+                depthView, queueFamily, VK_IMAGE_LAYOUT_GENERAL);
+        FrameResourceSet.ImageResource output = textureResource(
+                outputView, queueFamily, VK_IMAGE_LAYOUT_GENERAL);
+        FrameResourceSet.ImageResource backbuffer =
+                new FrameResourceSet.ImageResource(
+                        surfaceAccess.dlss_fg$getSwapchainImages()
+                                .getLong(imageIndex),
+                        0L,
+                        surfaceAccess.dlss_fg$getSwapchainImageFormat(),
+                        VK_IMAGE_LAYOUT_UNDEFINED,
+                        queueFamily,
+                        output.width(),
+                        output.height()
+                );
+        return Optional.of(new FrameResourceSet(
+                identity,
+                FrameResourceSet.Source.VANILLA_VULKAN,
+                commandBuffer.address(),
+                color,
+                depth,
+                output,
+                backbuffer,
+                getAcquireSemaphore(),
+                getPresentSemaphore(),
+                true
+        ));
+    }
+
+    private static FrameResourceSet.ImageResource textureResource(
+            VulkanGpuTextureView view,
+            int queueFamily,
+            int layout
+    ) {
+        if (view.texture() == null) {
+            return new FrameResourceSet.ImageResource(
+                    0L, 0L, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+                    queueFamily, 0, 0
+            );
+        }
+        return new FrameResourceSet.ImageResource(
+                view.texture().vkImage(),
+                view.vkImageView(),
+                vulkanFormat(view),
+                layout,
+                queueFamily,
+                view.getWidth(0),
+                view.getHeight(0)
+        );
+    }
+
+    private static int vulkanFormat(VulkanGpuTextureView view) {
+        return switch (view.texture().getFormat()) {
+            case RGBA8_UNORM -> org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
+            case RGBA8_SNORM -> org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_SNORM;
+            case RGBA16_FLOAT ->
+                    org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_SFLOAT;
+            case D32_FLOAT -> org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT;
+            case D32_FLOAT_S8_UINT ->
+                    org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT_S8_UINT;
+            case D24_UNORM_S8_UINT ->
+                    org.lwjgl.vulkan.VK10.VK_FORMAT_D24_UNORM_S8_UINT;
+            case D16_UNORM -> org.lwjgl.vulkan.VK10.VK_FORMAT_D16_UNORM;
+            default -> 0;
+        };
     }
 
     @Override
@@ -76,11 +189,6 @@ public final class VanillaVulkanAdapter implements RendererBackendAdapter {
 
     @Override
     public long getColorImage() {
-        long registeredColor = VulkanRegistry.getActiveColorImage();
-        if (registeredColor != 0) {
-            return registeredColor;
-        }
-
         Minecraft client = Minecraft.getInstance();
         if (client == null || client.gameRenderer == null) return 0;
         RenderTarget target = client.gameRenderer.mainRenderTarget();
@@ -131,7 +239,7 @@ public final class VanillaVulkanAdapter implements RendererBackendAdapter {
         if (surface instanceof VulkanGpuSurfaceAccessor accessor) {
             return accessor.dlss_fg$getCurrentImageIndex();
         }
-        return 0;
+        return -1;
     }
 
     @Override

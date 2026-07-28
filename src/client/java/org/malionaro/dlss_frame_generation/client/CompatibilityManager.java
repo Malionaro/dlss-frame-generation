@@ -1,12 +1,15 @@
 package org.malionaro.dlss_frame_generation.client;
 
+import com.mojang.blaze3d.vulkan.VulkanDevice;
 import org.slf4j.Logger;
 
 public final class CompatibilityManager {
     private final NativeLoader.NativeLoadResult nativeLoadResult;
-    private final RendererDetection rendererDetection;
+    private volatile RendererDetection rendererDetection;
     private volatile RendererBackendAdapter adapter;
     private volatile FrameGenerationBackend activeBackend;
+    private final ProviderLifecycle providerLifecycle =
+            new ProviderLifecycle();
 
     private CompatibilityManager(NativeLoader.NativeLoadResult nativeLoadResult, RendererDetection rendererDetection, RendererBackendAdapter adapter, FrameGenerationBackend activeBackend) {
         this.nativeLoadResult = nativeLoadResult;
@@ -45,8 +48,19 @@ public final class CompatibilityManager {
         FrameGenerationBackend activeBackend = resolveBackend(rendererDetection.backendDescription());
 
         CompatibilityManager manager = new CompatibilityManager(nativeLoadResult, rendererDetection, adapter, activeBackend);
-        logger.info("DLSS FG renderer detection: backend={}, description='{}', sodium={}, iris={}", 
-                rendererDetection.backend(), rendererDetection.backendDescription(), rendererDetection.sodiumPresent(), rendererDetection.irisPresent());
+        logger.info(
+                "DLSS FG renderer detection: backend={}, description='{}', "
+                        + "device={}, sodium={} ({}), iris={} ({}), "
+                        + "shaderState={}",
+                rendererDetection.backend(),
+                rendererDetection.backendDescription(),
+                rendererDetection.gpuDeviceClass(),
+                rendererDetection.sodiumPresent(),
+                rendererDetection.sodiumVersion(),
+                rendererDetection.irisPresent(),
+                rendererDetection.irisVersion(),
+                rendererDetection.shaderPipelineState()
+        );
         logger.info("DLSS FG active adapter resolved to: {}, vendor backend: {}", adapter.getClass().getSimpleName(), activeBackend.vendor().displayName());
         return manager;
     }
@@ -72,6 +86,14 @@ public final class CompatibilityManager {
         return rendererDetection.backend(); 
     }
 
+    public RendererDetection rendererDetection() {
+        return rendererDetection;
+    }
+
+    public NativeLoader.NativeLoadResult nativeLoadResult() {
+        return nativeLoadResult;
+    }
+
     public RendererBackendAdapter adapter() {
         return adapter;
     }
@@ -82,11 +104,22 @@ public final class CompatibilityManager {
      * signal that replaces the provisional startup adapter.
      */
     public synchronized void activateVulkanAdapter() {
+        activateVulkanAdapter(VulkanRegistry.getActiveDevice());
+    }
+
+    public synchronized void activateVulkanAdapter(VulkanDevice device) {
+        rendererDetection = RendererDetector.detect(device);
         if (!(adapter instanceof VanillaVulkanAdapter)
                 && !(adapter instanceof SodiumVulkanAdapter)) {
             adapter = rendererDetection.sodiumPresent()
                     ? new SodiumVulkanAdapter()
                     : new VanillaVulkanAdapter();
+        } else if (rendererDetection.sodiumPresent()
+                && !(adapter instanceof SodiumVulkanAdapter)) {
+            adapter = new SodiumVulkanAdapter();
+        } else if (!rendererDetection.sodiumPresent()
+                && !(adapter instanceof VanillaVulkanAdapter)) {
+            adapter = new VanillaVulkanAdapter();
         }
     }
 
@@ -98,6 +131,74 @@ public final class CompatibilityManager {
         return FrameGenerationCompatibilityLayer.queryVulkanRoute(
                 activeBackend.vendor()
         );
+    }
+
+    public ProviderLifecycle.Snapshot providerSnapshot() {
+        return providerLifecycle.snapshot();
+    }
+
+    public synchronized void beginProviderInitialization(
+            FrameGenerationCompatibilityLayer.ProviderId provider,
+            String detail
+    ) {
+        providerLifecycle.detected(provider, detail);
+        if (provider
+                != FrameGenerationCompatibilityLayer.ProviderId.NONE) {
+            providerLifecycle.initializing();
+        }
+    }
+
+    public synchronized void completeProviderInitialization(
+            boolean success,
+            String detail
+    ) {
+        if (success) {
+            providerLifecycle.ready(detail);
+        } else {
+            providerLifecycle.failed(detail);
+        }
+    }
+
+    public synchronized void beginProviderDrain(long generation) {
+        ProviderLifecycle.State state =
+                providerLifecycle.snapshot().state();
+        if (state == ProviderLifecycle.State.READY
+                || state == ProviderLifecycle.State.ACTIVE
+                || state == ProviderLifecycle.State.DRAINING) {
+            providerLifecycle.draining(generation, true);
+        }
+    }
+
+    public synchronized void completeProviderSwapchainRebuild(
+            long generation
+    ) {
+        if (providerLifecycle.snapshot().state()
+                == ProviderLifecycle.State.DRAINING) {
+            providerLifecycle.ready(
+                    generation,
+                    "Provider ready for swapchain generation " + generation
+            );
+        }
+    }
+
+    public synchronized void markProviderFrameAccepted(
+            FrameIdentity identity,
+            String detail
+    ) {
+        ProviderLifecycle.State state =
+                providerLifecycle.snapshot().state();
+        if (state == ProviderLifecycle.State.READY
+                || state == ProviderLifecycle.State.ACTIVE) {
+            providerLifecycle.activated(identity, true, detail);
+        }
+    }
+
+    public synchronized void failProvider(String detail) {
+        providerLifecycle.failed(detail);
+    }
+
+    public synchronized void shutdownProvider() {
+        providerLifecycle.shutdown(true);
     }
 
     public synchronized void selectBackendForVendorId(int detectedVendor) {
@@ -119,12 +220,18 @@ public final class CompatibilityManager {
     }
 
     public boolean isFrameGenerationSupported() { 
-        return nativeLoadResult.loaded() && activeBackend.isSupported() && adapter.isFrameReadyForFG();
+        return nativeLoadResult.loaded()
+                && rendererDetection.allowsVulkanFeatures()
+                && activeBackend.isSupported()
+                && adapter.isFrameReadyForFG();
     }
 
     public String statusDetail() { 
         if (!nativeLoadResult.loaded()) {
             return "Native loader issue: " + nativeLoadResult.detail();
+        }
+        if (!rendererDetection.allowsVulkanFeatures()) {
+            return rendererDetection.blockingReason();
         }
         if (!adapter.isFrameReadyForFG()) {
             return "Rendering backend does not support frame generation (" + adapter.getClass().getSimpleName() + ")";

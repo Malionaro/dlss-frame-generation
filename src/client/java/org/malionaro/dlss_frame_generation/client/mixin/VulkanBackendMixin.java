@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vulkan.VulkanBackend;
 import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
 import com.mojang.blaze3d.vulkan.init.VulkanFeature;
 import org.malionaro.dlss_frame_generation.client.StreamlineVulkanRequirements;
+import org.malionaro.dlss_frame_generation.client.D3D12InteropRequirements;
 import org.malionaro.dlss_frame_generation.client.raytracing.RayTracingDeviceRequirements;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,10 +46,15 @@ public class VulkanBackendMixin {
                         physicalDevice,
                         selection.features()
                 );
-        args.set(0, streamlineSelection.extensions());
+        D3D12InteropRequirements.Selection d3d12Selection =
+                D3D12InteropRequirements.select(
+                        streamlineSelection.extensions(),
+                        physicalDevice
+                );
+        args.set(0, d3d12Selection.extensions());
         args.set(2, streamlineSelection.features());
         StreamlineVulkanRequirements.rememberSelectedDeviceExtensions(
-                streamlineSelection.extensions()
+                d3d12Selection.extensions()
         );
 
         if (selection.rayQueryEnabled()) {
@@ -60,6 +66,18 @@ public class VulkanBackendMixin {
             DLSS_FG$LOGGER.info(
                     "Hardware ray queries are unavailable on {}; using normal raster rendering",
                     physicalDevice.deviceName()
+            );
+        }
+        if (d3d12Selection.zeroCopyInteropPossible()) {
+            DLSS_FG$LOGGER.info(
+                    "Enabled Vulkan Win32 external-memory and external-semaphore interop on {}",
+                    physicalDevice.deviceName()
+            );
+        } else if (!d3d12Selection.missingExtensions().isEmpty()) {
+            DLSS_FG$LOGGER.info(
+                    "Hybrid Vulkan/D3D12 presentation unavailable on {}: missing {}",
+                    physicalDevice.deviceName(),
+                    d3d12Selection.missingExtensions()
             );
         }
     }
