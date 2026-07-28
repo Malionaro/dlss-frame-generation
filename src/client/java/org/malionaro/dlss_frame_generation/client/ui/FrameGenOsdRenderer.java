@@ -32,7 +32,9 @@ public class FrameGenOsdRenderer {
         double frameTimeMs = ReflexPacer.getAverageFrameTimeMs();
 
         CompatibilityManager comp = FrameGenMod.compatibilityManager();
-        String vendorName = "UNKNOWN";
+        String vendorName = Component.translatable(
+                "dlss_fg.value.unknown"
+        ).getString();
         FrameGenerationBackend backend = null;
         if (comp != null && comp.activeVendorBackend() != null) {
             backend = comp.activeVendorBackend();
@@ -46,27 +48,40 @@ public class FrameGenOsdRenderer {
         extractor.fill(osdX, osdY, osdX + width, osdY + height, 0xCC111111);
 
         // Header Title
-        extractor.text(mc.font, Component.literal("⚡ FRAME GENERATION OSD"), osdX + 8, osdY + 6, 0x00FF88);
+        extractor.text(
+                mc.font,
+                Component.translatable("dlss_fg.osd.title"),
+                osdX + 8,
+                osdY + 6,
+                0xFF00FF88
+        );
 
         // Metric Lines
-        String fpsLine = String.format(
-                "FPS: %d (Base: %d | FG %s)",
+        Component fpsLine = Component.translatable(
+                "dlss_fg.osd.fps",
                 estimatedFgFps,
                 baseFps,
-                fgActive ? fgMultiplier + "x" : "INACTIVE"
+                fgActive
+                        ? Component.translatable(
+                                "dlss_fg.value.multiplier", fgMultiplier
+                        )
+                        : Component.translatable("dlss_fg.osd.inactive")
         );
-        extractor.text(mc.font, Component.literal(fpsLine), osdX + 8, osdY + 20, 0xFFFFFF);
+        extractor.text(mc.font, fpsLine, osdX + 8, osdY + 20, 0xFFFFFFFF);
 
-        String latencyLine = String.format("Pacing Latency: %.2f ms", frameTimeMs);
-        extractor.text(mc.font, Component.literal(latencyLine), osdX + 8, osdY + 33, 0xAAAAAA);
+        Component latencyLine = Component.translatable(
+                "dlss_fg.osd.latency",
+                String.format(java.util.Locale.ROOT, "%.2f", frameTimeMs)
+        );
+        extractor.text(mc.font, latencyLine, osdX + 8, osdY + 33, 0xFFAAAAAA);
 
-        String backendLine = String.format(
-                "Backend: %s | Accepted: %d/%d",
+        Component backendLine = Component.translatable(
+                "dlss_fg.osd.backend",
                 vendorName,
                 VulkanRegistry.getProviderAcceptedFrameCount(),
                 VulkanRegistry.getCapturedFrameCount()
         );
-        extractor.text(mc.font, Component.literal(backendLine), osdX + 8, osdY + 46, 0x00AAFF);
+        extractor.text(mc.font, backendLine, osdX + 8, osdY + 46, 0xFF00AAFF);
     }
 
     private static int configuredMultiplier(

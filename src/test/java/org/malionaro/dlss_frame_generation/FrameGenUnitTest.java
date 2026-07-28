@@ -74,6 +74,59 @@ public class FrameGenUnitTest {
     }
 
     @Test
+    public void frameGenerationProvidersAreMutuallyExclusive() {
+        FrameGenConfig config = new FrameGenConfig();
+
+        config.setFrameGenerationEnabled(
+                FrameGenerationBackend.GpuVendor.NVIDIA, true
+        );
+        assertTrue(config.dlssFgEnabled);
+        assertFalse(config.amdFsrFgEnabled);
+        assertFalse(config.intelXessFgEnabled);
+
+        config.setFrameGenerationEnabled(
+                FrameGenerationBackend.GpuVendor.AMD, true
+        );
+        assertFalse(config.dlssFgEnabled);
+        assertTrue(config.amdFsrFgEnabled);
+        assertFalse(config.intelXessFgEnabled);
+
+        config.setFrameGenerationEnabled(
+                FrameGenerationBackend.GpuVendor.INTEL, true
+        );
+        assertFalse(config.dlssFgEnabled);
+        assertFalse(config.amdFsrFgEnabled);
+        assertTrue(config.intelXessFgEnabled);
+
+        config.setFrameGenerationEnabled(
+                FrameGenerationBackend.GpuVendor.INTEL, false
+        );
+        assertEquals(
+                FrameGenerationBackend.GpuVendor.UNKNOWN,
+                config.selectedFrameGenerationVendor()
+        );
+    }
+
+    @Test
+    public void detectedGpuRemovesIncompatibleSavedProviders() {
+        FrameGenConfig config = new FrameGenConfig();
+        config.dlssFgEnabled = true;
+        config.amdFsrFgEnabled = true;
+        config.intelXessFgEnabled = true;
+
+        assertTrue(config.retainFrameGenerationForVendor(
+                FrameGenerationBackend.GpuVendor.AMD
+        ));
+        assertFalse(config.dlssFgEnabled);
+        assertTrue(config.amdFsrFgEnabled);
+        assertFalse(config.intelXessFgEnabled);
+        assertEquals(
+                FrameGenerationBackend.GpuVendor.AMD,
+                config.selectedFrameGenerationVendor()
+        );
+    }
+
+    @Test
     public void selectsExpandableVendorProvidersWithoutMislabelingIntelFallback() {
         var amdVulkan = FrameGenerationCompatibilityLayer.selectPreferredProvider(
                 FrameGenerationBackend.GpuVendor.AMD,

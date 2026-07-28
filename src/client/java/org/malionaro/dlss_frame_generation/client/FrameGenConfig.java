@@ -91,7 +91,12 @@ public class FrameGenConfig {
                 this.projectionJitterEnabled = true;
             }
             case MAX_PERFORMANCE -> {
-                this.dlssFgEnabled = true;
+                FrameGenerationBackend.GpuVendor selectedVendor =
+                        selectedFrameGenerationVendor();
+                if (selectedVendor
+                        != FrameGenerationBackend.GpuVendor.UNKNOWN) {
+                    setFrameGenerationEnabled(selectedVendor, true);
+                }
                 this.frameMultiplier = 4; // 4x MFG
                 this.amdFsrMultiplier = 2;
                 this.intelXessMfgMultiplier = 2;
@@ -173,6 +178,116 @@ public class FrameGenConfig {
     public boolean intelXessFgEnabled = true;
     public int intelXessMfgMultiplier = 2; // FSR 3.1 fallback is 2x only
 
+    /**
+     * Enables at most one frame-generation provider. Upscaling, ray tracing,
+     * the OSD and motion diagnostics remain independent because they do not
+     * insert a second presented frame.
+     */
+    public void setFrameGenerationEnabled(
+            FrameGenerationBackend.GpuVendor vendor,
+            boolean enabled
+    ) {
+        if (enabled) {
+            dlssFgEnabled = vendor == FrameGenerationBackend.GpuVendor.NVIDIA;
+            amdFsrFgEnabled = vendor == FrameGenerationBackend.GpuVendor.AMD;
+            intelXessFgEnabled =
+                    vendor == FrameGenerationBackend.GpuVendor.INTEL;
+            return;
+        }
+
+        switch (vendor) {
+            case NVIDIA -> dlssFgEnabled = false;
+            case AMD -> amdFsrFgEnabled = false;
+            case INTEL -> intelXessFgEnabled = false;
+            case UNKNOWN -> {
+                dlssFgEnabled = false;
+                amdFsrFgEnabled = false;
+                intelXessFgEnabled = false;
+            }
+        }
+    }
+
+    public boolean isFrameGenerationEnabled(
+            FrameGenerationBackend.GpuVendor vendor
+    ) {
+        return switch (vendor) {
+            case NVIDIA -> dlssFgEnabled;
+            case AMD -> amdFsrFgEnabled;
+            case INTEL -> intelXessFgEnabled;
+            case UNKNOWN -> false;
+        };
+    }
+
+    public FrameGenerationBackend.GpuVendor conflictingFrameGenerationVendor(
+            FrameGenerationBackend.GpuVendor candidate
+    ) {
+        for (FrameGenerationBackend.GpuVendor vendor :
+                FrameGenerationBackend.GpuVendor.values()) {
+            if (vendor != candidate
+                    && vendor != FrameGenerationBackend.GpuVendor.UNKNOWN
+                    && isFrameGenerationEnabled(vendor)) {
+                return vendor;
+            }
+        }
+        return FrameGenerationBackend.GpuVendor.UNKNOWN;
+    }
+
+    public FrameGenerationBackend.GpuVendor selectedFrameGenerationVendor() {
+        FrameGenerationBackend.GpuVendor selected =
+                FrameGenerationBackend.GpuVendor.UNKNOWN;
+        for (FrameGenerationBackend.GpuVendor vendor :
+                FrameGenerationBackend.GpuVendor.values()) {
+            if (vendor == FrameGenerationBackend.GpuVendor.UNKNOWN
+                    || !isFrameGenerationEnabled(vendor)) {
+                continue;
+            }
+            if (selected != FrameGenerationBackend.GpuVendor.UNKNOWN) {
+                return FrameGenerationBackend.GpuVendor.UNKNOWN;
+            }
+            selected = vendor;
+        }
+        return selected;
+    }
+
+    /**
+     * Once Vulkan reports the physical-device vendor, discard provider flags
+     * that can never be used on that device. The selected provider's existing
+     * on/off choice is preserved.
+     *
+     * @return true when an incompatible saved flag was removed
+     */
+    public boolean retainFrameGenerationForVendor(
+            FrameGenerationBackend.GpuVendor detectedVendor
+    ) {
+        boolean oldNvidia = dlssFgEnabled;
+        boolean oldAmd = amdFsrFgEnabled;
+        boolean oldIntel = intelXessFgEnabled;
+
+        switch (detectedVendor) {
+            case NVIDIA -> {
+                amdFsrFgEnabled = false;
+                intelXessFgEnabled = false;
+            }
+            case AMD -> {
+                dlssFgEnabled = false;
+                intelXessFgEnabled = false;
+            }
+            case INTEL -> {
+                dlssFgEnabled = false;
+                amdFsrFgEnabled = false;
+            }
+            case UNKNOWN -> {
+                dlssFgEnabled = false;
+                amdFsrFgEnabled = false;
+                intelXessFgEnabled = false;
+            }
+        }
+
+        return oldNvidia != dlssFgEnabled
+                || oldAmd != amdFsrFgEnabled
+                || oldIntel != intelXessFgEnabled;
+    }
+
     public static FrameGenConfig getInstance() {
         if (instance == null) {
             instance = load();
@@ -207,6 +322,13 @@ public class FrameGenConfig {
                 && activeVendorId != FrameGenerationBackend.GpuVendor.AMD.vendorId()
                 && activeVendorId != FrameGenerationBackend.GpuVendor.INTEL.vendorId()) {
             activeVendorId = 0;
+        }
+        if (activeVendorId != 0) {
+            retainFrameGenerationForVendor(
+                    FrameGenerationBackend.GpuVendor.fromVendorId(
+                            activeVendorId
+                    )
+            );
         }
         reflexMode = clamp(reflexMode, 0, 2);
         dlssUpscalingMode = clamp(dlssUpscalingMode, 0, 6);

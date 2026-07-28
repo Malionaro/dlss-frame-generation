@@ -16,6 +16,10 @@ public final class IntelSettingsPanel {
         boolean xessUpscalingSupported =
                 (capabilities & StreamlineBridge.CAP_UPSCALING) != 0;
         boolean fsrProxyReady = (capabilities & StreamlineBridge.CAP_PROXY_SWAPCHAIN) != 0;
+        boolean frameGenerationConflict =
+                config.conflictingFrameGenerationVendor(
+                        FrameGenerationBackend.GpuVendor.INTEL
+                ) != FrameGenerationBackend.GpuVendor.UNKNOWN;
         FrameGenerationCompatibilityLayer.Route route =
                 FrameGenerationCompatibilityLayer.queryVulkanRoute(
                         FrameGenerationBackend.GpuVendor.INTEL
@@ -25,23 +29,37 @@ public final class IntelSettingsPanel {
         // control activates the explicitly named FSR 3.1 fallback instead.
         var btnFgXeSS = CycleButton.onOffBuilder(config.intelXessFgEnabled)
                 .create(leftX, topY, columnWidth, 20,
-                        Component.literal("FSR 3.1 FG Fallback"), (button, value) -> {
-                            config.intelXessFgEnabled = value;
+                        Component.translatable("dlss_fg.option.intel.frame_generation"), (button, value) -> {
+                            config.setFrameGenerationEnabled(
+                                    FrameGenerationBackend.GpuVendor.INTEL,
+                                    value
+                            );
                             config.save();
                             try {
                                 StreamlineBridge.nSetFrameGenerationMode(FrameGenerationBackend.GpuVendor.INTEL.vendorId(), value, config.intelXessMfgMultiplier, config.uiRecomposition);
                             } catch (UnsatisfiedLinkError e) {
                                 // Ignore
                             }
+                            screen.refreshSettingsWidgets();
                         });
-        btnFgXeSS.active = fsrFallbackReady;
-        screen.addSettingsWidget(btnFgXeSS);
+        btnFgXeSS.active = fsrFallbackReady && !frameGenerationConflict;
+        screen.addSettingsWidget(
+                btnFgXeSS,
+                screen.frameGenerationTooltip(
+                        FrameGenerationBackend.GpuVendor.INTEL,
+                        "dlss_fg.tooltip.intel.frame_generation"
+                )
+        );
 
         // FSR 3.1 inserts one interpolated frame and therefore exposes 2x only.
-        var btnMfg = CycleButton.builder((Integer value) -> Component.literal(value + "x"), config.intelXessMfgMultiplier)
+        var btnMfg = CycleButton.builder(
+                        (Integer value) -> Component.translatable(
+                                "dlss_fg.value.multiplier", value
+                        ),
+                        config.intelXessMfgMultiplier)
                 .withValues(2)
                 .create(rightX, topY, columnWidth, 20,
-                        Component.literal("FSR FG Factor"), (button, value) -> {
+                        Component.translatable("dlss_fg.option.fsr.fg_factor"), (button, value) -> {
                             config.intelXessMfgMultiplier = value;
                             config.save();
                             try {
@@ -50,21 +68,29 @@ public final class IntelSettingsPanel {
                                 // Ignore
                             }
                         });
-        btnMfg.active = fsrFallbackReady;
-        screen.addSettingsWidget(btnMfg);
+        btnMfg.active = fsrFallbackReady
+                && config.intelXessFgEnabled
+                && !frameGenerationConflict;
+        screen.addSettingsWidget(
+                btnMfg,
+                screen.frameGenerationDependentTooltip(
+                        FrameGenerationBackend.GpuVendor.INTEL,
+                        "dlss_fg.tooltip.fsr.fg_factor"
+                )
+        );
 
         // OptiScaler can consume the standard FFX Vulkan input on Intel, but
         // Minecraft currently exposes only a full-resolution combined target.
         var btnXessMode = CycleButton.builder((Integer value) -> {
                     return switch (value) {
-                        case 0 -> Component.literal("Off");
-                        case 1 -> Component.literal("Native AA");
-                        default -> Component.literal("Unknown");
+                        case 0 -> Component.translatable("dlss_fg.value.off");
+                        case 1 -> Component.translatable("dlss_fg.value.native_aa");
+                        default -> Component.translatable("dlss_fg.value.unknown");
                     };
                 }, config.intelXessMode)
                 .withValues(0, 1)
                 .create(leftX, topY + 25, columnWidth, 20,
-                        Component.literal("XeSS / FSR Native AA"), (button, value) -> {
+                        Component.translatable("dlss_fg.option.intel.upscaling"), (button, value) -> {
                             config.intelXessMode = value;
                             config.save();
                             try {
@@ -74,19 +100,25 @@ public final class IntelSettingsPanel {
                             }
                         });
         btnXessMode.active = xessUpscalingSupported;
-        screen.addSettingsWidget(btnXessMode);
+        screen.addSettingsWidget(btnXessMode, "dlss_fg.tooltip.intel.upscaling");
 
         // Row 2 Right: XeSS Sharpness Slider
         var sliderXessSharpness = new AbstractSliderButton(
                 rightX, topY + 25, columnWidth, 20,
-                Component.literal("AA Sharpness: " + (int)(config.intelXessSharpness * 100) + "%"),
+                Component.translatable(
+                        "dlss_fg.option.aa_sharpness",
+                        (int)(config.intelXessSharpness * 100)
+                ),
                 config.intelXessSharpness) {
             {
                 this.updateMessage();
             }
             @Override
             protected void updateMessage() {
-                this.setMessage(Component.literal("AA Sharpness: " + (int)(this.value * 100) + "%"));
+                this.setMessage(Component.translatable(
+                        "dlss_fg.option.aa_sharpness",
+                        (int)(this.value * 100)
+                ));
             }
             @Override
             protected void applyValue() {
@@ -100,12 +132,12 @@ public final class IntelSettingsPanel {
             }
         };
         sliderXessSharpness.active = xessUpscalingSupported;
-        screen.addSettingsWidget(sliderXessSharpness);
+        screen.addSettingsWidget(sliderXessSharpness, "dlss_fg.tooltip.aa_sharpness");
 
         // Row 3 Left: UI Recomposition
         var btnRecomp = CycleButton.onOffBuilder(config.uiRecomposition)
                 .create(leftX, topY + 50, columnWidth, 20,
-                        Component.literal("UI Recomposition"), (button, value) -> {
+                        Component.translatable("dlss_fg.option.ui_recomposition"), (button, value) -> {
                             config.uiRecomposition = value;
                             config.save();
                             try {
@@ -115,16 +147,16 @@ public final class IntelSettingsPanel {
                             }
                         });
         btnRecomp.active = fsrFallbackReady;
-        screen.addSettingsWidget(btnRecomp);
+        screen.addSettingsWidget(btnRecomp, "dlss_fg.tooltip.ui_recomposition");
 
         // XeSS-FG cannot consume a Vulkan swapchain. Show the compatible
         // cross-vendor FSR transport separately so it is never mislabeled.
         var fsrFallbackStatus = CycleButton.onOffBuilder(fsrProxyReady)
                 .create(rightX, topY + 50, columnWidth, 20,
-                        Component.literal(route.isFallback()
-                                ? "FSR 3.1 Cross-Vendor"
-                                : "FSR 3.1 Fallback"), (button, value) -> {});
+                        Component.translatable(route.isFallback()
+                                ? "dlss_fg.status.provider.cross_vendor"
+                                : "dlss_fg.status.provider.fallback"), (button, value) -> {});
         fsrFallbackStatus.active = false;
-        screen.addSettingsWidget(fsrFallbackStatus);
+        screen.addSettingsWidget(fsrFallbackStatus, "dlss_fg.tooltip.provider_status");
     }
 }

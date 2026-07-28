@@ -106,6 +106,10 @@ public final class CompatibilityManager {
         // vendor's native ABI.
         FrameGenerationBackend.GpuVendor vendor =
                 FrameGenerationBackend.GpuVendor.fromVendorId(detectedVendor);
+        FrameGenConfig config = FrameGenConfig.getInstance();
+        if (config.retainFrameGenerationForVendor(vendor)) {
+            config.save();
+        }
         activeBackend = switch (vendor) {
             case NVIDIA -> new NvidiaBackend();
             case AMD -> new AmdBackend();

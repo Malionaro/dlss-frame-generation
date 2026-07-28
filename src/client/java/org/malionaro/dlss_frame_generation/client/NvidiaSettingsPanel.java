@@ -13,6 +13,10 @@ public final class NvidiaSettingsPanel {
         boolean fgSupported = (capabilities & StreamlineBridge.CAP_FRAME_GENERATION) != 0;
         boolean upscalingSupported = (capabilities & StreamlineBridge.CAP_UPSCALING) != 0;
         boolean reflexSupported = (capabilities & StreamlineBridge.CAP_LOW_LATENCY) != 0;
+        boolean frameGenerationConflict =
+                config.conflictingFrameGenerationVendor(
+                        FrameGenerationBackend.GpuVendor.NVIDIA
+                ) != FrameGenerationBackend.GpuVendor.UNKNOWN;
         int maximumMultiplier = 2;
         if (fgSupported) {
             try {
@@ -33,8 +37,11 @@ public final class NvidiaSettingsPanel {
         // Row 1 Left: DLSS 4 Frame Generation Switch
         var btnFg = CycleButton.onOffBuilder(config.dlssFgEnabled)
                 .create(leftX, topY, columnWidth, 20,
-                        Component.literal("DLSS 4 Frame Gen"), (button, value) -> {
-                            config.dlssFgEnabled = value;
+                        Component.translatable("dlss_fg.option.nvidia.frame_generation"), (button, value) -> {
+                            config.setFrameGenerationEnabled(
+                                    FrameGenerationBackend.GpuVendor.NVIDIA,
+                                    value
+                            );
                             if (value && config.reflexMode == 0) {
                                 config.reflexMode = 1;
                             }
@@ -51,24 +58,33 @@ public final class NvidiaSettingsPanel {
                             }
                             screen.refreshSettingsWidgets();
                         });
-        btnFg.active = fgSupported;
-        screen.addSettingsWidget(btnFg);
+        btnFg.active = fgSupported && !frameGenerationConflict;
+        screen.addSettingsWidget(
+                btnFg,
+                screen.frameGenerationTooltip(
+                        FrameGenerationBackend.GpuVendor.NVIDIA,
+                        "dlss_fg.tooltip.nvidia.frame_generation"
+                )
+        );
 
         // Row 1 Right: NVIDIA Reflex 2.0 Mode
         var btnReflex = CycleButton.builder((Integer value) -> {
                     return switch (value) {
-                        case 0 -> Component.literal("Off");
-                        case 1 -> Component.literal("On");
-                        case 2 -> Component.literal("On + Boost");
-                        default -> Component.literal("Unknown");
+                        case 0 -> Component.translatable("dlss_fg.value.off");
+                        case 1 -> Component.translatable("dlss_fg.value.on");
+                        case 2 -> Component.translatable("dlss_fg.value.on_boost");
+                        default -> Component.translatable("dlss_fg.value.unknown");
                     };
                 }, config.reflexMode)
                 .withValues(0, 1, 2)
                 .create(rightX, topY, columnWidth, 20,
-                        Component.literal("NVIDIA Reflex"), (button, value) -> {
+                        Component.translatable("dlss_fg.option.nvidia.reflex"), (button, value) -> {
                             config.reflexMode = value;
                             if (value == 0 && config.dlssFgEnabled) {
-                                config.dlssFgEnabled = false;
+                                config.setFrameGenerationEnabled(
+                                        FrameGenerationBackend.GpuVendor.NVIDIA,
+                                        false
+                                );
                             }
                             config.save();
                             try {
@@ -88,23 +104,23 @@ public final class NvidiaSettingsPanel {
                             screen.refreshSettingsWidgets();
                         });
         btnReflex.active = reflexSupported;
-        screen.addSettingsWidget(btnReflex);
+        screen.addSettingsWidget(btnReflex, "dlss_fg.tooltip.nvidia.reflex");
 
         var btnDlssMode = CycleButton.builder((Integer value) -> {
                     return switch (value) {
-                        case 0 -> Component.literal("Off");
-                        case 1 -> Component.literal("DLAA (Native)");
-                        case 2 -> Component.literal("Quality");
-                        case 3 -> Component.literal("Balanced");
-                        case 4 -> Component.literal("Performance");
-                        case 5 -> Component.literal("Ultra Performance");
-                        case 6 -> Component.literal("Ultra Quality");
-                        default -> Component.literal("Unknown");
+                        case 0 -> Component.translatable("dlss_fg.value.off");
+                        case 1 -> Component.translatable("dlss_fg.value.dlaa");
+                        case 2 -> Component.translatable("dlss_fg.value.quality");
+                        case 3 -> Component.translatable("dlss_fg.value.balanced");
+                        case 4 -> Component.translatable("dlss_fg.value.performance");
+                        case 5 -> Component.translatable("dlss_fg.value.ultra_performance");
+                        case 6 -> Component.translatable("dlss_fg.value.ultra_quality");
+                        default -> Component.translatable("dlss_fg.value.unknown");
                     };
                 }, config.dlssUpscalingMode)
                 .withValues(0, 1, 2, 3, 4, 5, 6)
                 .create(leftX, topY + 25, columnWidth, 20,
-                        Component.literal("DLSS Reconstruction"), (button, value) -> {
+                        Component.translatable("dlss_fg.option.nvidia.dlss_mode"), (button, value) -> {
                             config.dlssUpscalingMode = value;
                             config.projectionJitterEnabled = value != 0;
                             if (value < 2) {
@@ -120,20 +136,20 @@ public final class NvidiaSettingsPanel {
                             }
                         });
         btnDlssMode.active = upscalingSupported;
-        screen.addSettingsWidget(btnDlssMode);
+        screen.addSettingsWidget(btnDlssMode, "dlss_fg.tooltip.nvidia.dlss_mode");
 
-        String dlssStatusLabel = upscalingSupported
-                ? "DLSS: hardware supported"
+        Component dlssStatusLabel = upscalingSupported
+                ? Component.translatable("dlss_fg.status.dlss.supported")
                 : reflexSupported
-                        ? "DLSS: unavailable (see log)"
-                        : "Streamline: unavailable";
+                        ? Component.translatable("dlss_fg.status.dlss.unavailable")
+                        : Component.translatable("dlss_fg.status.streamline.unavailable");
         var sharpeningStatus = net.minecraft.client.gui.components.Button.builder(
-                        Component.literal(dlssStatusLabel),
+                        dlssStatusLabel,
                         button -> {})
                 .bounds(rightX, topY + 25, columnWidth, 20)
                 .build();
         sharpeningStatus.active = false;
-        screen.addSettingsWidget(sharpeningStatus);
+        screen.addSettingsWidget(sharpeningStatus, "dlss_fg.tooltip.nvidia.dlss_status");
 
         // Row 3 Left: RTX 50 Multi-Frame Gen Multiplier (2x, 3x, 4x)
         java.util.List<Integer> multiplierValues =
@@ -141,10 +157,14 @@ public final class NvidiaSettingsPanel {
                         .boxed()
                         .toList();
         int displayedMultiplier = Math.min(config.frameMultiplier, maximumMultiplier);
-        var btnMultiplier = CycleButton.builder((Integer value) -> Component.literal(value + "x Multi-Frame"), displayedMultiplier)
+        var btnMultiplier = CycleButton.builder(
+                        (Integer value) -> Component.translatable(
+                                "dlss_fg.value.multi_frame", value
+                        ),
+                        displayedMultiplier)
                 .withValues(multiplierValues)
                 .create(leftX, topY + 50, columnWidth, 20,
-                        Component.literal("FG Multiplier"), (button, value) -> {
+                        Component.translatable("dlss_fg.option.nvidia.fg_multiplier"), (button, value) -> {
                             config.frameMultiplier = value;
                             config.save();
                             try {
@@ -153,17 +173,25 @@ public final class NvidiaSettingsPanel {
                                 // Ignore
                             }
                         });
-        btnMultiplier.active = fgSupported;
-        screen.addSettingsWidget(btnMultiplier);
+        btnMultiplier.active = fgSupported
+                && config.dlssFgEnabled
+                && !frameGenerationConflict;
+        screen.addSettingsWidget(
+                btnMultiplier,
+                screen.frameGenerationDependentTooltip(
+                        FrameGenerationBackend.GpuVendor.NVIDIA,
+                        "dlss_fg.tooltip.nvidia.fg_multiplier"
+                )
+        );
 
         // Row 3 Right: Auto-Reflex Latency Pacing
         var btnPacing = CycleButton.onOffBuilder(config.reflexPacingEnabled)
                 .create(rightX, topY + 50, columnWidth, 20,
-                        Component.literal("Reflex Pacing"), (button, value) -> {
+                        Component.translatable("dlss_fg.option.nvidia.reflex_pacing"), (button, value) -> {
                             config.reflexPacingEnabled = value;
                             config.save();
                         });
         btnPacing.active = reflexSupported;
-        screen.addSettingsWidget(btnPacing);
+        screen.addSettingsWidget(btnPacing, "dlss_fg.tooltip.nvidia.reflex_pacing");
     }
 }

@@ -14,6 +14,10 @@ public final class AmdSettingsPanel {
         boolean upscalingSupported =
                 (capabilities & StreamlineBridge.CAP_UPSCALING) != 0;
         boolean proxyReady = (capabilities & StreamlineBridge.CAP_PROXY_SWAPCHAIN) != 0;
+        boolean frameGenerationConflict =
+                config.conflictingFrameGenerationVendor(
+                        FrameGenerationBackend.GpuVendor.AMD
+                ) != FrameGenerationBackend.GpuVendor.UNKNOWN;
         FrameGenerationCompatibilityLayer.Route route =
                 FrameGenerationCompatibilityLayer.queryVulkanRoute(
                         FrameGenerationBackend.GpuVendor.AMD
@@ -23,24 +27,38 @@ public final class AmdSettingsPanel {
         // Minecraft's Vulkan renderer therefore uses the FSR 3.1 provider.
         var btnFgFsr = CycleButton.onOffBuilder(config.amdFsrFgEnabled)
                 .create(leftX, topY, columnWidth, 20,
-                        Component.literal("FSR 3.1 FG (Vulkan)"), (button, value) -> {
-                            config.amdFsrFgEnabled = value;
+                        Component.translatable("dlss_fg.option.amd.frame_generation"), (button, value) -> {
+                            config.setFrameGenerationEnabled(
+                                    FrameGenerationBackend.GpuVendor.AMD,
+                                    value
+                            );
                             config.save();
                             try {
                                 StreamlineBridge.nSetFrameGenerationMode(FrameGenerationBackend.GpuVendor.AMD.vendorId(), value, config.amdFsrMultiplier, config.uiRecomposition);
                             } catch (UnsatisfiedLinkError e) {
                                 // Ignore
                             }
+                            screen.refreshSettingsWidgets();
                         });
-        btnFgFsr.active = amdSupported;
-        screen.addSettingsWidget(btnFgFsr);
+        btnFgFsr.active = amdSupported && !frameGenerationConflict;
+        screen.addSettingsWidget(
+                btnFgFsr,
+                screen.frameGenerationTooltip(
+                        FrameGenerationBackend.GpuVendor.AMD,
+                        "dlss_fg.tooltip.amd.frame_generation"
+                )
+        );
 
         // FSR 3.1 inserts one interpolated frame. Values above 2x would be a
         // fake multi-frame mode and must not be exposed.
-        var btnMult = CycleButton.builder((Integer value) -> Component.literal(value + "x"), config.amdFsrMultiplier)
+        var btnMult = CycleButton.builder(
+                        (Integer value) -> Component.translatable(
+                                "dlss_fg.value.multiplier", value
+                        ),
+                        config.amdFsrMultiplier)
                 .withValues(2)
                 .create(rightX, topY, columnWidth, 20,
-                        Component.literal("FSR FG Factor"), (button, value) -> {
+                        Component.translatable("dlss_fg.option.fsr.fg_factor"), (button, value) -> {
                             config.amdFsrMultiplier = value;
                             config.save();
                             try {
@@ -49,20 +67,28 @@ public final class AmdSettingsPanel {
                                 // Ignore
                             }
                         });
-        btnMult.active = amdSupported;
-        screen.addSettingsWidget(btnMult);
+        btnMult.active = amdSupported
+                && config.amdFsrFgEnabled
+                && !frameGenerationConflict;
+        screen.addSettingsWidget(
+                btnMult,
+                screen.frameGenerationDependentTooltip(
+                        FrameGenerationBackend.GpuVendor.AMD,
+                        "dlss_fg.tooltip.fsr.fg_factor"
+                )
+        );
 
         // Row 2 Left: FSR Mode
         var btnFsrMode = CycleButton.builder((Integer value) -> {
                     return switch (value) {
-                        case 0 -> Component.literal("Off");
-                        case 1 -> Component.literal("Native AA");
-                        default -> Component.literal("Unknown");
+                        case 0 -> Component.translatable("dlss_fg.value.off");
+                        case 1 -> Component.translatable("dlss_fg.value.native_aa");
+                        default -> Component.translatable("dlss_fg.value.unknown");
                     };
                 }, config.amdFsrMode)
                 .withValues(0, 1)
                 .create(leftX, topY + 25, columnWidth, 20,
-                        Component.literal("FSR / OptiScaler"), (button, value) -> {
+                        Component.translatable("dlss_fg.option.amd.upscaling"), (button, value) -> {
                             config.amdFsrMode = value;
                             config.save();
                             try {
@@ -72,19 +98,25 @@ public final class AmdSettingsPanel {
                             }
                         });
         btnFsrMode.active = upscalingSupported;
-        screen.addSettingsWidget(btnFsrMode);
+        screen.addSettingsWidget(btnFsrMode, "dlss_fg.tooltip.amd.upscaling");
 
         // Row 2 Right: FSR Sharpness (Slider)
         var sliderFsrSharpness = new net.minecraft.client.gui.components.AbstractSliderButton(
                 rightX, topY + 25, columnWidth, 20,
-                Component.literal("AA Sharpness: " + (int)(config.amdFsrSharpness * 100) + "%"),
+                Component.translatable(
+                        "dlss_fg.option.aa_sharpness",
+                        (int)(config.amdFsrSharpness * 100)
+                ),
                 config.amdFsrSharpness) {
             {
                 this.updateMessage();
             }
             @Override
             protected void updateMessage() {
-                this.setMessage(Component.literal("AA Sharpness: " + (int)(this.value * 100) + "%"));
+                this.setMessage(Component.translatable(
+                        "dlss_fg.option.aa_sharpness",
+                        (int)(this.value * 100)
+                ));
             }
             @Override
             protected void applyValue() {
@@ -98,12 +130,12 @@ public final class AmdSettingsPanel {
             }
         };
         sliderFsrSharpness.active = upscalingSupported;
-        screen.addSettingsWidget(sliderFsrSharpness);
+        screen.addSettingsWidget(sliderFsrSharpness, "dlss_fg.tooltip.aa_sharpness");
 
         // Row 3 Left: UI Recomposition
         var btnRecomp = CycleButton.onOffBuilder(config.uiRecomposition)
                 .create(leftX, topY + 50, columnWidth, 20,
-                        Component.literal("UI Recomposition"), (button, value) -> {
+                        Component.translatable("dlss_fg.option.ui_recomposition"), (button, value) -> {
                             config.uiRecomposition = value;
                             config.save();
                             try {
@@ -113,20 +145,17 @@ public final class AmdSettingsPanel {
                             }
                         });
         btnRecomp.active = amdSupported;
-        screen.addSettingsWidget(btnRecomp);
+        screen.addSettingsWidget(btnRecomp, "dlss_fg.tooltip.ui_recomposition");
 
         var proxyStatus = CycleButton.onOffBuilder(proxyReady)
                 .create(rightX, topY + 50, columnWidth, 20,
-                        Component.literal(shortProviderName(route.provider())), (button, value) -> {});
+                        Component.translatable(
+                                route.provider()
+                                        == FrameGenerationCompatibilityLayer.ProviderId.AMD_FSR31_VULKAN
+                                        ? "dlss_fg.status.provider.fsr31"
+                                        : "dlss_fg.status.provider.fsr"
+                        ), (button, value) -> {});
         proxyStatus.active = false;
-        screen.addSettingsWidget(proxyStatus);
-    }
-
-    private static String shortProviderName(
-            FrameGenerationCompatibilityLayer.ProviderId provider
-    ) {
-        return provider == FrameGenerationCompatibilityLayer.ProviderId.AMD_FSR31_VULKAN
-                ? "FSR 3.1 Vulkan Provider"
-                : "FSR Vulkan Provider";
+        screen.addSettingsWidget(proxyStatus, "dlss_fg.tooltip.provider_status");
     }
 }

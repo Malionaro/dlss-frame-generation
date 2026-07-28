@@ -206,24 +206,85 @@ public class MotionVectorDebugRenderer {
         int colorText = 0xFFFFFFFF;
         int colorWarn = 0xFFFF5555;
 
-        extractor.text(mc.font, "=== Motion Vector Debug ===", x, y, colorHeader); y += 12;
-        extractor.text(mc.font, "Backend: " + (activeBackend != null ? activeBackend.vendor().displayName() : "None"), x, y, colorText); y += 12;
-        extractor.text(mc.font, "Mode: " + debugMode.name() + " (Density: " + density.name() + ")", x, y, colorText); y += 12;
+        extractor.text(
+                mc.font,
+                net.minecraft.network.chat.Component.translatable(
+                        "dlss_fg.motion_debug.title"
+                ),
+                x, y, colorHeader
+        );
+        y += 12;
+        extractor.text(
+                mc.font,
+                net.minecraft.network.chat.Component.translatable(
+                        "dlss_fg.motion_debug.backend",
+                        activeBackend != null
+                                ? activeBackend.vendor().displayName()
+                                : net.minecraft.network.chat.Component.translatable(
+                                        "dlss_fg.value.none"
+                                )
+                ),
+                x, y, colorText
+        );
+        y += 12;
+        extractor.text(
+                mc.font,
+                net.minecraft.network.chat.Component.translatable(
+                        "dlss_fg.motion_debug.mode",
+                        debugMode.name(),
+                        density.name()
+                ),
+                x, y, colorText
+        );
+        y += 12;
 
         if (mvResource != null) {
-            extractor.text(mc.font, "Resource: " + mvResource.resourceType().name(), x, y, colorText); y += 12;
-            extractor.text(mc.font, "Resolution: " + mvResource.width() + "x" + mvResource.height(), x, y, colorText); y += 12;
-            extractor.text(mc.font, "Vector Space: " + mvResource.motionSpace().name(), x, y, colorText); y += 12;
-            extractor.text(mc.font, "Y-Inverted: " + mvResource.isYAxisInverted(), x, y, colorText); y += 12;
-            extractor.text(mc.font, "Camera Motion: " + mvResource.isCameraMotionIncluded(), x, y, colorText); y += 12;
-            extractor.text(mc.font, "Object Motion: " + mvResource.isObjectMotionIncluded(), x, y, colorText); y += 12;
+            extractor.text(mc.font, net.minecraft.network.chat.Component.translatable(
+                    "dlss_fg.motion_debug.resource",
+                    mvResource.resourceType().name()
+            ), x, y, colorText); y += 12;
+            extractor.text(mc.font, net.minecraft.network.chat.Component.translatable(
+                    "dlss_fg.motion_debug.resolution",
+                    mvResource.width(),
+                    mvResource.height()
+            ), x, y, colorText); y += 12;
+            extractor.text(mc.font, net.minecraft.network.chat.Component.translatable(
+                    "dlss_fg.motion_debug.vector_space",
+                    mvResource.motionSpace().name()
+            ), x, y, colorText); y += 12;
+            extractor.text(mc.font, net.minecraft.network.chat.Component.translatable(
+                    "dlss_fg.motion_debug.y_inverted",
+                    yesNo(mvResource.isYAxisInverted())
+            ), x, y, colorText); y += 12;
+            extractor.text(mc.font, net.minecraft.network.chat.Component.translatable(
+                    "dlss_fg.motion_debug.camera_motion",
+                    yesNo(mvResource.isCameraMotionIncluded())
+            ), x, y, colorText); y += 12;
+            extractor.text(mc.font, net.minecraft.network.chat.Component.translatable(
+                    "dlss_fg.motion_debug.object_motion",
+                    yesNo(mvResource.isObjectMotionIncluded())
+            ), x, y, colorText); y += 12;
         } else {
-            extractor.text(mc.font, "Resource: NULL (no MV data yet)", x, y, colorWarn); y += 12;
+            extractor.text(
+                    mc.font,
+                    net.minecraft.network.chat.Component.translatable(
+                            "dlss_fg.motion_debug.resource_missing"
+                    ),
+                    x, y, colorWarn
+            );
+            y += 12;
         }
 
         if (validationResult != null) {
             int statusColor = validationResult.valid ? 0xFF55FF55 : colorWarn;
-            extractor.text(mc.font, "Status: " + validationResult.statusMessage, x, y, statusColor);
+            extractor.text(
+                    mc.font,
+                    net.minecraft.network.chat.Component.translatable(
+                            "dlss_fg.motion_debug.status",
+                            validationResult.statusMessage
+                    ),
+                    x, y, statusColor
+            );
             y += 12;
         }
         if (gpuSnapshot != null) {
@@ -245,16 +306,21 @@ public class MotionVectorDebugRenderer {
             boolean waitingForMotion = cameraMotionExpected
                     && zeroSnapshot
                     && !suspiciouslyZero;
+            String snapshotKey = suspiciouslyZero
+                    ? "dlss_fg.motion_debug.snapshot.pending"
+                    : waitingForMotion
+                            ? "dlss_fg.motion_debug.snapshot.waiting"
+                            : "dlss_fg.motion_debug.snapshot.ready";
             extractor.text(
                     mc.font,
-                    String.format(
-                            suspiciouslyZero
-                                    ? "GPU readback pending; camera preview active (frame %d)"
-                                    : waitingForMotion
-                                            ? "GPU Snapshot: waiting for submitted motion (frame %d)"
-                                            : "GPU Snapshot: frame %d, max %.2f px",
+                    net.minecraft.network.chat.Component.translatable(
+                            snapshotKey,
                             gpuSnapshot.frameNumber(),
-                            gpuSnapshot.maximumMagnitude()
+                            String.format(
+                                    java.util.Locale.ROOT,
+                                    "%.2f",
+                                    gpuSnapshot.maximumMagnitude()
+                            )
                     ),
                     x,
                     y,
@@ -293,11 +359,19 @@ public class MotionVectorDebugRenderer {
         }
 
         if (!drewMotion) {
-            extractor.text(mc.font, "Move or turn the camera to see vectors", 4, height - 14, 0xFFFFFFFF);
+            extractor.text(
+                    mc.font,
+                    net.minecraft.network.chat.Component.translatable(
+                            "dlss_fg.motion_debug.move_hint"
+                    ),
+                    4, height - 14, 0xFFFFFFFF
+            );
         } else if (gpuSnapshot != null) {
             extractor.text(
                     mc.font,
-                    "GPU vectors: arrows show current-to-previous SDK motion (camera look direction)",
+                    net.minecraft.network.chat.Component.translatable(
+                            "dlss_fg.motion_debug.arrow_legend"
+                    ),
                     4,
                     height - 14,
                     0xFFFFFFFF
@@ -348,11 +422,16 @@ public class MotionVectorDebugRenderer {
         }
 
         if (mc != null && mc.font != null) {
-            String legend = String.format(
-                    "HEATMAP: blue=slow  green=medium  red=fast  max=%.2f px",
-                    gpuSnapshot != null
-                            ? gpuSnapshot.maximumMagnitude()
-                            : motionMagnitude
+            net.minecraft.network.chat.Component legend =
+                    net.minecraft.network.chat.Component.translatable(
+                            "dlss_fg.motion_debug.heatmap_legend",
+                            String.format(
+                                    java.util.Locale.ROOT,
+                                    "%.2f",
+                                    gpuSnapshot != null
+                                            ? gpuSnapshot.maximumMagnitude()
+                                            : motionMagnitude
+                            )
             );
             extractor.text(mc.font, legend, 4, Math.max(4, height - 14), 0xFFFFFFFF);
         }
@@ -404,26 +483,52 @@ public class MotionVectorDebugRenderer {
         );
         extractor.text(
                 mc.font,
-                gpuSnapshot != null ? "[GPU MOTION VECTOR SNAPSHOT]" : "[CAMERA MOTION PREVIEW]",
+                net.minecraft.network.chat.Component.translatable(
+                        gpuSnapshot != null
+                                ? "dlss_fg.motion_debug.raw.gpu"
+                                : "dlss_fg.motion_debug.raw.camera"
+                ),
                 x1 + 6,
                 y1 + 6,
                 0xFFFFFFFF
         );
         extractor.text(
                 mc.font,
-                String.format(
-                        "Raw X: %+.2f px   Raw Y: %+.2f px   |V|: %.2f",
-                        gpuSnapshot != null
-                                ? gpuSnapshot.sampleRaw(centerX, centerY, width, height).x()
-                                : motionX,
-                        gpuSnapshot != null
-                                ? gpuSnapshot.sampleRaw(centerX, centerY, width, height).y()
-                                : motionY,
-                        centerVector.magnitude()
+                net.minecraft.network.chat.Component.translatable(
+                        "dlss_fg.motion_debug.raw.values",
+                        String.format(
+                                java.util.Locale.ROOT,
+                                "%+.2f",
+                                gpuSnapshot != null
+                                    ? gpuSnapshot.sampleRaw(
+                                            centerX, centerY, width, height
+                                    ).x()
+                                    : motionX
+                        ),
+                        String.format(
+                                java.util.Locale.ROOT,
+                                "%+.2f",
+                                gpuSnapshot != null
+                                    ? gpuSnapshot.sampleRaw(
+                                            centerX, centerY, width, height
+                                    ).y()
+                                    : motionY
+                        ),
+                        String.format(
+                                java.util.Locale.ROOT,
+                                "%.2f",
+                                centerVector.magnitude()
+                        )
                 ),
                 x1 + 6,
                 y1 + 18,
                 0xFFDDDDDD
+        );
+    }
+
+    private static net.minecraft.network.chat.Component yesNo(boolean value) {
+        return net.minecraft.network.chat.Component.translatable(
+                value ? "dlss_fg.value.yes" : "dlss_fg.value.no"
         );
     }
 
