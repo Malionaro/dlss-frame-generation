@@ -15,8 +15,9 @@ import java.util.Map;
 
 public class MultiVendorSettingsScreen extends Screen {
     private static final int TITLE_Y = 6;
-    private static final int STATUS_Y = 19;
-    private static final int CONTENT_TOP = 32;
+    private static final int STATUS_PRIMARY_Y = 18;
+    private static final int STATUS_SECONDARY_Y = 29;
+    private static final int CONTENT_TOP = 42;
     private static final int FOOTER_HEIGHT = 32;
     private static final int COLUMN_GAP = 10;
 
@@ -422,16 +423,44 @@ public class MultiVendorSettingsScreen extends Screen {
                 case UNSUPPORTED -> 0xFFFF5555;
                 default -> 0xFFFFAA00;
             };
-            String statusLine = capabilities.statusMessage()
-                    + " | " + capabilities.deviceName()
-                    + " | RQ " + (capabilities.rayQuerySupported() ? "yes" : "no")
-                    + " | RTP " + (capabilities.rayTracingPipelineSupported() ? "yes" : "no");
+            Component state = Component.translatable(switch (capabilities.state()) {
+                case READY -> "dlss_fg.status.rt.ready";
+                case UNSUPPORTED -> "dlss_fg.status.rt.unsupported";
+                default -> "dlss_fg.status.rt.waiting";
+            });
             extractor.centeredText(
                     this.font,
-                    Component.literal(fitHeaderLine(statusLine)),
+                    Component.literal(fitHeaderLine(
+                            Component.translatable(
+                                    "dlss_fg.status.header.ray_tracing",
+                                    state
+                            ).getString()
+                    )),
                     this.width / 2,
-                    STATUS_Y,
+                    STATUS_PRIMARY_Y,
                     statusColor
+            );
+            extractor.centeredText(
+                    this.font,
+                    Component.literal(fitHeaderLine(
+                            Component.translatable(
+                                    "dlss_fg.status.header.ray_details",
+                                    capabilities.deviceName(),
+                                    Component.translatable(
+                                            capabilities.rayQuerySupported()
+                                                    ? "dlss_fg.value.yes"
+                                                    : "dlss_fg.value.no"
+                                    ),
+                                    Component.translatable(
+                                            capabilities.rayTracingPipelineSupported()
+                                                    ? "dlss_fg.value.yes"
+                                                    : "dlss_fg.value.no"
+                                    )
+                            ).getString()
+                    )),
+                    this.width / 2,
+                    STATUS_SECONDARY_Y,
+                    0xFFB0B0B0
             );
         } else {
             FrameGenerationBackend backend = backendForTab();
@@ -439,17 +468,45 @@ public class MultiVendorSettingsScreen extends Screen {
             if (backend != null) {
                 int statusColor = active ? 0xFF00FF00 : 0xFFFFAA00;
                 double vramMb = (double) vramBytes / (1024.0 * 1024.0);
-                String statusLine = Component.translatable(
-                        "dlss_fg.status.frame_generation",
-                        backend.statusDescription(),
-                        String.format(java.util.Locale.ROOT, "%.2f", vramMb)
-                ).getString();
+                String nativeStatus = backend.statusDescription();
+                Component readableStatus = BackendStatusFormatter.description(
+                        nativeStatus,
+                        backend.isSupported(),
+                        active
+                );
                 extractor.centeredText(
                         this.font,
-                        Component.literal(fitHeaderLine(statusLine)),
+                        Component.literal(fitHeaderLine(
+                                Component.translatable(
+                                        "dlss_fg.status.header.backend",
+                                        backend.vendor().displayName(),
+                                        readableStatus
+                                ).getString()
+                        )),
                         this.width / 2,
-                        STATUS_Y,
+                        STATUS_PRIMARY_Y,
                         statusColor
+                );
+                extractor.centeredText(
+                        this.font,
+                        Component.literal(fitHeaderLine(
+                                Component.translatable(
+                                        "dlss_fg.status.header.frame_metrics",
+                                        Component.translatable(
+                                                active
+                                                        ? "dlss_fg.value.yes"
+                                                        : "dlss_fg.value.no"
+                                        ),
+                                        String.format(
+                                                java.util.Locale.ROOT,
+                                                "%.2f",
+                                                vramMb
+                                        )
+                                ).getString()
+                        )),
+                        this.width / 2,
+                        STATUS_SECONDARY_Y,
+                        0xFFB0B0B0
                 );
             } else {
                 extractor.centeredText(
@@ -460,7 +517,7 @@ public class MultiVendorSettingsScreen extends Screen {
                                 ).getString()
                         )),
                         this.width / 2,
-                        STATUS_Y,
+                        STATUS_PRIMARY_Y,
                         0xFFFF5555
                 );
             }

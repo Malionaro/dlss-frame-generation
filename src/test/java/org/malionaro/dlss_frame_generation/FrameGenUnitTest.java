@@ -1,6 +1,7 @@
 package org.malionaro.dlss_frame_generation;
 
 import org.junit.jupiter.api.Test;
+import org.malionaro.dlss_frame_generation.client.BackendStatusFormatter;
 import org.malionaro.dlss_frame_generation.client.testing.FrameGenTestRunner;
 import org.malionaro.dlss_frame_generation.client.FrameGenConfig;
 import org.malionaro.dlss_frame_generation.client.FrameGenerationBackend;
@@ -124,6 +125,42 @@ public class FrameGenUnitTest {
                 FrameGenerationBackend.GpuVendor.AMD,
                 config.selectedFrameGenerationVendor()
         );
+    }
+
+    @Test
+    public void convertsNativeProviderErrorsIntoReadableStatusKinds() {
+        assertEquals(
+                BackendStatusFormatter.StatusKind.NO_SUPPORTED_ADAPTER,
+                BackendStatusFormatter.classify(
+                        "DLSS-G=Result::eErrorNoSupportedAdapterFound",
+                        false,
+                        false
+                )
+        );
+        assertEquals(
+                BackendStatusFormatter.StatusKind.D3D12_REQUIRED,
+                BackendStatusFormatter.classify(
+                        "XeSS-FG needs D3D12; Vulkan can use FSR 3.1",
+                        false,
+                        false
+                )
+        );
+        assertEquals(
+                BackendStatusFormatter.StatusKind.INPUTS_PENDING,
+                BackendStatusFormatter.classify(
+                        "Dense GPU inputs ready; native provider did not accept this frame",
+                        true,
+                        false
+                )
+        );
+        assertEquals(
+                BackendStatusFormatter.StatusKind.ACTIVE,
+                BackendStatusFormatter.classify("anything", true, true)
+        );
+        assertFalse(BackendStatusFormatter.isUsable(
+                "DLSS-G=Result::eErrorNoSupportedAdapterFound",
+                false
+        ));
     }
 
     @Test

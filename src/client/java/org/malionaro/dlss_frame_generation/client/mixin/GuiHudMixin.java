@@ -28,16 +28,22 @@ public class GuiHudMixin {
     @Inject(method = "extractRenderState", at = @At("RETURN"))
     private void onExtractRenderState(GuiGraphicsExtractor extractor, DeltaTracker deltaTracker, CallbackInfo ci) {
         try {
-            MotionVectorDebugRenderer debugRenderer = FrameGenMod.motionVectorDebugRenderer();
-            if (debugRenderer == null || debugRenderer.getDebugMode() == MotionVectorDebugRenderer.DebugMode.OFF) {
-                return;
-            }
-
             Minecraft mc = Minecraft.getInstance();
             if (mc == null || mc.getWindow() == null) return;
 
             int screenWidth = mc.getWindow().getGuiScaledWidth();
             int screenHeight = mc.getWindow().getGuiScaledHeight();
+
+            // The performance OSD is an independent HUD feature. It must remain
+            // visible when motion-vector debugging is disabled.
+            org.malionaro.dlss_frame_generation.client.ui.FrameGenOsdRenderer
+                    .renderOsd(extractor, screenWidth, screenHeight);
+
+            MotionVectorDebugRenderer debugRenderer = FrameGenMod.motionVectorDebugRenderer();
+            if (debugRenderer == null || debugRenderer.getDebugMode() == MotionVectorDebugRenderer.DebugMode.OFF) {
+                return;
+            }
+
             MotionVectorResource gpuResource = VulkanRegistry.getActiveMotionVectors();
             MotionVectorValidator.ValidationResult gpuValidation =
                     VulkanRegistry.getMotionVectorValidation();
@@ -53,22 +59,17 @@ public class GuiHudMixin {
                     ? compatibilityManager.activeVendorBackend()
                     : null;
 
-            // Render Performance OSD Overlay
-            org.malionaro.dlss_frame_generation.client.ui.FrameGenOsdRenderer.renderOsd(extractor, screenWidth, screenHeight);
-
-            if (debugRenderer != null && debugRenderer.getDebugMode() != MotionVectorDebugRenderer.DebugMode.OFF) {
-                debugRenderer.renderHudOverlay(
-                        extractor,
-                        screenWidth,
-                        screenHeight,
-                        activeBackend,
-                        gpuResource != null ? gpuResource : debugRenderer.currentResource(),
-                        gpuValidation != null ? gpuValidation : debugRenderer.currentValidation(),
-                        gpuSnapshot
-                );
-            }
+            debugRenderer.renderHudOverlay(
+                    extractor,
+                    screenWidth,
+                    screenHeight,
+                    activeBackend,
+                    gpuResource != null ? gpuResource : debugRenderer.currentResource(),
+                    gpuValidation != null ? gpuValidation : debugRenderer.currentValidation(),
+                    gpuSnapshot
+            );
         } catch (Throwable t) {
-            FrameGenMod.LOGGER.debug("Motion debug overlay rendering failed", t);
+            FrameGenMod.LOGGER.debug("Frame Generation HUD rendering failed", t);
         }
     }
 }

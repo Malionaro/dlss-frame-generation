@@ -124,8 +124,8 @@ public final class DiagnosticsScreen extends Screen {
         int y = CONTENT_TOP - scrollOffset;
 
         for (FrameGenTestRunner.TestResult result : results) {
-            List<String> messageLines = wrap(result.message(), textWidth);
-            int cardHeight = 18 + messageLines.size() * LINE_HEIGHT;
+            List<String> messageLines = detailLines(result, textWidth);
+            int cardHeight = 20 + messageLines.size() * LINE_HEIGHT;
             int clippedTop = Math.max(CONTENT_TOP, y);
             int clippedBottom = Math.min(contentBottom(), y + cardHeight);
             if (clippedBottom > clippedTop) {
@@ -154,7 +154,7 @@ public final class DiagnosticsScreen extends Screen {
                     y + 5,
                     result.passed() ? COLOR_PASS : COLOR_FAIL
             );
-            int lineY = y + 16;
+            int lineY = y + 17;
             for (String line : messageLines) {
                 drawVisibleLine(
                         extractor,
@@ -201,13 +201,81 @@ public final class DiagnosticsScreen extends Screen {
         };
     }
 
+    private List<String> detailLines(
+            FrameGenTestRunner.TestResult result,
+            int maxWidth
+    ) {
+        List<Component> details = new ArrayList<>();
+        if (!result.backendChecks().isEmpty()) {
+            boolean hasSelectedBackend = result.backendChecks().stream()
+                    .anyMatch(FrameGenTestRunner.BackendCheck::selected);
+            if (!hasSelectedBackend) {
+                details.add(Component.translatable(
+                        "dlss_fg.diagnostics.backend.none_selected"
+                ));
+            }
+            for (FrameGenTestRunner.BackendCheck check :
+                    result.backendChecks()) {
+                if (!check.selected()) {
+                    details.add(Component.translatable(
+                            "dlss_fg.diagnostics.backend.not_selected",
+                            check.vendor().displayName()
+                    ));
+                    continue;
+                }
+
+                Component status = BackendStatusFormatter.description(
+                        check.nativeStatus(),
+                        check.capabilities() != 0,
+                        false
+                );
+                details.add(Component.translatable(
+                        "dlss_fg.diagnostics.backend.selected",
+                        check.vendor().displayName(),
+                        "0x" + Integer.toHexString(check.capabilities()),
+                        status
+                ));
+            }
+        } else {
+            details.add(Component.literal(
+                    result.message() == null || result.message().isBlank()
+                            ? Component.translatable(
+                                    "dlss_fg.diagnostics.no_details"
+                            ).getString()
+                            : result.message().trim()
+            ));
+        }
+
+        List<String> lines = new ArrayList<>();
+        for (Component detail : details) {
+            lines.addAll(wrap(detail.getString(), maxWidth));
+        }
+        return lines;
+    }
+
     private List<String> wrap(String value, int maxWidth) {
-        String remaining = value == null || value.isBlank()
+        String normalized = value == null || value.isBlank()
                 ? Component.translatable(
                         "dlss_fg.diagnostics.no_details"
                 ).getString()
                 : value.trim();
         List<String> lines = new ArrayList<>();
+        for (String explicitLine : normalized.split("\\R", -1)) {
+            wrapLine(explicitLine, maxWidth, lines);
+        }
+        return lines;
+    }
+
+    private void wrapLine(
+            String value,
+            int maxWidth,
+            List<String> lines
+    ) {
+        String remaining = value.strip();
+        if (remaining.isEmpty()) {
+            lines.add("");
+            return;
+        }
         while (!remaining.isEmpty()) {
             String fitting = font.plainSubstrByWidth(remaining, maxWidth);
             if (fitting.isEmpty()) {
@@ -222,7 +290,6 @@ public final class DiagnosticsScreen extends Screen {
             lines.add(fitting);
             remaining = remaining.substring(fitting.length()).stripLeading();
         }
-        return lines;
     }
 
     private int contentBottom() {
