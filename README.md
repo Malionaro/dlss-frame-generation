@@ -1,5 +1,7 @@
 # Vulkan Frame Generation Integration for Minecraft
 
+[![Build and test](https://github.com/Malionaro/dlss-frame-generation/actions/workflows/build.yml/badge.svg)](https://github.com/Malionaro/dlss-frame-generation/actions/workflows/build.yml)
+
 [English](#english) · [Deutsch](#deutsch) ·
 [Installation](docs/INSTALL.md) · [Backend details](docs/BACKENDS.md) ·
 [Capability audit](docs/CAPABILITY_AUDIT.md) ·
