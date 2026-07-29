@@ -5,7 +5,8 @@
 [English](#english) · [Deutsch](#deutsch) ·
 [Installation](docs/INSTALL.md) · [Backend details](docs/BACKENDS.md) ·
 [Capability audit](docs/CAPABILITY_AUDIT.md) ·
-[Sodium/Iris status](docs/SODIUM_IRIS_COMPATIBILITY.md)
+[Sodium/Iris status](docs/SODIUM_IRIS_COMPATIBILITY.md) ·
+[Feature status and roadmap](docs/FEATURE_STATUS.md)
 
 ## English
 
