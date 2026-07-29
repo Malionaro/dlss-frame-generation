@@ -1,4 +1,5 @@
 package org.malionaro.dlss_frame_generation.client;
+import org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle;
 
 /**
  * JNI Bridge to interface with the native NVIDIA Streamline C++ SDK library.

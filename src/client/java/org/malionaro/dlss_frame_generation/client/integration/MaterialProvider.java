@@ -1,6 +1,6 @@
 package org.malionaro.dlss_frame_generation.client.integration;
 
-import org.malionaro.dlss_frame_generation.client.FrameIdentity;
+import org.malionaro.dlss_frame_generation.client.frame.FrameIdentity;
 
 import java.util.Optional;
 

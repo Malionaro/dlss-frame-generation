@@ -1,7 +1,7 @@
 package org.malionaro.dlss_frame_generation.client.mixin;
 
 import com.mojang.blaze3d.vulkan.VulkanInstance;
-import org.malionaro.dlss_frame_generation.client.StreamlineVulkanRequirements;
+import org.malionaro.dlss_frame_generation.client.interop.StreamlineVulkanRequirements;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyArgs;

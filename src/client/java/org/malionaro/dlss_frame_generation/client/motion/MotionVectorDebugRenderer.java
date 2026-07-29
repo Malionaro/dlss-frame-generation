@@ -5,7 +5,7 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3f;
-import org.malionaro.dlss_frame_generation.client.FrameGenerationBackend;
+import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend;
 import org.malionaro.dlss_frame_generation.client.mixin.CameraAccessor;
 import org.malionaro.dlss_frame_generation.client.mixin.GameRendererAccessor;
 

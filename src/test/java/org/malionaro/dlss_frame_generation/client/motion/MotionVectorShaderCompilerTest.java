@@ -13,13 +13,19 @@ class MotionVectorShaderCompilerTest {
     @Test
     void compilesDenseMotionVectorShaderToSpirV() throws Exception {
         assertCompiles(
-                "/assets/dlss_fg/shaders/source/frame_generation_motion.comp");
+                "/assets/dlss_fg/shaders/source/motion/frame_generation_motion.comp");
     }
 
     @Test
     void compilesRayReconstructionTonemapShaderToSpirV() throws Exception {
         assertCompiles(
-                "/assets/dlss_fg/shaders/source/ray_reconstruction_tonemap.comp");
+                "/assets/dlss_fg/shaders/source/raytracing/ray_reconstruction_tonemap.comp");
+    }
+
+    @Test
+    void compilesMotionBlurShaderToSpirV() throws Exception {
+        assertCompiles(
+                "/assets/dlss_fg/shaders/source/motion/motion_blur.comp");
     }
 
     private static void assertCompiles(String resource) throws Exception {

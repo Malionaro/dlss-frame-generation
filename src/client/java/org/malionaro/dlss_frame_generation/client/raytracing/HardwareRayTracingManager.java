@@ -4,7 +4,7 @@ import com.mojang.blaze3d.vulkan.VulkanDevice;
 import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
 import net.minecraft.core.BlockPos;
 import org.lwjgl.vulkan.VkCommandBuffer;
-import org.malionaro.dlss_frame_generation.client.FrameGenConfig;
+import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
 import org.slf4j.Logger;
 
 /**

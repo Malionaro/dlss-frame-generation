@@ -33,16 +33,19 @@ FetchContent_MakeAvailable(VulkanHeaders)
 
 # Native library
 add_library(dlss_fg_native SHARED
-    bridge/FidelityFxBridge.cpp
-    bridge/FrameGenCompatibilityLayer.cpp
-    bridge/StreamlineBridge.cpp
-    bridge/WindowsDxgiPresenter.cpp
+    bridge/fidelityfx/FidelityFxBridge.cpp
+    bridge/presentation/WindowsDxgiPresenter.cpp
+    bridge/routing/FrameGenCompatibilityLayer.cpp
+    bridge/streamline/StreamlineBridge.cpp
 )
 
 # Header includes
 target_include_directories(dlss_fg_native PRIVATE
     ${JNI_INCLUDE_DIRS}
-    ${CMAKE_CURRENT_SOURCE_DIR}/bridge
+    ${CMAKE_CURRENT_SOURCE_DIR}/bridge/fidelityfx
+    ${CMAKE_CURRENT_SOURCE_DIR}/bridge/presentation
+    ${CMAKE_CURRENT_SOURCE_DIR}/bridge/routing
+    ${CMAKE_CURRENT_SOURCE_DIR}/bridge/streamline
     ${CMAKE_CURRENT_SOURCE_DIR}/fidelityfx/include
     ${STREAMLINE_SDK_DIR}/include
 )

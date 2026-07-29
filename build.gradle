@@ -282,8 +282,12 @@ tasks.register("compileShaders") {
             } catch (Exception ignored) {}
         }
 
-        def shaderFiles = shaderSourceDir.listFiles()
-        if (shaderFiles == null || shaderFiles.length == 0) {
+        def shaderFiles = fileTree(shaderSourceDir) {
+            include "**/*.comp"
+            include "**/*.vert"
+            include "**/*.frag"
+        }.files
+        if (shaderFiles.isEmpty()) {
             return
         }
 
@@ -298,14 +302,14 @@ tasks.register("compileShaders") {
         }
 
         shaderFiles.each { File file ->
-            if (file.isFile() && (file.name.endsWith(".comp") || file.name.endsWith(".vert") || file.name.endsWith(".frag"))) {
-                def outputFile = new File(outputDirFile, "${file.name}.spv")
-                println "Compiling Vulkan shader: ${file.name} -> ${outputFile.name}"
-                def process = [glslcPath, file.absolutePath, "-o", outputFile.absolutePath].execute()
-                process.waitFor()
-                if (process.exitValue() != 0) {
-                    throw new GradleException("Failed to compile shader ${file.name}:\n${process.errorStream.text}")
-                }
+            def relativePath = shaderSourceDir.toPath().relativize(file.toPath()).toString()
+            def outputFile = new File(outputDirFile, "${relativePath}.spv")
+            outputFile.parentFile.mkdirs()
+            println "Compiling Vulkan shader: ${relativePath} -> ${outputFile.name}"
+            def process = [glslcPath, file.absolutePath, "-o", outputFile.absolutePath].execute()
+            process.waitFor()
+            if (process.exitValue() != 0) {
+                throw new GradleException("Failed to compile shader ${relativePath}:\n${process.errorStream.text}")
             }
         }
     }

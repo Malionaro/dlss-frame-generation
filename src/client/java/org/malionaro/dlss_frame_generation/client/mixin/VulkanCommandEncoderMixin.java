@@ -2,7 +2,7 @@ package org.malionaro.dlss_frame_generation.client.mixin;
 
 import com.mojang.blaze3d.vulkan.VulkanDevice;
 import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
-import org.malionaro.dlss_frame_generation.client.VulkanRegistry;
+import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;

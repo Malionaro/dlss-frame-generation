@@ -8,7 +8,7 @@ import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
-import org.malionaro.dlss_frame_generation.client.FrameGenConfig;
+import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
 import org.malionaro.dlss_frame_generation.client.access.VulkanDeviceAccess;
 import org.slf4j.Logger;
 
@@ -234,7 +234,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
 
     private void createPipeline() throws IOException {
         ByteBuffer spirv = RayQueryShaderCompiler.compile(
-                "/assets/dlss_fg/shaders/source/hybrid_ray_query.comp");
+                "/assets/dlss_fg/shaders/source/raytracing/hybrid_ray_query.comp");
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer result = stack.mallocLong(1);
             VkShaderModuleCreateInfo shaderInfo = VkShaderModuleCreateInfo.calloc(stack)

@@ -1,4 +1,5 @@
 package org.malionaro.dlss_frame_generation.client.mixin;
+import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
 
 import net.minecraft.client.Minecraft;
 import org.malionaro.dlss_frame_generation.client.FrameGenMod;
@@ -31,7 +32,7 @@ public class MinecraftMixin {
     @Inject(method = "setLevel", at = @At("HEAD"))
     private void onSetLevel(CallbackInfo ci) {
         try {
-            org.malionaro.dlss_frame_generation.client.VulkanRegistry.setWorldReset();
+            org.malionaro.dlss_frame_generation.client.render.VulkanRegistry.setWorldReset();
         } catch (Throwable t) {
             // Ignore
         }
@@ -40,7 +41,7 @@ public class MinecraftMixin {
     @Inject(method = "close", at = @At("HEAD"))
     private void onClientClose(CallbackInfo ci) {
         try {
-            org.malionaro.dlss_frame_generation.client.VulkanRegistry.shutdown();
+            org.malionaro.dlss_frame_generation.client.render.VulkanRegistry.shutdown();
         } catch (Throwable error) {
             FrameGenMod.LOGGER.debug("Vulkan frame-generation shutdown failed", error);
         }

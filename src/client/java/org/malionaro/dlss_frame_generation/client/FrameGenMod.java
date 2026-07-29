@@ -1,4 +1,5 @@
 package org.malionaro.dlss_frame_generation.client;
+import org.malionaro.dlss_frame_generation.client.compat.CompatibilityManager;
 
 import net.fabricmc.api.ClientModInitializer;
 import org.malionaro.dlss_frame_generation.client.motion.MotionVectorDebugRenderer;

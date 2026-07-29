@@ -7,9 +7,9 @@ import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
-import org.malionaro.dlss_frame_generation.client.FrameIdentity;
-import org.malionaro.dlss_frame_generation.client.FrameResourceSet;
-import org.malionaro.dlss_frame_generation.client.FrameGenerationBackend;
+import org.malionaro.dlss_frame_generation.client.frame.FrameIdentity;
+import org.malionaro.dlss_frame_generation.client.frame.FrameResourceSet;
+import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 import org.malionaro.dlss_frame_generation.client.access.VulkanDeviceAccess;
 import org.malionaro.dlss_frame_generation.client.raytracing.RayReconstructionResources;
@@ -26,7 +26,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * Renderer-owned frame-generation input pipeline.
  *
  * <p>It snapshots color and depth before Minecraft clears depth and draws the
- * GUI, then computes dense display-resolution RG16F motion vectors from camera
+ * GUI, then computes dense render-resolution RG16F motion vectors from camera
  * reprojection plus a local temporal color/depth search for object motion.</p>
  */
 public final class VulkanFrameGenerationPipeline implements AutoCloseable {
@@ -56,6 +56,12 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private long tonemapPipeline;
     private long tonemapDescriptorPool;
     private final long[] tonemapDescriptorSets = new long[SLOT_COUNT];
+    private long motionBlurShaderModule;
+    private long motionBlurDescriptorSetLayout;
+    private long motionBlurPipelineLayout;
+    private long motionBlurPipeline;
+    private long motionBlurDescriptorPool;
+    private final long[] motionBlurDescriptorSets = new long[SLOT_COUNT];
     private int width;
     private int height;
     private int outputWidth;
@@ -128,7 +134,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             int multiplier,
             boolean uiRecomposition,
             boolean uiWillBeProvided,
-            boolean debugReadbackRequested
+            boolean debugReadbackRequested,
+            boolean motionBlurEnabled,
+            float motionBlurIntensity,
+            int motionBlurSamples
     ) {
         if (failed || frameResources == null
                 || commandBuffer == null || sourceColor == null || sourceDepth == null
@@ -308,42 +317,47 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                             cameraForwardX, cameraForwardY, cameraForwardZ,
                             reset || !historyValid
                     );
-            boolean fullResolutionFallback = false;
-            if (upscalingAccepted) {
-                copyUpscaledToSource(
-                        commandBuffer,
-                        current.upscaled,
-                        frameResources.output()
-                );
-            } else if (frameResources.color().image()
-                    != frameResources.output().image()) {
+            boolean fullResolutionFallback = !upscalingAccepted;
+            if (fullResolutionFallback) {
                 blitSnapshotToOwnedOutput(
                         commandBuffer,
                         current.color,
                         current.upscaled
                 );
+            }
+            boolean motionBlurAccepted = motionBlurEnabled
+                    && outputFormat == VK_FORMAT_R8G8B8A8_UNORM;
+            NativeImage finalColor = current.upscaled;
+            if (motionBlurAccepted) {
+                dispatchMotionBlur(
+                        commandBuffer,
+                        currentIndex,
+                        current,
+                        motionBlurIntensity,
+                        motionBlurSamples
+                );
+                finalColor = current.motionBlurOutput;
+            }
+            if (upscalingAccepted || motionBlurAccepted
+                    || frameResources.color().image()
+                            != frameResources.output().image()) {
                 copyUpscaledToSource(
                         commandBuffer,
-                        current.upscaled,
+                        finalColor,
                         frameResources.output()
                 );
-                fullResolutionFallback = true;
             }
 
-            boolean fullResolutionHudless =
-                    upscalingAccepted || fullResolutionFallback;
-            NativeImage hudlessColor = fullResolutionHudless
-                    ? current.upscaled
-                    : current.color;
-            int hudlessWidth = fullResolutionHudless ? outputWidth : width;
-            int hudlessHeight = fullResolutionHudless ? outputHeight : height;
+            NativeImage hudlessColor = finalColor;
+            int hudlessWidth = outputWidth;
+            int hudlessHeight = outputHeight;
             boolean accepted = StreamlineBridge.nSubmitFrameGenerationInputs(
                     vendorId,
                     commandBuffer.address(),
                     frameResources.backbuffer().image(),
                     frameResources.backbuffer().format(),
                     hudlessColor.image, hudlessColor.memory, hudlessColor.view,
-                    upscalingAccepted ? outputFormat : colorFormat,
+                    outputFormat,
                     current.depth.image, current.depth.memory, current.depth.view, depthFormat,
                     current.motion.image, current.motion.memory, current.motion.view, MOTION_FORMAT,
                     hudlessWidth, hudlessHeight,
@@ -387,8 +401,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                             + (rayReconstructionAccepted
                                     ? "; DLSS Ray Reconstruction output applied"
                                     : upscalingAccepted
-                                            ? "; DLSS output applied"
-                                            : "")
+                                             ? "; temporal reconstruction applied"
+                                             : motionBlurAccepted
+                                                     ? "; motion blur applied"
+                                             : "")
                     : "Dense GPU inputs ready; native provider did not accept this frame";
             return new MotionVectorResource(
                     MotionVectorResource.ResourceType.VK_IMAGE,
@@ -649,6 +665,15 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     outputWidth,
                     outputHeight
             );
+            slot.motionBlurOutput = createImage(
+                    VK_FORMAT_R8G8B8A8_UNORM,
+                    VK_IMAGE_ASPECT_COLOR_BIT,
+                    VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                            | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                            | VK_IMAGE_USAGE_SAMPLED_BIT,
+                    outputWidth,
+                    outputHeight
+            );
             Allocation uniform = createBuffer(
                     UNIFORM_SIZE,
                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -674,6 +699,8 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         createDescriptors();
         createTonemapPipeline();
         createTonemapDescriptors();
+        createMotionBlurPipeline();
+        createMotionBlurDescriptors();
         historyValid = false;
         frameNumber = 0;
         completedPresentSerial = 0;
@@ -691,7 +718,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
 
     private void createPipeline() throws IOException {
         ByteBuffer spirv = MotionVectorShaderCompiler.compile(
-                "/assets/dlss_fg/shaders/source/frame_generation_motion.comp");
+                "/assets/dlss_fg/shaders/source/motion/frame_generation_motion.comp");
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer result = stack.mallocLong(1);
             VkShaderModuleCreateInfo shaderInfo = VkShaderModuleCreateInfo.calloc(stack)
@@ -852,7 +879,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
 
     private void createTonemapPipeline() throws IOException {
         ByteBuffer spirv = MotionVectorShaderCompiler.compile(
-                "/assets/dlss_fg/shaders/source/ray_reconstruction_tonemap.comp");
+                "/assets/dlss_fg/shaders/source/raytracing/ray_reconstruction_tonemap.comp");
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer result = stack.mallocLong(1);
             VkShaderModuleCreateInfo shaderInfo =
@@ -968,6 +995,159 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                                     .limit(binding + 1));
                 }
                 imageInfo.position(0).limit(2);
+                vkUpdateDescriptorSets(device, writes, null);
+            }
+        }
+    }
+
+    private void createMotionBlurPipeline() throws IOException {
+        ByteBuffer spirv = MotionVectorShaderCompiler.compile(
+                "/assets/dlss_fg/shaders/source/motion/motion_blur.comp");
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer result = stack.mallocLong(1);
+            VkShaderModuleCreateInfo shaderInfo =
+                    VkShaderModuleCreateInfo.calloc(stack)
+                            .sType$Default()
+                            .pCode(spirv);
+            check(vkCreateShaderModule(
+                    device, shaderInfo, null, result),
+                    "create motion-blur shader module");
+            motionBlurShaderModule = result.get(0);
+
+            VkDescriptorSetLayoutBinding.Buffer bindings =
+                    VkDescriptorSetLayoutBinding.calloc(3, stack);
+            for (int binding = 0; binding < 2; binding++) {
+                bindings.get(binding)
+                        .binding(binding)
+                        .descriptorType(
+                                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                        .descriptorCount(1)
+                        .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            }
+            bindings.get(2)
+                    .binding(2)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            VkDescriptorSetLayoutCreateInfo layoutInfo =
+                    VkDescriptorSetLayoutCreateInfo.calloc(stack)
+                            .sType$Default()
+                            .pBindings(bindings);
+            check(vkCreateDescriptorSetLayout(
+                    device, layoutInfo, null, result),
+                    "create motion-blur descriptor layout");
+            motionBlurDescriptorSetLayout = result.get(0);
+
+            VkPushConstantRange.Buffer pushConstant =
+                    VkPushConstantRange.calloc(1, stack);
+            pushConstant.get(0)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT)
+                    .offset(0)
+                    .size(16);
+            VkPipelineLayoutCreateInfo pipelineLayoutInfo =
+                    VkPipelineLayoutCreateInfo.calloc(stack)
+                            .sType$Default()
+                            .pSetLayouts(stack.longs(
+                                    motionBlurDescriptorSetLayout))
+                            .pPushConstantRanges(pushConstant);
+            check(vkCreatePipelineLayout(
+                    device, pipelineLayoutInfo, null, result),
+                    "create motion-blur pipeline layout");
+            motionBlurPipelineLayout = result.get(0);
+
+            VkPipelineShaderStageCreateInfo stage =
+                    VkPipelineShaderStageCreateInfo.calloc(stack)
+                            .sType$Default()
+                            .stage(VK_SHADER_STAGE_COMPUTE_BIT)
+                            .module(motionBlurShaderModule)
+                            .pName(stack.UTF8("main"));
+            VkComputePipelineCreateInfo.Buffer pipelineInfo =
+                    VkComputePipelineCreateInfo.calloc(1, stack);
+            pipelineInfo.get(0)
+                    .sType$Default()
+                    .stage(stage)
+                    .layout(motionBlurPipelineLayout);
+            check(vkCreateComputePipelines(
+                    device, NULL, pipelineInfo, null, result),
+                    "create motion-blur compute pipeline");
+            motionBlurPipeline = result.get(0);
+        } finally {
+            MemoryUtil.memFree(spirv);
+        }
+    }
+
+    private void createMotionBlurDescriptors() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer result = stack.mallocLong(SLOT_COUNT);
+            VkDescriptorPoolSize.Buffer poolSizes =
+                    VkDescriptorPoolSize.calloc(2, stack);
+            poolSizes.get(0)
+                    .type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(SLOT_COUNT * 2);
+            poolSizes.get(1)
+                    .type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                    .descriptorCount(SLOT_COUNT);
+            VkDescriptorPoolCreateInfo poolInfo =
+                    VkDescriptorPoolCreateInfo.calloc(stack)
+                            .sType$Default()
+                            .maxSets(SLOT_COUNT)
+                            .pPoolSizes(poolSizes);
+            check(vkCreateDescriptorPool(
+                    device, poolInfo, null, result),
+                    "create motion-blur descriptor pool");
+            motionBlurDescriptorPool = result.get(0);
+
+            LongBuffer layouts = stack.mallocLong(SLOT_COUNT);
+            for (int index = 0; index < SLOT_COUNT; index++) {
+                layouts.put(index, motionBlurDescriptorSetLayout);
+            }
+            VkDescriptorSetAllocateInfo allocateInfo =
+                    VkDescriptorSetAllocateInfo.calloc(stack)
+                            .sType$Default()
+                            .descriptorPool(motionBlurDescriptorPool)
+                            .pSetLayouts(layouts);
+            check(vkAllocateDescriptorSets(
+                    device, allocateInfo, result),
+                    "allocate motion-blur descriptor sets");
+
+            for (int index = 0; index < SLOT_COUNT; index++) {
+                motionBlurDescriptorSets[index] = result.get(index);
+                FrameSlot slot = slots[index];
+                VkDescriptorImageInfo.Buffer sampled =
+                        VkDescriptorImageInfo.calloc(2, stack);
+                sampled.get(0)
+                        .sampler(sampler)
+                        .imageView(slot.upscaled.view)
+                        .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                sampled.get(1)
+                        .sampler(sampler)
+                        .imageView(slot.motion.view)
+                        .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                VkDescriptorImageInfo.Buffer storage =
+                        VkDescriptorImageInfo.calloc(1, stack);
+                storage.get(0)
+                        .imageView(slot.motionBlurOutput.view)
+                        .imageLayout(VK_IMAGE_LAYOUT_GENERAL);
+                VkWriteDescriptorSet.Buffer writes =
+                        VkWriteDescriptorSet.calloc(3, stack);
+                for (int binding = 0; binding < 2; binding++) {
+                    writes.get(binding)
+                            .sType$Default()
+                            .dstSet(motionBlurDescriptorSets[index])
+                            .dstBinding(binding)
+                            .descriptorType(
+                                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                            .pImageInfo(sampled
+                                    .position(binding)
+                                    .limit(binding + 1));
+                }
+                sampled.position(0).limit(2);
+                writes.get(2)
+                        .sType$Default()
+                        .dstSet(motionBlurDescriptorSets[index])
+                        .dstBinding(2)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                        .pImageInfo(storage);
                 vkUpdateDescriptorSets(device, writes, null);
             }
         }
@@ -1137,6 +1317,14 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                         VK_PIPELINE_STAGE_TRANSFER_BIT,
                         stack);
+                transitionImage(
+                        commandBuffer, slot.motionBlurOutput,
+                        VK_IMAGE_LAYOUT_UNDEFINED,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        stack);
 
                 VkImageSubresourceRange colorRange = VkImageSubresourceRange.calloc(stack)
                         .aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
@@ -1163,6 +1351,11 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, colorClear, colorRange);
                 vkCmdClearColorImage(
                         commandBuffer, slot.rayReconstructionOutput.image,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        colorClear,
+                        colorRange);
+                vkCmdClearColorImage(
+                        commandBuffer, slot.motionBlurOutput.image,
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         colorClear,
                         colorRange);
@@ -1211,6 +1404,15 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                         VK_IMAGE_LAYOUT_GENERAL,
                         VK_ACCESS_TRANSFER_WRITE_BIT,
                         VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        stack);
+                transitionImage(
+                        commandBuffer, slot.motionBlurOutput,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        VK_IMAGE_LAYOUT_GENERAL,
+                        VK_ACCESS_TRANSFER_WRITE_BIT,
+                        VK_ACCESS_SHADER_WRITE_BIT,
                         VK_PIPELINE_STAGE_TRANSFER_BIT,
                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                         stack);
@@ -1461,6 +1663,82 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     (outputWidth + 7) / 8,
                     (outputHeight + 7) / 8,
                     1
+            );
+        }
+    }
+
+    private void dispatchMotionBlur(
+            VkCommandBuffer commandBuffer,
+            int currentIndex,
+            FrameSlot current,
+            float intensity,
+            int samples
+    ) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            transitionImage(
+                    commandBuffer,
+                    current.upscaled,
+                    VK_IMAGE_LAYOUT_GENERAL,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_ACCESS_SHADER_READ_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                            | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    stack
+            );
+            transitionImage(
+                    commandBuffer,
+                    current.motionBlurOutput,
+                    current.motionBlurOutput.layout,
+                    VK_IMAGE_LAYOUT_GENERAL,
+                    VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                    VK_ACCESS_SHADER_WRITE_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT
+                            | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    stack
+            );
+            vkCmdBindPipeline(
+                    commandBuffer,
+                    VK_PIPELINE_BIND_POINT_COMPUTE,
+                    motionBlurPipeline
+            );
+            vkCmdBindDescriptorSets(
+                    commandBuffer,
+                    VK_PIPELINE_BIND_POINT_COMPUTE,
+                    motionBlurPipelineLayout,
+                    0,
+                    stack.longs(motionBlurDescriptorSets[currentIndex]),
+                    null
+            );
+            ByteBuffer parameters = stack.malloc(16);
+            parameters.putFloat(0, Math.max(0.0f, Math.min(1.0f, intensity)));
+            parameters.putInt(4, Math.max(1, Math.min(64, samples)));
+            parameters.putLong(8, 0L);
+            vkCmdPushConstants(
+                    commandBuffer,
+                    motionBlurPipelineLayout,
+                    VK_SHADER_STAGE_COMPUTE_BIT,
+                    0,
+                    parameters
+            );
+            vkCmdDispatch(
+                    commandBuffer,
+                    (outputWidth + 7) / 8,
+                    (outputHeight + 7) / 8,
+                    1
+            );
+            transitionImage(
+                    commandBuffer,
+                    current.upscaled,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_IMAGE_LAYOUT_GENERAL,
+                    VK_ACCESS_SHADER_READ_BIT,
+                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    stack
             );
         }
     }
@@ -1887,6 +2165,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private void destroyResources() {
         for (FrameSlot slot : slots) {
             if (slot == null) continue;
+            destroyImage(slot.motionBlurOutput);
             destroyImage(slot.ui);
             destroyImage(slot.rayReconstructionOutput);
             destroyImage(slot.motion);
@@ -1906,13 +2185,22 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         if (tonemapDescriptorPool != NULL) {
             vkDestroyDescriptorPool(device, tonemapDescriptorPool, null);
         }
+        if (motionBlurDescriptorPool != NULL) {
+            vkDestroyDescriptorPool(device, motionBlurDescriptorPool, null);
+        }
         if (pipeline != NULL) vkDestroyPipeline(device, pipeline, null);
         if (tonemapPipeline != NULL) {
             vkDestroyPipeline(device, tonemapPipeline, null);
         }
+        if (motionBlurPipeline != NULL) {
+            vkDestroyPipeline(device, motionBlurPipeline, null);
+        }
         if (pipelineLayout != NULL) vkDestroyPipelineLayout(device, pipelineLayout, null);
         if (tonemapPipelineLayout != NULL) {
             vkDestroyPipelineLayout(device, tonemapPipelineLayout, null);
+        }
+        if (motionBlurPipelineLayout != NULL) {
+            vkDestroyPipelineLayout(device, motionBlurPipelineLayout, null);
         }
         if (descriptorSetLayout != NULL) {
             vkDestroyDescriptorSetLayout(device, descriptorSetLayout, null);
@@ -1926,9 +2214,19 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         if (tonemapShaderModule != NULL) {
             vkDestroyShaderModule(device, tonemapShaderModule, null);
         }
+        if (motionBlurDescriptorSetLayout != NULL) {
+            vkDestroyDescriptorSetLayout(
+                    device, motionBlurDescriptorSetLayout, null);
+        }
+        if (motionBlurShaderModule != NULL) {
+            vkDestroyShaderModule(device, motionBlurShaderModule, null);
+        }
         descriptorPool = pipeline = pipelineLayout = descriptorSetLayout = sampler = shaderModule = NULL;
         tonemapDescriptorPool = tonemapPipeline = tonemapPipelineLayout =
                 tonemapDescriptorSetLayout = tonemapShaderModule = NULL;
+        motionBlurDescriptorPool = motionBlurPipeline =
+                motionBlurPipelineLayout = motionBlurDescriptorSetLayout =
+                        motionBlurShaderModule = NULL;
         java.util.Arrays.fill(slots, null);
         latestDebugSnapshot = null;
     }
@@ -1953,6 +2251,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         private NativeImage upscaled;
         private NativeImage ui;
         private NativeImage rayReconstructionOutput;
+        private NativeImage motionBlurOutput;
         private long uniformBuffer;
         private long uniformMemory;
         private long debugReadbackBuffer;

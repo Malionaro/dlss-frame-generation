@@ -4,13 +4,13 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
-import org.malionaro.dlss_frame_generation.client.CompatibilityManager;
-import org.malionaro.dlss_frame_generation.client.FrameGenConfig;
+import org.malionaro.dlss_frame_generation.client.compat.CompatibilityManager;
+import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
 import org.malionaro.dlss_frame_generation.client.FrameGenMod;
-import org.malionaro.dlss_frame_generation.client.FrameGenerationBackend;
-import org.malionaro.dlss_frame_generation.client.ReflexPacer;
+import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend;
+import org.malionaro.dlss_frame_generation.client.render.ReflexPacer;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
-import org.malionaro.dlss_frame_generation.client.VulkanRegistry;
+import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
 
 public class FrameGenOsdRenderer {
 

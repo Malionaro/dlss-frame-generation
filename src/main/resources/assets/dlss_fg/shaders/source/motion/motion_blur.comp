@@ -1,0 +1,44 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D sourceColor;
+layout(set = 0, binding = 1) uniform sampler2D motionVectors;
+layout(rgba8, set = 0, binding = 2) uniform writeonly image2D outputColor;
+
+layout(push_constant) uniform MotionBlurParameters {
+    float intensity;
+    int sampleCount;
+    vec2 padding;
+} parameters;
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 outputSize = imageSize(outputColor);
+    if (any(greaterThanEqual(pixel, outputSize))) {
+        return;
+    }
+
+    vec2 uv = (vec2(pixel) + vec2(0.5)) / vec2(outputSize);
+    vec2 motionSize = vec2(textureSize(motionVectors, 0));
+    vec2 velocityUv = texture(motionVectors, uv).xy
+        / max(motionSize, vec2(1.0));
+    velocityUv *= clamp(parameters.intensity, 0.0, 1.0);
+    float lengthUv = length(velocityUv);
+    if (lengthUv > 0.08) {
+        velocityUv *= 0.08 / lengthUv;
+    }
+
+    int samples = clamp(parameters.sampleCount, 1, 64);
+    vec4 accumulated = vec4(0.0);
+    for (int index = 0; index < samples; ++index) {
+        float position = samples == 1
+            ? 0.0
+            : float(index) / float(samples - 1) - 0.5;
+        accumulated += texture(
+            sourceColor,
+            clamp(uv + velocityUv * position, vec2(0.0), vec2(1.0))
+        );
+    }
+    imageStore(outputColor, pixel, accumulated / float(samples));
+}

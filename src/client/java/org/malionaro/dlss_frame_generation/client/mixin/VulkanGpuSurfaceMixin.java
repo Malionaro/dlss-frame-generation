@@ -1,13 +1,14 @@
 package org.malionaro.dlss_frame_generation.client.mixin;
+import org.malionaro.dlss_frame_generation.client.compat.CompatibilityManager;
 
 import com.mojang.blaze3d.vulkan.VulkanDevice;
 import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
 import com.mojang.blaze3d.vulkan.VulkanGpuSurface;
-import org.malionaro.dlss_frame_generation.client.FrameGenerationCompatibilityLayer;
+import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationCompatibilityLayer;
 import org.malionaro.dlss_frame_generation.client.FrameGenMod;
-import org.malionaro.dlss_frame_generation.client.D3D12PresentationBridge;
+import org.malionaro.dlss_frame_generation.client.interop.D3D12PresentationBridge;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
-import org.malionaro.dlss_frame_generation.client.VulkanRegistry;
+import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
 import org.lwjgl.glfw.GLFWNativeWin32;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.system.Platform;
