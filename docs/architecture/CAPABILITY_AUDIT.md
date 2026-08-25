@@ -5,10 +5,10 @@ Last reviewed: 2026-08-22
 This document separates three different states which the settings screen must
 not confuse:
 
-1. **Supported** — the GPU, driver and vendor runtime expose the feature.
-2. **Ready** — Minecraft has supplied every required image, constant and
+1. **Supported.** The GPU, driver and vendor runtime expose the feature.
+2. **Ready.** Minecraft has supplied every required image, constant and
    presentation hook.
-3. **Active** — the user enabled the feature and the runtime accepted the
+3. **Active.** The user enabled the feature and the runtime accepted the
    current frame.
 
 ## NVIDIA Streamline
@@ -122,7 +122,7 @@ Implemented capability gates:
 - D3D12 command queue, DXGI flip-discard swapchain and zero-copy frame path.
 
 `D3D12_DEVICE_READY` is not reported as presentation success.
-`PRESENTATION_READY` additionally requires all shared images, synchronization
+`PRESENTATION_READY` requires all shared images, synchronization
 objects and swapchain resources. Any failed stage preserves the reason and
 returns to normal Vulkan WSI instead of enabling a nonfunctional button.
 
