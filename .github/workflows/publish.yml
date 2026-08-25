@@ -43,7 +43,7 @@ jobs:
           Write-Host "JAR: $jar"
 
       - name: Publish to Modrinth
-        if: ${{ secrets.MODRINTH_TOKEN != '' }}
+        if: ${{ vars.MODRINTH_PROJECT_ID != '' }}
         uses: Kir-Antipov/mc-publish@v3.3
         with:
           modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
@@ -61,7 +61,7 @@ jobs:
           fail-mode: fail
 
       - name: Publish to CurseForge
-        if: ${{ secrets.CURSEFORGE_TOKEN != '' }}
+        if: ${{ vars.CURSEFORGE_PROJECT_ID != '' }}
         uses: Kir-Antipov/mc-publish@v3.3
         with:
           curseforge-id: ${{ vars.CURSEFORGE_PROJECT_ID }}
@@ -74,6 +74,6 @@ jobs:
           game-versions: "26.2"
           fail-mode: fail
 
-      - name: No publish secrets configured
-        if: ${{ secrets.MODRINTH_TOKEN == '' && secrets.CURSEFORGE_TOKEN == '' }}
-        run: Write-Host "::notice::No MODRINTH_TOKEN/CURSEFORGE_TOKEN secrets set - skipped publish (build verified)."
+      - name: No publish configured
+        if: ${{ vars.MODRINTH_PROJECT_ID == '' && vars.CURSEFORGE_PROJECT_ID == '' }}
+        run: Write-Host "::notice::No MODRINTH_PROJECT_ID/CURSEFORGE_PROJECT_ID vars set - skipped publish (build verified). Configure vars and MODRINTH_TOKEN/CURSEFORGE_TOKEN secrets to enable."
