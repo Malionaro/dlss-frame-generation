@@ -38,7 +38,7 @@ jobs:
           cache: gradle
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: java
           queries: security-and-quality
@@ -49,6 +49,6 @@ jobs:
           ./gradlew compileClientJava compileTestJava --no-daemon -x configureNative -x buildNative -x copyNative -x copyStreamlineRuntime -x compileShaders --stacktrace || ./gradlew compileClientJava --no-daemon --stacktrace
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:java"
