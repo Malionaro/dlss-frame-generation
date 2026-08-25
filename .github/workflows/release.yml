@@ -58,7 +58,7 @@ jobs:
           if (-not (jar tf "$jar" | Select-String "dlss_fg_native.dll")) { throw "JAR missing dlss_fg_native.dll - copyNative failed" }
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.value }}
           name: ${{ steps.tag.outputs.value }}
