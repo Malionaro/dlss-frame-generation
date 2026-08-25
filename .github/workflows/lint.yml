@@ -1,0 +1,73 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  java:
+    name: Java check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: corretto
+          java-version: "25"
+          cache: gradle
+      - name: Run Gradle check (tests + any spotless/checkstyle if configured)
+        run: |
+          chmod +x ./gradlew
+          ./gradlew check --no-daemon --stacktrace --continue || {
+            echo "::warning::Gradle check failed or not fully configured - see logs"
+            exit 1
+          }
+
+  cpp-format:
+    name: C++ clang-format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Check native bridge formatting
+        run: |
+          files=$(find native/bridge -name "*.cpp" -o -name "*.h" | head -n 100)
+          if [ -z "$files" ]; then echo "No native files"; exit 0; fi
+          echo "$files" | xargs -I{} sh -c 'echo "Checking {}"; clang-format --dry-run --Werror "{}" || { echo "::error::{} needs clang-format"; exit 1; }'
+          echo "clang-format ok"
+
+  shaders:
+    name: GLSL / SPIR-V
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install glslang and spirv-tools
+        run: sudo apt-get update && sudo apt-get install -y glslang-tools spirv-tools
+      - name: Validate GLSL shaders compile to SPIR-V
+        run: |
+          set -e
+          shopt -s globstar
+          found=0
+          for f in src/main/resources/assets/dlss_fg/shaders/source/**/*.comp src/main/resources/assets/dlss_fg/shaders/source/**/*.vert src/main/resources/assets/dlss_fg/shaders/source/**/*.frag; do
+            [ -e "$f" ] || continue
+            found=1
+            echo "Compiling $f"
+            glslangValidator -V "$f" -o /tmp/out.spv
+            spirv-val /tmp/out.spv
+          done
+          if [ "$found" -eq 0 ]; then echo "No shaders found"; fi
+          echo "Shader validation ok"
