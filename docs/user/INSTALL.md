@@ -1,12 +1,10 @@
-# Installation & Requirements / Installation & Anforderungen
-
-[**English Guide**](#english-guide) | [**Deutsche Anleitung**](#deutsche-anleitung)
+# Installation & requirements
 
 ---
 
-## English Guide
+## Guide
 
-### 📋 System Requirements
+### System Requirements
 
 | Component | Minimum | Recommended |
 |---|---|---|
@@ -17,7 +15,7 @@
 | **Minecraft** | 26.2 | 26.2 |
 | **Fabric** | 0.155.2+ | 0.155.2+ |
 
-### 🛠️ Step-by-Step Installation
+### Step-by-Step Installation
 
 #### Step 1: Install Fabric Loader & API
 1. Install **Fabric Loader 0.155.2** (or newer) for Minecraft 26.2.
@@ -74,78 +72,3 @@ Quality, Balanced, Performance, Ultra Performance and Ultra Quality via split
 world/display targets (see [BACKENDS.md](../architecture/BACKENDS.md)).
 A manually installed `config/dlss_fg/optiscaler/OptiScaler.dll` overrides the
 bundled version.
-
----
-
-## Deutsche Anleitung
-
-### 📋 Systemanforderungen
-
-| Komponente | Minimum | Empfohlen |
-|---|---|---|
-| **Betriebssystem** | Windows 10/11 (64-Bit) | Windows 11 (64-Bit) |
-| **Grafikkarte** | Vulkan-1.3-kompatible GPU | Entwicklungs-/Testhardware; siehe Backend-Status |
-| **VRAM** | 4 GB VRAM | 8+ GB VRAM |
-| **Java** | Java 25 | Java 25 (Corretto / Temurin) |
-| **Minecraft** | 26.2 | 26.2 |
-| **Fabric** | 0.155.2+ | 0.155.2+ |
-
-### 🛠️ Schritt-für-Schritt Installation
-
-#### Schritt 1: Fabric Loader & API installieren
-1. Installiere den **Fabric Loader 0.155.2** (oder neuer) für Minecraft 26.2.
-2. Lade die **Fabric API 0.155.2+** (oder neuer) herunter und platziere sie in deinen `.minecraft/mods` Ordner.
-
-#### Schritt 2: Mod-Datei hinzufügen
-1. Erstelle oder lade die `dlss-frame-generation-1.0-SNAPSHOT.jar` herunter.
-2. Kopiere `dlss-frame-generation-1.0-SNAPSHOT.jar` in deinen `.minecraft/mods` Ordner.
-3. **Automatische DLL-Extraktion:** Alle erforderlichen Streamline SDK DLLs (`sl.interposer.dll`, `sl.dlss_g.dll`, etc.) sind direkt in der JAR enthalten und entpacken sich beim Spielstart automatisch!
-
-#### Schritt 3: In-Game Menü & Konfiguration
-1. Starte Minecraft 26.2.
-2. Öffne das Menü: **Optionen... -> Videoeinstellungen... -> Frame Generation...**
-   (oder über **ModMenu**).
-3. Prüfe den im Einstellungsmenü angezeigten Backend-Status. Ein nicht
-   verfügbares Capability kann nicht durch ein Profil aktiviert werden.
-
-> **Backend-Status:** Diese Revision ist experimentell. NVIDIA Streamline samt
-> Vulkan-Interposer ist enthalten; Frame Generation bleibt fail-closed, bis
-> Streamline alle Pflichtdaten des Renderers annimmt. Der
-> FidelityFX-FSR-3.1-Vulkan-Proxy ist für AMD und als ausdrücklich benannter
-> FSR-Fallback auf Intel-GPUs enthalten. Eine optionale Vulkan→D3D12-
-> Präsentations-Bridge ist enthalten; im Paket fehlen jedoch die offiziellen
-> FSR-4-FG- beziehungsweise XeSS-FG-/XeLL-Provider-Laufzeiten. Beide Provider
-> bleiben deshalb deaktiviert. Details stehen in
-> [BACKENDS.md](../architecture/BACKENDS.md).
-
-#### Optionale hybride Vulkan→D3D12-Präsentation
-
-Öffne unter Windows **Frame Generation → Graphics → Vulkan→D3D12**. Der Schalter
-wird erst freigegeben, wenn die Mod über die LUID exakt dieselbe GPU sowie alle
-Vulkan-External-Memory-/Semaphore-Anforderungen bestätigt hat. Die Aktivierung
-erfordert einen Neustart.
-
-Minecraft rendert dabei weiter mit Vulkan; nur die Präsentation läuft über
-GPU-geteilte Bilder und Fences in einer DXGI-Flip-Model-Swapchain. Der Modus ist
-experimentell, derzeit SDR-exklusiv und fällt bei einem Setup-Fehler automatisch
-auf Vulkan-WSI zurück. Er kann nicht gleichzeitig mit einem Vulkan-FG-Proxy
-laufen. Der Transport allein aktiviert weder FSR 4 FG noch XeSS-FG.
-
-#### Mitgeliefertes OptiScaler
-
-OptiScaler v0.9.4 und die für den Vulkan-/Upscaler-Pfad benötigten
-Laufzeitdateien befinden sich bereits in der Mod-JAR. Es genügt, nur diese eine
-JAR in den Mods-Ordner zu kopieren. Auf AMD/Intel wird OptiScaler automatisch
-entpackt und konfiguriert; NVIDIA lädt es nicht.
-
-Nur für die Entwicklung kann das Hilfsskript eine externe Version installieren:
-
-```powershell
-.\tools\install-optiscaler.ps1
-```
-
-Der aktuelle Minecraft-Renderpfad nutzt die Bridge für echtes 1:1-Native-AA sowie
-Qualität, Ausgeglichen, Leistung, Ultra-Leistung und Ultra-Qualität über
-getrennte Welt-/Anzeigeziele (siehe [BACKENDS.md](../architecture/BACKENDS.md)).
-Eine manuell installierte Datei unter `config/dlss_fg/optiscaler/OptiScaler.dll`
-überschreibt die mitgelieferte Version.

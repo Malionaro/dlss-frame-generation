@@ -1,427 +1,423 @@
-# Sodium- und Iris-Kompatibilität
+# Sodium and Iris compatibility
 
-> Technische Recherche und Implementierungsübergabe für Menschen und KI-Agenten  
-> Stand der Recherche: 28. Juli 2026  
-> Projektziel: `dlss_fg` / Vulkan Frame Generation Integration für Minecraft 26.2
+> Technical research and implementation handover for humans and AI agents  
+> Research status: July 28, 2026  
+> Project goal: `dlss_fg` / Vulkan frame generation integration for Minecraft 26.2
 
-## 1. Zweck und verbindliche Grenzen
+## 1. Purpose and binding limits
 
-Dieses Dokument hält den aktuellen Wissensstand zur Kompatibilität dieser Mod mit
-Sodium und Iris fest. Der ursprüngliche Rechercheteil dokumentiert die
-Ausgangslage vor der Implementierung; der folgende Statusblock beschreibt den
-danach tatsächlich umgesetzten Stand.
+This document records the current state of knowledge regarding this mod's compatibility with
+Sodium and Iris. The initial research section documents the
+situation before implementation; the following status block describes the
+state actually implemented afterwards.
 
-Die wichtigste Regel für die spätere Arbeit lautet:
+The most important rule for later work is:
 
-> Die Anwesenheit einer Mod ist kein Kompatibilitätsnachweis. Eine Funktion darf
-> erst freigeschaltet werden, wenn Backend, Ressourcen, Synchronisation und nativer
-> Provider für den konkreten Frame nachweislich verwendbar sind.
+> The presence of a mod is not proof of compatibility. A feature may
+> only be enabled when the backend, resources, synchronization, and native
+> provider have been proven usable for the specific frame.
 
-Nicht Teil dieses Dokuments sind Map-/Minimap-Support, Distant Horizons und eine
-allgemeine Portierung von Iris auf Vulkan. Sie dürfen später als getrennte Vorhaben
-geplant werden.
+Map/minimap support, Distant Horizons, and a general port of Iris to Vulkan are not part of this document. They may be planned later as separate efforts.
 
-### 1.1 Implementierungsstand nach dem Kompatibilitätsumbau
+### 1.1 Implementation status after the compatibility refactor
 
-Statisch umgesetzt und gebaut:
+Statically implemented and built:
 
-- `RendererDetector` erkennt Mojangs tatsächliches `GpuDevice`, Renderer sowie
-  Sodium-/Iris-Versionen und fragt bei vorhandener Iris-API den Shaderpackzustand
-  optional ab. Unbekannte oder widersprüchliche Zustände sperren Vulkan-FG, RT und
-  Motion Debug mit lokalisiertem Grund.
-- `FrameIdentity` und `FrameResourceSet` erfassen Farbe, Tiefe, Ausgabe,
-  Backbuffer, Command Buffer, Semaphore, Layouts, Queue-Familie und
-  Swapchain-Generation atomar. Stale, unvollständige oder während eines
-  Renderpasses erfasste Sätze werden verworfen.
-- `SodiumVulkanAdapter` verwendet bewusst Mojangs öffentliche Vulkan-Ressourcen,
-  meldet aber nur dann Bereitschaft, wenn der vollständige atomare Vertrag
-  erfüllt ist. Es wurden keine privaten Sodium-Interna eingebunden.
-- `RendererIntegration` und `MaterialProvider` bilden einen optionalen,
-  frame-identifizierten Vertrag für eine spätere Aperture-Integration.
-  Aktuell existiert kein Aperture-Provider und keine Behauptung über
-  Iris-/Aperture-PBR-Materialsupport.
-- Die Diagnose trennt Integrationsstatus, Providerbereitschaft und tatsächliche
-  Frame-/Present-Annahme. UI-Schalter zeigen übersetzte Sperrgründe.
+- `RendererDetector` detects Mojang's actual `GpuDevice`, renderer, and
+  Sodium/Iris versions and, when the Iris API is present, optionally queries the shader pack state.
+  Unknown or contradictory states block Vulkan FG, RT, and
+  motion debug with a localized reason.
+- `FrameIdentity` and `FrameResourceSet` capture color, depth, output,
+  backbuffer, command buffer, semaphore, layouts, queue family, and
+  swapchain generation atomically. Stale, incomplete, or
+  sets captured during a render pass are discarded.
+- `SodiumVulkanAdapter` intentionally uses Mojang's public Vulkan resources,
+  but only reports readiness when the full atomic contract
+  is satisfied. No private Sodium internals were included.
+- `RendererIntegration` and `MaterialProvider` form an optional,
+  frame-identified contract for later Aperture integration.
+  No Aperture provider currently exists and no claim is made about
+  Iris/Aperture PBR material support.
+- Diagnostics separate integration status, provider readiness, and actual
+  frame/present acceptance. UI toggles show translated block reasons.
 
-Automatisierte Tests decken Renderer-/Iris-Zustände, atomare Ressourcen,
-Swapchain-Generationen, Provider-Lifecycle/Exklusivität sowie Depth-/Motion-
-Konventionen ab. Noch offen ist der echte Laufzeittest mit den konkreten
-Sodium-0.9.1- und Iris-1.11.2-JARs; ohne ihn wird nicht behauptet, dass diese
-Kombinationen hardwarevalidiert sind. Minecraft 26.3 bleibt ein vorbereitetes,
-aber getrennt zu prüfendes Hook-/Mixin-Ziel.
+Automated tests cover renderer/Iris states, atomic resources,
+swapchain generations, provider lifecycle/exclusivity, and depth/motion
+conventions. Still open is the real runtime test with the actual
+Sodium 0.9.1 and Iris 1.11.2 JARs; without it, no claim is made that these
+combinations are hardware-validated. Minecraft 26.3 remains a prepared
+but separately tested hook/mixin target.
 
-## 2. Untersuchte Versionen und reproduzierbare Quellen
+## 2. Examined versions and reproducible sources
 
-Die Aussagen wurden gegen folgende konkrete Quellstände geprüft:
+The statements were checked against the following specific source states:
 
-| Komponente | Geprüfter Stand |
+| Component | Checked state |
 |---|---|
-| Minecraft | 26.2, entsprechend dem aktuellen Projekt-Build |
-| Sodium | 0.9.1, Tag `mc26.2-0.9.1`, Commit `2cfb93d332791502446d8226005b0b6baff40355` |
-| Iris | 1.11.2, Branch `26.2`, Commit `ff6f5aa1174f3bfcb540e405a9c259d29ff42b21` |
+| Minecraft | 26.2, corresponding to the current project build |
+| Sodium | 0.9.1, tag `mc26.2-0.9.1`, commit `2cfb93d332791502446d8226005b0b6baff40355` |
+| Iris | 1.11.2, branch `26.2`, commit `ff6f5aa1174f3bfcb540e405a9c259d29ff42b21` |
 | Iris ShaderDoc | Commit `ddf473726710c6504422d192784c1652f8aece98` |
-| Dieses Projekt | lokaler Stand bei Erstellung dieses Dokuments |
+| This project | local state at the time this document was created |
 
-Vor einer Implementierung müssen diese Versionen erneut geprüft werden. Insbesondere
-interne Sodium- und Iris-Klassen sind nicht als stabile API zu behandeln.
+These versions must be checked again before implementation. In particular,
+internal Sodium and Iris classes must not be treated as a stable API.
 
-Primärquellen:
+Primary sources:
 
-- [Sodium-Repository](https://github.com/CaffeineMC/sodium)
+- [Sodium repository](https://github.com/CaffeineMC/sodium)
 - [Sodium 0.9.1](https://github.com/CaffeineMC/sodium/tree/2cfb93d332791502446d8226005b0b6baff40355)
-- [Sodium Vulkan-Backend-Auswahl](https://github.com/CaffeineMC/sodium/blob/2cfb93d332791502446d8226005b0b6baff40355/common/src/main/java/net/caffeinemc/mods/sodium/client/gpu/device/backend/DrawBackend.java)
-- [Sodium-Metadaten und Versionskonflikte](https://github.com/CaffeineMC/sodium/blob/2cfb93d332791502446d8226005b0b6baff40355/fabric/src/main/resources/fabric.mod.json)
-- [Sodium-API-Quellbaum](https://github.com/CaffeineMC/sodium/tree/2cfb93d332791502446d8226005b0b6baff40355/common/src/api/java/net/caffeinemc/mods/sodium/api)
-- [Iris-Repository](https://github.com/IrisShaders/Iris)
-- [Geprüfter Iris-Stand](https://github.com/IrisShaders/Iris/tree/ff6f5aa1174f3bfcb540e405a9c259d29ff42b21)
-- [Öffentliche Iris API v0](https://github.com/IrisShaders/Iris/blob/ff6f5aa1174f3bfcb540e405a9c259d29ff42b21/common/src/api/java/net/irisshaders/iris/api/v0/IrisApi.java)
-- [Iris blockiert Shader unter Vulkan](https://github.com/IrisShaders/Iris/blob/ff6f5aa1174f3bfcb540e405a9c259d29ff42b21/common/src/main/java/net/irisshaders/iris/compat/sodium/config/ShaderPackScreenPlaceholder.java)
-- [Iris trennt Vulkan- und OpenGL-Mixins](https://github.com/IrisShaders/Iris/blob/ff6f5aa1174f3bfcb540e405a9c259d29ff42b21/common/src/main/java/net/irisshaders/iris/mixin/IrisMixinPlugin.java)
-- [Iris OpenGL-Rendering-Pipeline](https://github.com/IrisShaders/Iris/blob/ff6f5aa1174f3bfcb540e405a9c259d29ff42b21/common/src/main/java/net/irisshaders/iris/pipeline/IrisRenderingPipeline.java)
+- [Sodium Vulkan backend selection](https://github.com/CaffeineMC/sodium/blob/2cfb93d332791502446d8226005b0b6baff40355/common/src/main/java/net/caffeinemc/mods/sodium/client/gpu/device/backend/DrawBackend.java)
+- [Sodium metadata and version conflicts](https://github.com/CaffeineMC/sodium/blob/2cfb93d332791502446d8226005b0b6baff40355/fabric/src/main/resources/fabric.mod.json)
+- [Sodium API source tree](https://github.com/CaffeineMC/sodium/tree/2cfb93d332791502446d8226005b0b6baff40355/common/src/api/java/net/caffeinemc/mods/sodium/api)
+- [Iris repository](https://github.com/IrisShaders/Iris)
+- [Checked Iris state](https://github.com/IrisShaders/Iris/tree/ff6f5aa1174f3bfcb540e405a9c259d29ff42b21)
+- [Public Iris API v0](https://github.com/IrisShaders/Iris/blob/ff6f5aa1174f3bfcb540e405a9c259d29ff42b21/common/src/api/java/net/irisshaders/iris/api/v0/IrisApi.java)
+- [Iris blocks shaders under Vulkan](https://github.com/IrisShaders/Iris/blob/ff6f5aa1174f3bfcb540e405a9c259d29ff42b21/common/src/main/java/net/irisshaders/iris/compat/sodium/config/ShaderPackScreenPlaceholder.java)
+- [Iris separates Vulkan and OpenGL mixins](https://github.com/IrisShaders/Iris/blob/ff6f5aa1174f3bfcb540e405a9c259d29ff42b21/common/src/main/java/net/irisshaders/iris/mixin/IrisMixinPlugin.java)
+- [Iris OpenGL rendering pipeline](https://github.com/IrisShaders/Iris/blob/ff6f5aa1174f3bfcb540e405a9c259d29ff42b21/common/src/main/java/net/irisshaders/iris/pipeline/IrisRenderingPipeline.java)
 - [Iris ShaderDoc](https://github.com/IrisShaders/ShaderDoc/tree/ddf473726710c6504422d192784c1652f8aece98)
-- [Iris ShaderDoc: Entity Motion Vectors](https://github.com/IrisShaders/ShaderDoc/blob/ddf473726710c6504422d192784c1652f8aece98/unsupported-features.md)
-- [Iris 26.2 Reversed-Z-Problembericht](https://github.com/IrisShaders/Iris/issues/3241)
+- [Iris ShaderDoc: Entity motion vectors](https://github.com/IrisShaders/ShaderDoc/blob/ddf473726710c6504422d192784c1652f8aece98/unsupported-features.md)
+- [Iris 26.2 reversed-Z issue report](https://github.com/IrisShaders/Iris/issues/3241)
 - [NVIDIA Streamline](https://github.com/NVIDIAGameWorks/Streamline)
 - [AMD FidelityFX FSR 3.1](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK)
 
-## 3. Kurzurteil
+## 3. Short verdict
 
-### 3.1 Kompatibilitätsmatrix
+### 3.1 Compatibility matrix
 
-| Konfiguration | Heutiges Urteil | Begründung |
+| Configuration | Current verdict | Reason |
 |---|---|---|
-| Vanilla + Vulkan | vorgesehener Hauptpfad | Die Mod greift direkt auf Mojangs Vulkan-Gerät, RenderTargets, Command Buffer und Swapchain zu. |
-| Sodium 0.9.1 + Vulkan | Architektur gehärtet, realer Mod-Laufzeittest offen | Sodium verwendet Mojangs Vulkan-Backend. Der Adapter konsumiert nun nur vollständige atomare Mojang-Vulkan-Ressourcen und greift nicht auf private Sodium-Klassen zu; Resize/Reload mit der echten Sodium-JAR muss noch validiert werden. |
-| Sodium + OpenGL | keine Vulkan-FG-/RT-Funktionen | Die aktuellen nativen Pfade erwarten Vulkan-Handles und Vulkan-Bilder. |
-| Iris installiert + Vulkan | Iris darf installiert bleiben; Shaderpacks sind aus | Iris deaktiviert seine normale Shader-Pipeline unter Vulkan. Danach entspricht der relevante Renderpfad weitgehend „Sodium + Vulkan“. |
-| Iris + aktives Shaderpack | derzeit nicht kompatibel mit den Vulkan-FG-/RT-Pfaden | Iris zwingt für Shaderpacks OpenGL. Seine finalen Farb-, Tiefen- und Materialdaten sind OpenGL-Ressourcen, keine `VkImage`-Ressourcen. |
-| Iris ohne aktives Shaderpack + OpenGL | keine Vulkan-FG-/RT-Funktionen | Kein verwendbarer Vulkan-Kontext, auch wenn Iris geladen ist. |
-| Zukünftiges Iris mit Vulkan-Shadern | neu bewerten | Dafür wären explizite Ressourcen- und Synchronisationsverträge von Iris nötig. |
+| Vanilla + Vulkan | intended main path | The mod accesses Mojang's Vulkan device, render targets, command buffer, and swapchain directly. |
+| Sodium 0.9.1 + Vulkan | architecture hardened, real mod runtime test still open | Sodium uses Mojang's Vulkan backend. The adapter now only consumes complete atomic Mojang Vulkan resources and does not access private Sodium classes; resize/reload with the real Sodium JAR still needs validation. |
+| Sodium + OpenGL | no Vulkan FG/RT features | The current native paths expect Vulkan handles and Vulkan images. |
+| Iris installed + Vulkan | Iris may stay installed; shader packs are off | Iris disables its normal shader pipeline under Vulkan. After that, the relevant render path largely corresponds to "Sodium + Vulkan". |
+| Iris + active shader pack | currently not compatible with the Vulkan FG/RT paths | Iris forces OpenGL for shader packs. Its final color, depth, and material data are OpenGL resources, not `VkImage` resources. |
+| Iris without active shader pack + OpenGL | no Vulkan FG/RT features | No usable Vulkan context, even though Iris is loaded. |
+| Future Iris with Vulkan shaders | re-evaluate | This would require explicit resource and synchronization contracts from Iris. |
 
-### 3.2 Was „Sodium-kompatibel“ realistisch bedeuten kann
+### 3.2 What "Sodium-compatible" can realistically mean
 
-Sodium ersetzt in Minecraft 26.2 Teile des Welt-Renderers und wählt intern einen
-Vulkan-Multidraw-Pfad, wenn Mojangs aktives `GpuDevice` ein Vulkan-Gerät ist. Sodium
-erstellt nach dem geprüften Stand aber keine zweite unabhängige öffentliche
-Swapchain. Daher kann diese Mod wahrscheinlich weiter die von Mojang verwalteten
-Vulkan-Ressourcen benutzen.
+Sodium replaces parts of the world renderer in Minecraft 26.2 and internally selects a
+Vulkan multidraw path when Mojang's active `GpuDevice` is a Vulkan device. As of the checked state, Sodium
+does not create a second independent public
+swapchain. Therefore this mod can likely continue to use the Vulkan resources managed by Mojang.
 
-Das ist eine gute Ausgangslage, aber noch kein fertiger Support. Nachzuweisen sind:
+This is a good starting point, but not finished support. The following must be proven:
 
-1. Der in `GameRendererMixin` gewählte Capture-Zeitpunkt liegt nach Sodiums kompletter
-   Welt-Ausgabe und außerhalb eines aktiven Renderpasses.
-2. Farb- und Tiefenbilder gehören tatsächlich zu dem Frame und RenderTarget, dessen
-   Matrizen und Auflösung übergeben werden.
-3. Das registrierte `VulkanCommandEncoder`-Objekt besitzt zu diesem Zeitpunkt den
-   aufzeichnungsbereiten Command Buffer.
-4. Layouts, Zugriffsrechte und Queue-Ownership werden nicht nur angenommen.
-5. Swapchain-Rekonfiguration, Fullscreen-Wechsel und Sodium-Reloads invalidieren
-   keine gecachten Handles.
+1. The capture point chosen in `GameRendererMixin` lies after Sodium's complete
+   world output and outside an active render pass.
+2. Color and depth images actually belong to the frame and render target whose
+   matrices and resolution are passed in.
+3. The registered `VulkanCommandEncoder` object owns the
+   command buffer ready for recording at that point.
+4. Layouts, access rights, and queue ownership are not merely assumed.
+5. Swapchain reconfiguration, fullscreen toggles, and Sodium reloads do not invalidate
+   cached handles.
 
-### 3.3 Was „Iris-kompatibel“ realistisch bedeuten kann
+### 3.3 What "Iris-compatible" can realistically mean
 
-Es gibt zwei sehr unterschiedliche Fälle:
+There are two very different cases:
 
-- **Iris ist installiert, Minecraft läuft mit Vulkan:** Iris lässt keine Shaderpacks
-  laufen. Die Mod kann ihren Sodium-/Vulkan-Pfad verwenden.
-- **Ein Iris-Shaderpack ist aktiv:** Minecraft läuft mit OpenGL. Die aktuellen
-  Vulkan-Funktionen dieser Mod müssen sichtbar und verständlich deaktiviert bleiben.
+- **Iris is installed, Minecraft runs with Vulkan:** Iris does not run shader packs.
+  The mod can use its Sodium/Vulkan path.
+- **An Iris shader pack is active:** Minecraft runs with OpenGL. The current
+  Vulkan features of this mod must remain visibly and understandably disabled.
 
-Vollständige Unterstützung aktiver Iris-Shaderpacks wäre kein kleiner
-Kompatibilitätspatch. Sie wäre ein eigenes Renderer-Interop-Projekt.
+Full support for active Iris shader packs would not be a small
+compatibility patch. It would be a separate renderer interop project.
 
-## 4. Audit der Ausgangslage vor der Implementierung
+## 4. Audit of the initial state before implementation
 
-### 4.1 Bestehende Erkennung
+### 4.1 Existing detection
 
-`RendererDetector` prüft:
+`RendererDetector` checks:
 
 - `FabricLoader.isModLoaded("sodium")`
 - `FabricLoader.isModLoaded("iris")`
-- Text aus `RenderSystem.getBackendDescription()`
+- Text from `RenderSystem.getBackendDescription()`
 
-Anschließend wird anhand der Wörter `vulkan` oder `opengl` ein Backend gewählt.
+It then selects a backend based on the words `vulkan` or `opengl`.
 
-Probleme:
+Problems:
 
-- Ein Beschreibungstext ist keine stabile Maschinen-API.
-- `sodiumPresent` sagt nicht, ob Sodiums Vulkan-Draw-Pfad aktiv ist.
-- `irisPresent` sagt nicht, ob ein Shaderpack aktiv ist.
-- Eine frühe Abfrage kann stattfinden, bevor das endgültige Grafikgerät aufgebaut
-  wurde.
-- Eine spätere Vulkan-Mixin-Aktivierung überschreibt den provisorischen Adapter,
-  weshalb Startlog und tatsächlicher Zustand auseinanderlaufen können.
+- A description text is not a stable machine API.
+- `sodiumPresent` does not say whether Sodium's Vulkan draw path is active.
+- `irisPresent` does not say whether a shader pack is active.
+- An early query can run before the final graphics device has been
+  built.
+- A later Vulkan mixin activation overwrites the provisional adapter,
+  so the startup log and the actual state can diverge.
 
-### 4.2 Bestehender Sodium-Adapter
+### 4.2 Existing Sodium adapter
 
-`SodiumVulkanAdapter` delegiert jede Methode unverändert an
-`VanillaVulkanAdapter`. Er besitzt:
+`SodiumVulkanAdapter` delegates every method unchanged to
+`VanillaVulkanAdapter`. It has:
 
-- keinen Sodium-API-Aufruf,
-- keine Sodium-Versionsprüfung,
-- keinen Nachweis des aktiven Sodium-Draw-Backends,
-- keinen eigenen Render-Lifecycle-Hook,
-- keine Prüfung auf Mixin-Konflikte.
+- no Sodium API call,
+- no Sodium version check,
+- no proof of the active Sodium draw backend,
+- no separate render lifecycle hook,
+- no check for mixin conflicts.
 
-Die Klasse ist damit momentan ein Name für eine plausible Route, keine vollständige
-Sodium-Integration. Das ist nicht automatisch falsch: Wenn Mojangs Vulkan-Ressourcen
-weiter die maßgeblichen Ressourcen sind, ist Delegation die gewünschte Lösung. Sie
-muss jedoch durch Runtime-Validierung und Tests abgesichert werden.
+The class is therefore currently a name for a plausible route, not a complete
+Sodium integration. That is not automatically wrong: if Mojang's Vulkan resources
+remain the authoritative resources, delegation is the desired solution. It
+must, however, be backed by runtime validation and tests.
 
-### 4.3 Bestehender Vanilla-Vulkan-Adapter
+### 4.3 Existing vanilla Vulkan adapter
 
-Der Adapter liest:
+The adapter reads:
 
-- Instanz, physisches Gerät, logisches Gerät und Graphics Queue aus
+- Instance, physical device, logical device, and graphics queue from
   `VulkanRegistry.getActiveDevice()`;
-- Swapchain, Bildindex und Semaphore über Accessor-Mixins auf
+- Swapchain, image index, and semaphore via accessor mixins on
   `VulkanGpuSurface`;
-- den aktuellen Command Buffer über ein Accessor-Mixin auf
+- The current command buffer via an accessor mixin on
   `VulkanCommandEncoder`;
-- Farbe primär aus `VulkanRegistry.getActiveColorImage()`, sonst aus dem
+- Color primarily from `VulkanRegistry.getActiveColorImage()`, otherwise from the
   `mainRenderTarget`;
-- Tiefe aus dem `mainRenderTarget`;
-- Maße aus dem `mainRenderTarget`.
+- Depth from the `mainRenderTarget`;
+- Dimensions from the `mainRenderTarget`.
 
-Risiken:
+Risks:
 
-- `activeColorImage` wird beim Surface-Blit registriert und kann älter sein als das
-  aktuell übergebene RenderTarget.
-- Farbe, Tiefe, Backbuffer und Matrizen werden aus mehreren Quellen zusammengesetzt.
-  Es existiert keine gemeinsame Frame-ID oder Ressourcenidentität.
-- Der Adapter gibt rohe Handles aus, aber keine Formate, Layouts, Subresources,
-  Generationen oder Lebensdauern.
-- `isFrameReadyForFG()` prüft Nicht-Null-Werte, nicht deren Zugehörigkeit zum selben
-  Frame.
-- `getCurrentFrameIndex()` liefert im Fehlerfall `0`; das kann einen unbekannten
-  Zustand als gültigen Index erscheinen lassen.
+- `activeColorImage` is registered during the surface blit and may be older than the
+  render target currently passed in.
+- Color, depth, backbuffer, and matrices are assembled from multiple sources.
+  There is no shared frame ID or resource identity.
+- The adapter exposes raw handles but no formats, layouts, subresources,
+  generations, or lifetimes.
+- `isFrameReadyForFG()` checks for non-null values, not whether they belong to the same
+  frame.
+- `getCurrentFrameIndex()` returns `0` on failure; that can make an unknown
+  state look like a valid index.
 
-### 4.4 Capture- und Präsentationszeitpunkte
+### 4.4 Capture and presentation timings
 
 `GameRendererMixin`:
 
-1. merkt sich das Display-RenderTarget;
-2. kann ein kleineres `MainTarget` für die Welt anlegen;
-3. ersetzt vor `renderLevel` das `mainRenderTarget`;
-4. erfasst Szene, Tiefe und Bewegung vor dem Vanilla-Aufruf zum Leeren der Tiefe;
-5. kann die UI in ein separates volles RenderTarget zeichnen;
-6. erfasst die UI nach `GuiRenderer.endFrame`;
-7. blended die UI zurück auf das Display-Target.
+1. remembers the display render target;
+2. can create a smaller `MainTarget` for the world;
+3. replaces the `mainRenderTarget` before `renderLevel`;
+4. captures scene, depth, and motion before the vanilla call that clears depth;
+5. can render the UI into a separate full-size render target;
+6. captures the UI after `GuiRenderer.endFrame`;
+7. blends the UI back onto the display target.
 
 `VulkanGpuSurfaceMixin`:
 
-- ersetzt optional Create/GetImages/Acquire/Present/Destroy der Swapchain durch
-  Provider-Aufrufe;
-- meldet Configure-Start und Configure-Ende;
-- markiert Present-Start und Present-Ende;
-- registriert beim Blit das verwendete Farbbild.
+- optionally replaces create/getImages/acquire/present/destroy of the swapchain with
+  provider calls;
+- reports configure start and configure end;
+- marks present start and present end;
+- registers the color image used during blit.
 
 `VulkanRegistry.captureFrameGenerationInputs()`:
 
-- verlangt Vulkan-Views für Farbe, Tiefe und Ausgabe;
-- holt den Command Buffer aus dem registrierten Encoder;
-- ermittelt das aktuelle Swapchain-Bild;
-- führt optional Ray Reconstruction aus;
-- kopiert/erzeugt dichte Motion Vectors;
-- übergibt Matrizen, Jitter, Tiefe, UI-Status und Ressourcen an den nativen Provider.
+- requires Vulkan views for color, depth, and output;
+- fetches the command buffer from the registered encoder;
+- determines the current swapchain image;
+- optionally runs ray reconstruction;
+- copies/generates dense motion vectors;
+- passes matrices, jitter, depth, UI state, and resources to the native provider.
 
-Damit hängt die Kompatibilität nicht nur vom Welt-Renderer ab. Sie hängt von einem
-vollständigen Vertrag zwischen Weltpass, Postprocessing, HUD, Command Encoder,
-Swapchain und nativem Provider ab.
+Compatibility therefore depends not only on the world renderer. It depends on a
+complete contract between the world pass, post-processing, HUD, command encoder,
+swapchain, and native provider.
 
-### 4.5 Aktuelle Mod-Metadaten
+### 4.5 Current mod metadata
 
-`fabric.mod.json` führt Sodium und Iris nur unter `suggests` auf. Das bedeutet:
+`fabric.mod.json` lists Sodium and Iris only under `suggests`. That means:
 
-- Beide Mods sind optional.
-- Fabric prüft keine getestete Version.
-- Der Eintrag beweist keine technische Kompatibilität.
-- Benutzer können eine inkompatible Kombination installieren, ohne dass der Loader
-  sie stoppt.
+- Both mods are optional.
+- Fabric does not check a tested version.
+- The entry does not prove technical compatibility.
+- Users can install an incompatible combination without the loader
+  stopping them.
 
-Später sollte entweder ein enger getesteter Versionsbereich dokumentiert oder eine
-Runtime-Kompatibilitätstabelle geführt werden. Ein hartes `depends` ist nur nötig,
-wenn die Mod ohne Sodium/Iris nicht mehr funktionieren soll; das ist hier nicht
-empfohlen.
+Later, either a narrow tested version range should be documented or a
+runtime compatibility table should be maintained. A hard `depends` is only needed
+if the mod should no longer work without Sodium/Iris; that is not
+recommended here.
 
-## 5. Was Sodium 0.9.1 unter Minecraft 26.2 tatsächlich macht
+## 5. What Sodium 0.9.1 actually does under Minecraft 26.2
 
-### 5.1 Vulkan ist ein echter Sodium-Pfad
+### 5.1 Vulkan is a real Sodium path
 
-Sodium wählt in `DrawBackend.chooseBackend()` anhand von Mojangs aktivem
+Sodium selects in `DrawBackend.chooseBackend()` based on Mojang's active
 `GpuDevice`:
 
-- `VK_MULTIDRAW`, wenn ein `VulkanDevice` und Direct-Interleaved-Multidraw
-  verfügbar sind;
-- `VK_INDIRECT`, wenn ein `VulkanDevice` und Indirect-Multidraw verfügbar sind;
-- sonst `OPENGL`.
+- `VK_MULTIDRAW` when a `VulkanDevice` and direct interleaved multidraw
+  are available;
+- `VK_INDIRECT` when a `VulkanDevice` and indirect multidraw are available;
+- otherwise `OPENGL`.
 
-Die Vulkan-Draw-Contexts greifen intern auf Mojangs `VulkanRenderPass`, dessen
-Command Buffer und Pipeline-Layout zu. Sodium rendert also nicht einfach nur mit
-einem OpenGL-Kompatibilitätslayer über Vulkan.
+The Vulkan draw contexts internally access Mojang's `VulkanRenderPass`, its
+command buffer, and pipeline layout. So Sodium does not simply render with
+an OpenGL compatibility layer over Vulkan.
 
-### 5.2 Es gibt keine passende stabile Sodium-Ressourcen-API
+### 5.2 There is no suitable stable Sodium resource API
 
-Der öffentliche Sodium-API-Quellbaum bietet APIs für Vertexdaten, Block-Entity-
-Prädikate, Texturen und Konfiguration. Im geprüften Stand gibt es keine öffentliche
-API für:
+The public Sodium API source tree provides APIs for vertex data, block entity
+predicates, textures, and configuration. As of the checked state, there is no public
+API for:
 
-- aktuelles Welt-Farbbild,
-- aktuelles Tiefenbild,
-- aktuellen Vulkan-Command-Buffer,
-- Renderpass-Ende,
-- Swapchain,
-- Semaphore oder Timeline-Werte,
-- Motion Vectors.
+- current world color image,
+- current depth image,
+- current Vulkan command buffer,
+- render pass end,
+- swapchain,
+- semaphores or timeline values,
+- motion vectors.
 
-Klassen wie `VKDrawContext`, `VulkanRenderPassAccessor` oder Sodiums interne
-Rendererverwaltung sind Implementierungsdetails. Direkte Mixins gegen diese Klassen
-müssen als versionsgebundene Notlösung betrachtet werden.
+Classes such as `VKDrawContext`, `VulkanRenderPassAccessor`, or Sodium's internal
+renderer management are implementation details. Direct mixins against these classes
+must be treated as version-bound workarounds.
 
-### 5.3 Versionsbeziehung zu Iris
+### 5.3 Version relationship to Iris
 
-Sodium 0.9.1 deklariert einen Konflikt mit Iris `<=1.11.1`. Für die geprüfte
-Minecraft-Version muss die Testbasis daher Iris 1.11.2 oder neuer innerhalb eines
-kompatiblen 1.11.x-Bereichs verwenden. Außerdem kollidiert Sodium mit der separaten
-Legacy-Mod `vulkanmod`. Dieser Eintrag darf nicht mit Mojangs eingebautem
-Vulkan-Backend von Minecraft 26.2 verwechselt werden.
+Sodium 0.9.1 declares a conflict with Iris `<=1.11.1`. For the checked
+Minecraft version the test baseline must therefore use Iris 1.11.2 or newer within a
+compatible 1.11.x range. Sodium also conflicts with the separate
+legacy mod `vulkanmod`. This entry must not be confused with Mojang's built-in
+Vulkan backend in Minecraft 26.2.
 
-### 5.4 Empfohlene Sodium-Strategie
+### 5.4 Recommended Sodium strategy
 
-Bevorzugt wird keine tiefe Sodium-Integration, sondern:
+Prefer no deep Sodium integration, but instead:
 
-1. Mojangs aktives `GpuDevice` und konkrete Backend-Klasse autoritativ erkennen.
-2. Mojangs `RenderTarget`-Vulkan-Views als Ressourcenquelle verwenden.
-3. Den Capture-Punkt am Minecraft-Framegraph/Lifecycle absichern.
-4. Sodium nur als zusätzliche Renderer-Eigenschaft und getestete Variante melden.
-5. Erst wenn ein reproduzierbarer Fehler es erfordert, einen kleinen, separat
-   versionierten Sodium-Interop-Hook hinzufügen.
+1. Authoritatively detect Mojang's active `GpuDevice` and concrete backend class.
+2. Use Mojang's `RenderTarget` Vulkan views as the resource source.
+3. Secure the capture point against the Minecraft frame graph/lifecycle.
+4. Report Sodium only as an additional renderer property and tested variant.
+5. Only add a small, separately
+   versioned Sodium interop hook when a reproducible error requires it.
 
-Diese Strategie minimiert Brüche bei Sodium-Updates und respektiert die
-PolyForm-Shield-Lizenz: keine Sodium-Implementierung kopieren oder einbetten. Nur
-zulässige optionale Verknüpfung beziehungsweise Runtime-Interop verwenden und die
-Lizenz vor einer Veröffentlichung erneut prüfen.
+This strategy minimizes breakage on Sodium updates and respects the
+PolyForm Shield license: do not copy or embed any Sodium implementation. Use only
+permissible optional linking or runtime interop and
+re-check the license before any release.
 
-## 6. Was Iris 1.11.2 unter Minecraft 26.2 tatsächlich macht
+## 6. What Iris 1.11.2 actually does under Minecraft 26.2
 
-### 6.1 Shaderpacks und Vulkan schließen sich derzeit aus
+### 6.1 Shader packs and Vulkan are currently mutually exclusive
 
-Iris zeigt unter Vulkan einen Platzhalterbildschirm mit der Aussage, dass Iris nicht
-unter Vulkan laufen kann, und bietet den Wechsel zu OpenGL an. Die Sodium-
-Grafikeinstellung warnt ebenfalls, dass der Wechsel zu Vulkan die Shader-Fähigkeit
-entfernt.
+Iris shows a placeholder screen under Vulkan stating that Iris cannot run
+under Vulkan and offers to switch to OpenGL. The Sodium
+graphics setting also warns that switching to Vulkan removes shader capability.
 
-`IrisMixinPlugin` liest das gewünschte Backend und lädt:
+`IrisMixinPlugin` reads the desired backend and loads:
 
-- normale Iris-Mixins nur ohne Vulkan;
-- speziell benannte `VKOnly`-Mixins nur mit Vulkan.
+- normal Iris mixins only without Vulkan;
+- specially named `VKOnly` mixins only with Vulkan.
 
-Das bedeutet nicht, dass die Iris-JAR generell mit Vulkan unladbar ist. Es bedeutet,
-dass die eigentliche Shader-Pipeline nicht auf Vulkan läuft.
+That does not mean the Iris JAR is generally unloadable with Vulkan. It means
+that the actual shader pipeline does not run on Vulkan.
 
-### 6.2 Die öffentliche Iris-API reicht für sichere Erkennung
+### 6.2 The public Iris API is sufficient for reliable detection
 
-Die öffentliche API v0 bietet:
+The public API v0 provides:
 
 ```java
 IrisApi.getInstance().isShaderPackInUse()
 ```
 
-Diese Methode ist die richtige Abfrage, wenn Iris optional installiert ist. Sie
-liefert nur dann `true`, wenn ein Shaderpack tatsächlich zum Rendern benutzt wird.
-Sie liefert auch `false`, wenn kein Pack aktiv ist oder dessen Kompilierung
-fehlgeschlagen ist.
+This method is the correct query when Iris is optionally installed. It
+returns `true` only when a shader pack is actually used for rendering.
+It also returns `false` when no pack is active or its compilation
+has failed.
 
-Die API bietet jedoch keine öffentlichen Handles für:
+However, the API does not provide public handles for:
 
-- `colortex`-RenderTargets,
-- `depthtex`-Texturen,
-- finale Shaderausgabe,
-- OpenGL-Synchronisation,
-- Motion Vectors,
-- Shaderpack-Materialparameter.
+- `colortex` render targets,
+- `depthtex` textures,
+- final shader output,
+- OpenGL synchronization,
+- motion vectors,
+- shader pack material parameters.
 
-Die spätere Integration darf `isShaderPackInUse()` optional verwenden, aber daraus
-keine Ressourcenverfügbarkeit ableiten.
+Later integration may optionally use `isShaderPackInUse()`, but must not
+derive resource availability from it.
 
-### 6.3 Iris’ Rendering ist OpenGL-zentriert
+### 6.3 Iris rendering is OpenGL-centric
 
-`IrisRenderingPipeline` verwendet unter anderem `GlTexture`, `GlFramebuffer`,
-`GlProgram`, OpenGL-Sampler und OpenGL-Compute-Programme. Der Ablauf ist:
+`IrisRenderingPipeline` uses `GlTexture`, `GlFramebuffer`,
+`GlProgram`, OpenGL samplers, and OpenGL compute programs, among others. The sequence is:
 
 1. `beginLevelRendering()`
-2. Welt-, Schatten-, Prepare-, Deferred- und Composite-Pässe
+2. World, shadow, prepare, deferred, and composite passes
 3. `finalizeLevelRendering()`
 4. `compositeRenderer.renderAll()`
 5. `finalPassRenderer.renderFinalPass()`
-6. später `finalizeGameRendering()` und Farbraumkonvertierung des
+6. Later `finalizeGameRendering()` and color space conversion of the
    `mainRenderTarget`
 
-Ein Capture vor Iris’ Final-/Composite-Pässen wäre visuell falsch. Ein Capture
-danach liefert aber weiterhin ein OpenGL-Bild, kein `VkImage`.
+A capture before Iris's final/composite passes would be visually wrong. A capture
+afterward still yields an OpenGL image, not a `VkImage`.
 
-### 6.4 Shaderpack-Ressourcen sind kein stabiler FG-Vertrag
+### 6.4 Shader pack resources are not a stable FG contract
 
-Shaderpacks können mehrere `colortex`-Ziele, Tiefenkopien und beliebige
-Composite-Pässe besitzen. Übliche Namen wie `colortex0`, `depthtex0`,
-`depthtex1` und `depthtex2` sind Shaderpack-Semantik, aber keine öffentliche
-Java-Interop-API dieser Mod.
+Shader packs can own multiple `colortex` targets, depth copies, and arbitrary
+composite passes. Common names such as `colortex0`, `depthtex0`,
+`depthtex1`, and `depthtex2` are shader pack semantics, but not a public
+Java interop API for this mod.
 
-Iris’ Implementierung kopiert:
+Iris's implementation copies:
 
-- vor Transluzenz die Tiefe für `depthtex1`;
-- vor der Hand die Tiefe für `depthtex2`.
+- depth for `depthtex1` before translucency;
+- depth for `depthtex2` before the hand.
 
-Welches Bild als endgültige FG-Farbe geeignet ist, hängt vom fertigen Final-Pass,
-Farbraum und Backbuffer ab. Ein internes `colortex0` darf nicht pauschal als
-HUD-lose Endfarbe angenommen werden.
+Which image qualifies as the final FG color depends on the finished final pass,
+color space, and backbuffer. An internal `colortex0` must not be assumed
+to be the HUD-free final color across the board.
 
-Besonders wichtig: Iris ShaderDoc führt Entity Motion Vectors als nicht
-implementiertes Feature. Ein Shaderpack kann eigene Velocity-Daten erzeugen, aber
-es gibt keinen allgemeinen Vertrag, auf den diese Mod sich verlassen kann.
+Particularly important: Iris ShaderDoc lists entity motion vectors as an unimplemented
+feature. A shader pack can generate its own velocity data, but
+there is no general contract this mod can rely on.
 
-### 6.5 Reversed-Z und Projektion
+### 6.5 Reversed-Z and projection
 
-Minecraft 26.2 verwendet umgekehrte Tiefe: Der Tiefenpuffer wird mit `0.0`
-geleert, größere Werte liegen näher an der Kamera. Auch dieses Projekt leert seine
-Vulkan-Tiefenbilder mit `0.0`.
+Minecraft 26.2 uses reversed depth: the depth buffer is cleared with `0.0`,
+larger values lie closer to the camera. This project also clears its
+Vulkan depth images with `0.0`.
 
-Iris Issue #3241 zeigt, dass Projektions- oder Culling-Code bei dieser Umstellung
-leicht alte Annahmen beibehält. Jeder spätere Ressourcenvertrag muss deshalb
-explizit tragen:
+Iris issue #3241 shows that projection or culling code easily retains old assumptions
+when this switch happens. Every later resource contract must therefore
+explicitly carry:
 
-- ob die Tiefe reversed/inverted ist;
-- NDC-Bereich und Clip-Control;
-- Near-/Far-Werte;
-- Projektionsmatrix-Konvention;
-- Y-Ausrichtung;
-- ob die Matrix jittered oder unjittered ist;
-- Bewegungsvektorrichtung: aktuell nach vorher oder vorher nach aktuell;
-- Einheit: Pixel, UV oder NDC.
+- whether depth is reversed/inverted;
+- NDC range and clip control;
+- near/far values;
+- projection matrix convention;
+- Y orientation;
+- whether the matrix is jittered or unjittered;
+- motion vector direction: current to previous or previous to current;
+- unit: pixels, UV, or NDC.
 
-Ohne diese Angaben darf ein Provider den Frame nicht akzeptieren.
+Without this information, a provider must not accept the frame.
 
-## 7. Ressourcenvertrag, den die Mod benötigt
+## 7. Resource contract required by the mod
 
-Ein späterer Renderer-Interop-Layer muss alle folgenden Daten atomar für denselben
-Frame liefern:
+A later renderer interop layer must deliver all of the following data atomically for the same
+frame:
 
-| Ressource/Datum | Mindestanforderung | Sodium + Vulkan | Iris + Shader/OpenGL |
+| Resource/data | Minimum requirement | Sodium + Vulkan | Iris + shader/OpenGL |
 |---|---|---|---|
-| Weltfarbe ohne HUD | gültiges Bild nach Welt-Postprocessing | wahrscheinlich Mojang Vulkan RenderTarget | nur OpenGL, keine öffentliche Export-API |
-| Display-/Backbuffer | Bild, Format, Farbraum, Index | Mojang Vulkan Surface | OpenGL Default/Blit-Ziel |
-| Tiefe | Bild, Format, Convention, Layout | Mojang Vulkan RenderTarget | OpenGL, mehrere Iris-Tiefenkopien |
-| Motion Vectors | RG16F, definierte Richtung/Einheit, dicht | projektinterne Rekonstruktion möglich | keine standardisierten Entity-Motion-Vectors |
-| UI separat | volle Auflösung, Alpha, Farbraum | projektinternes Vulkan `MainTarget` | Iris/GUI-Lifecycle müsste separat abgegriffen werden |
-| Command Buffer | aufzeichnungsbereit, außerhalb Renderpass | Mojang Vulkan Encoder | nicht vorhanden |
-| Synchronisation | Producer-/Consumer-Stages, Semaphore/Fence | Vulkan-intern lösbar | GL/Vulkan-Interop erforderlich |
-| Matrizen/Jitter | exakt zum Bild passend | aus `GameRenderState`, noch zu validieren | Iris kann Projektion/Temporalzustand beeinflussen |
-| Material/PBR | definierter Materialkanal | aktuell heuristisch/voxelbasiert | packabhängige GL-Texturen und G-Buffer |
+| World color without HUD | valid image after world post-processing | likely Mojang Vulkan render target | OpenGL only, no public export API |
+| Display/backbuffer | image, format, color space, index | Mojang Vulkan surface | OpenGL default/blit target |
+| Depth | image, format, convention, layout | Mojang Vulkan render target | OpenGL, multiple Iris depth copies |
+| Motion vectors | RG16F, defined direction/unit, dense | project-internal reconstruction possible | no standardized entity motion vectors |
+| UI separate | full resolution, alpha, color space | project-internal Vulkan `MainTarget` | Iris/GUI lifecycle would need to be tapped separately |
+| Command buffer | ready for recording, outside render pass | Mojang Vulkan encoder | not present |
+| Synchronization | producer/consumer stages, semaphore/fence | solvable internally in Vulkan | GL/Vulkan interop required |
+| Matrices/jitter | exactly matching the image | from `GameRenderState`, still to be validated | Iris can affect projection/temporal state |
+| Material/PBR | defined material channel | currently heuristic/voxel-based | pack-dependent GL textures and G-buffer |
 
-### 7.1 Empfohlenes Datenmodell
+### 7.1 Recommended data model
 
-Der heutige `RendererBackendAdapter` sollte später durch einen strengeren
-Framevertrag ergänzt oder ersetzt werden. Ein mögliches Modell:
+The current `RendererBackendAdapter` should later be supplemented or replaced by a stricter
+frame contract. A possible model:
 
 ```text
 RendererIntegration
@@ -441,16 +437,16 @@ FrameResourceSet
  └─ synchronization contract
 ```
 
-Die Ressourcen sollten nicht als lose `long`-Handles aus verschiedenen Methoden
-abgerufen werden. Ein unveränderliches Set verhindert, dass Farbe von Frame N,
-Tiefe von Frame N+1 und Swapchain-Index von Frame N-1 kombiniert werden.
+Resources should not be fetched as loose `long` handles from different methods.
+An immutable set prevents combining color from frame N,
+depth from frame N+1, and swapchain index from frame N-1.
 
-### 7.2 Notwendige Capability-Felder
+### 7.2 Required capability fields
 
-Mindestens:
+At minimum:
 
-- `graphicsApi`: Vulkan/OpenGL/Unbekannt
-- `minecraftBackend`: konkrete aktive Backend-Klasse
+- `graphicsApi`: Vulkan/OpenGL/unknown
+- `minecraftBackend`: concrete active backend class
 - `sodiumPresent`, `sodiumVersion`, `sodiumDrawBackend`
 - `irisPresent`, `irisVersion`, `irisShaderPackActive`
 - `rendererResourceInterop`
@@ -460,9 +456,9 @@ Mindestens:
 - `uiSeparationAvailable`
 - `swapchainInterceptionAvailable`
 - `nativeProviderReady`
-- `supportedReason` beziehungsweise lokalisierbarer Ablehnungsgrund
+- `supportedReason` or localizable rejection reason
 
-Capability-Zustände sollten nicht nur boolesch sein. Sinnvoll sind:
+Capability states should not be purely boolean. Useful states are:
 
 - `SUPPORTED`
 - `UNSUPPORTED`
@@ -471,148 +467,143 @@ Capability-Zustände sollten nicht nur boolesch sein. Sinnvoll sind:
 - `CONFLICT`
 - `ERROR`
 
-## 8. Konkreter Implementierungsplan
+## 8. Concrete implementation plan
 
-### Phase 0: Wahrheitsgemäße Erkennung und UI
+### Phase 0: Truthful detection and UI
 
-Ziel: Noch keine neue Renderer-Funktion, sondern korrekte Zustände.
+Goal: no new renderer feature yet, just correct states.
 
-1. Nach Erstellung des Grafikgeräts die konkrete `GpuDevice`-/Backend-Klasse
-   prüfen; Beschreibungstext nur noch für Diagnose verwenden.
-2. Fabric-Modcontainer verwenden, um Sodium-/Iris-Versionen zu protokollieren.
-3. Falls Iris geladen ist, die öffentliche `IrisApi` optional abfragen.
-4. Aktives Shaderpack + OpenGL als eindeutigen Ablehnungsgrund anzeigen:
-   „Iris-Shaderpacks verwenden derzeit OpenGL; diese Funktion benötigt Vulkan.“
-5. Iris installiert + Vulkan nicht als Fehler melden, sondern:
-   „Iris geladen; Shaderpacks unter Vulkan deaktiviert.“
-6. Untestbare/zu neue Sodium-Version nicht still als voll unterstützt melden.
-7. Diagnose muss Backend, Modversionen, Shaderpackstatus und den ersten fehlenden
-   Ressourcenvertrag zeigen.
+1. After the graphics device is created, check the concrete `GpuDevice`/backend class;
+   use description text only for diagnostics.
+2. Use the Fabric mod container to log Sodium/Iris versions.
+3. If Iris is loaded, optionally query the public `IrisApi`.
+4. Show an active shader pack + OpenGL as an unambiguous rejection reason:
+   "Iris shader packs currently use OpenGL; this feature requires Vulkan."
+5. Do not report Iris installed + Vulkan as an error, but instead:
+   "Iris loaded; shader packs disabled under Vulkan."
+6. Do not silently report an untested/newer Sodium version as fully supported.
+7. Diagnostics must show the backend, mod versions, shader pack status, and the first missing
+   resource contract.
 
-Abnahmekriterium: Keine Vulkan-Funktion ist unter OpenGL anklickbar; jeder
-deaktivierte Schalter besitzt eine verständliche, lokalisierte Begründung.
+Acceptance criterion: no Vulkan feature is clickable under OpenGL; every
+disabled toggle has an understandable, localized reason.
 
-### Phase 1: Sodium-Vulkan-Baseline beweisen
+### Phase 1: Prove the Sodium-Vulkan baseline
 
-1. Testbasis auf Sodium 0.9.1 und gegebenenfalls Iris 1.11.2 festlegen.
-2. Mit Vulkan Validation Layers prüfen, ob der Capture-Aufruf außerhalb eines
-   aktiven Renderpasses erfolgt.
-3. Pro Frame eine Identität für RenderTarget, Farbe, Tiefe, Output,
-   Swapchain-Generation und Bildindex protokollieren.
-4. Die Herkunft von `activeColorImage` prüfen. Bevorzugt direkt den `colorView`
-   des an `captureFrameGenerationInputs` übergebenen RenderTargets verwenden,
-   statt einen global registrierten Blit-Handle zu bevorzugen.
-5. Den aktiven Command Buffer nicht nur beim Encoder-Konstruktor merken. Seine
-   Gültigkeit am Capture-Punkt nachweisen.
-6. Sicherstellen, dass Sodiums Vulkan-Weltpass beendet ist, bevor Compute/Copy
-   aufgezeichnet wird.
-7. Shader-/Resource-Reload, Weltwechsel, Dimensionwechsel, Resize und Fullscreen
-   testen.
+1. Fix the test baseline to Sodium 0.9.1 and, if applicable, Iris 1.11.2.
+2. Use Vulkan validation layers to check whether the capture call happens outside an
+   active render pass.
+3. Log a per-frame identity for render target, color, depth, output,
+   swapchain generation, and image index.
+4. Check the origin of `activeColorImage`. Prefer using the `colorView`
+   of the render target passed to `captureFrameGenerationInputs` directly,
+   instead of preferring a globally registered blit handle.
+5. Do not only remember the active command buffer at encoder construction. Prove its
+   validity at the capture point.
+6. Ensure that Sodium's Vulkan world pass has finished before recording compute/copy.
+7. Test shader/resource reload, world change, dimension change, resize, and fullscreen.
 
-Abnahmekriterium: Alle Tests laufen ohne Validation-Fehler, falsche Layouts,
-Device Loss, flackernde alte Frames oder falsche Tiefe.
+Acceptance criterion: all tests run without validation errors, wrong layouts,
+device loss, flickering old frames, or wrong depth.
 
-### Phase 2: Layout- und Synchronisationsvertrag härten
+### Phase 2: Harden the layout and synchronization contract
 
-Aktuell verwendet die Pipeline an mehreren Stellen angenommene Layouts, etwa
-`VK_IMAGE_LAYOUT_GENERAL`. Für externe Minecraft-/Sodium-Ressourcen darf das nicht
-blind gelten.
+The pipeline currently uses assumed layouts in several places, such as
+`VK_IMAGE_LAYOUT_GENERAL`. For external Minecraft/Sodium resources this must not
+apply blindly.
 
-Erforderlich:
+Required:
 
-1. tatsächliches Ausgangslayout oder einen garantierten Übergabepunkt definieren;
-2. aktive Renderpässe vor externen Barriers beenden;
-3. Source-/Destination-Stage und Access Masks passend zum echten Produzenten
-   setzen;
-4. Queue-Family-Ownership explizit behandeln;
-5. bei Swapchain-Neuanlage alle alten Ressourcen mit Generation markieren und
-   erst nach sicherer GPU-Freigabe zerstören;
-6. Acquire-/Present-Semaphore nicht anhand potenziell verschiedener Indizes
-   kombinieren;
-7. Provider-Proxy und Mojang-Surface müssen denselben Swapchain-Lebenszyklus
-   sehen.
+1. define the actual initial layout or a guaranteed handover point;
+2. end active render passes before external barriers;
+3. set source/destination stages and access masks to match the real producer;
+4. handle queue family ownership explicitly;
+5. tag all old resources with their generation on swapchain recreation and
+   destroy them only after safe GPU release;
+6. do not combine acquire/present semaphores based on potentially different indices;
+7. the provider proxy and the Mojang surface must see the same swapchain lifecycle.
 
-Wenn Synchronisation nicht bewiesen werden kann, muss der Frame übersprungen
-werden. Ein übersprungener Frame ist besser als undefiniertes GPU-Verhalten.
+If synchronization cannot be proven, the frame must be skipped.
+A skipped frame is better than undefined GPU behavior.
 
-### Phase 3: Iris installiert, Vulkan aktiv
+### Phase 3: Iris installed, Vulkan active
 
-Dieser Fall benötigt voraussichtlich keine Iris-RenderTarget-Integration:
+This case likely needs no Iris render target integration:
 
-1. bestätigen, dass `isShaderPackInUse()` false ist;
-2. Sodium-Vulkan-Vertrag aus Phase 1 verwenden;
-3. Iris-Version und Vulkan-Deaktivierung der Shader im Diagnosebild zeigen;
-4. Shader-Auswahlknopf nicht manipulieren; Iris selbst erklärt den Backendwechsel;
-5. nach einem Backendwechsel einen vollständigen Neustart verlangen und keine alten
-   Vulkan-Handles weiterverwenden.
+1. confirm that `isShaderPackInUse()` is false;
+2. use the Sodium-Vulkan contract from phase 1;
+3. show the Iris version and Vulkan deactivation of shaders in diagnostics;
+4. do not manipulate the shader selection button; Iris itself explains the backend switch;
+5. require a full restart after a backend switch and do not reuse old
+   Vulkan handles.
 
-Abnahmekriterium: Iris kann installiert bleiben, während die Mod unter Vulkan wie
-ohne aktives Shaderpack arbeitet.
+Acceptance criterion: Iris can stay installed while the mod runs under Vulkan as
+without an active shader pack.
 
-### Phase 4: Iris-Shaderpacks unter OpenGL bewusst nicht unterstützen
+### Phase 4: Deliberately not supporting Iris shader packs under OpenGL
 
-Die empfohlene Produktentscheidung lautet zunächst **fail-closed**:
+The recommended product decision for now is **fail-closed**:
 
-- DLSS/FSR/XeSS-Frame-Generation-Schalter aus;
-- Vulkan-RT und Ray Reconstruction aus;
-- Vulkan-Motion-Debug aus;
-- Diagnose und OSD dürfen weiter funktionieren, sofern sie keine Vulkan-
-  Ressourcen benötigen;
-- UI erklärt den Grund und den möglichen Wechsel zu Vulkan ohne Shaderpack.
+- DLSS/FSR/XeSS frame generation switches off;
+- Vulkan RT and ray reconstruction off;
+- Vulkan motion debug off;
+- Diagnostics and OSD may continue to work as long as they do not need Vulkan
+  resources;
+- UI explains the reason and the possible switch to Vulkan without a shader pack.
 
-Diese Phase ist vollständig, wenn das Verhalten klar, stabil und crashfrei ist.
-Sie ist nicht „unvollständig“, nur weil aktive Shaderpacks keine Vulkan-FG erhalten.
+This phase is complete when the behavior is clear, stable, and crash-free.
+It is not "incomplete" just because active shader packs do not get Vulkan FG.
 
-### Phase 5: Optionales Forschungsprojekt OpenGL–Vulkan-Interop
+### Phase 5: Optional research project OpenGL–Vulkan interop
 
-Nur beginnen, wenn aktive Iris-Shaderpacks zwingend unterstützt werden sollen und
-Zeit für einen separaten Renderer-Backend-Aufwand vorhanden ist.
+Start only if active Iris shader packs must be supported and
+time for a separate renderer backend effort is available.
 
-Erforderliche Themen:
+Required topics:
 
-- Export/Import externer Bildspeicher zwischen OpenGL und Vulkan;
-- externe Semaphore/Fences;
-- Windows- und Linux-spezifische Handle-Typen;
-- NVIDIA-, AMD- und Intel-Treiberunterschiede;
-- Exportfähigkeit von Iris’ OpenGL-Texturen;
-- finale Farbe nach Iris-Finalpass und Farbraumkonvertierung;
-- HUD-lose Farbe und UI-Alpha;
-- Tiefenformat und Reversed-Z;
-- eigener dichter Motion-Vector-Pass inklusive Entity-Bewegung;
-- Resize-, Reload- und Shaderpack-Wechsel;
-- Kopierkosten und Latenz;
-- Provideranforderungen an gleiche API/Queue/Device.
+- Export/import of external image memory between OpenGL and Vulkan;
+- External semaphores/fences;
+- Windows- and Linux-specific handle types;
+- NVIDIA, AMD, and Intel driver differences;
+- Exportability of Iris's OpenGL textures;
+- Final color after the Iris final pass and color space conversion;
+- HUD-free color and UI alpha;
+- Depth format and reversed-Z;
+- Separate dense motion vector pass including entity motion;
+- Resize, reload, and shader pack switch;
+- Copy cost and latency;
+- Provider requirements for the same API/queue/device.
 
-Eine CPU-Rückkopie OpenGL → RAM → Vulkan ist für Frame Generation nicht
-akzeptabel. Sie verursacht hohe Bandbreite, Latenz und Synchronisationsstalls.
+A CPU copy OpenGL -> RAM -> Vulkan is not
+acceptable for frame generation. It causes high bandwidth, latency, and synchronization stalls.
 
-Bevor diese Phase implementiert wird, sollte bei Iris ein offizieller
-Ressourcen-/Lifecycle-Hook vorgeschlagen werden. Direkter Zugriff auf
-`IrisRenderingPipeline`, `RenderTargets`, `GlFramebuffer` oder private
-`colortex`-IDs ist nur versionsgebunden und wartungsintensiv.
+Before implementing this phase, propose an official
+resource/lifecycle hook to Iris. Direct access to
+`IrisRenderingPipeline`, `RenderTargets`, `GlFramebuffer`, or private
+`colortex` IDs is only version-bound and costly to maintain.
 
-## 9. Material-, PBR- und Raytracing-Kompatibilität
+## 9. Material, PBR, and ray tracing compatibility
 
-Falls mit „Material“ die Materialdarstellung der Mod gemeint ist, ist die Antwort
-getrennt von reiner Lade-/Crash-Kompatibilität zu betrachten.
+If "material" refers to the material representation of the mod, the answer
+must be considered separately from pure load/crash compatibility.
 
-### 9.1 Heutiger Zustand
+### 9.1 Current state
 
-Der Raytracing-Pfad dieses Projekts leitet Weltgeometrie und Materialeigenschaften
-über eigene Vulkan-/Voxel-Daten und Heuristiken ab. Iris-Shaderpacks können dagegen:
+This project's ray tracing path derives world geometry and material properties
+via its own Vulkan/voxel data and heuristics. Iris shader packs, by contrast, can:
 
-- eigene Normal- und Specular-Texturen verwenden;
-- LabPBR- oder andere Resource-Pack-Konventionen auswerten;
-- Block-IDs und Materialkennungen packabhängig interpretieren;
-- ihre Beleuchtung vollständig in eigenen G-Buffer-/Composite-Pässen berechnen.
+- use their own normal and specular textures;
+- evaluate LabPBR or other resource pack conventions;
+- interpret block IDs and material identifiers in a pack-dependent way;
+- compute their lighting entirely in their own G-buffer/composite passes.
 
-Selbst wenn beide Mods gleichzeitig geladen werden, stimmen Materialien deshalb
-nicht automatisch überein. Eine reflektierende oder emissive Oberfläche im
-Shaderpack kann im eigenen RT-Pfad anders aussehen.
+Even if both mods load at the same time, materials therefore
+do not automatically match. A reflective or emissive surface in the
+shader pack can look different in the project's own RT path.
 
-### 9.2 Spätere saubere Abstraktion
+### 9.2 Future clean abstraction
 
-Empfohlen:
+Recommended:
 
 ```text
 MaterialProvider
@@ -621,151 +612,150 @@ MaterialProvider
  └─ FutureIrisMaterialProvider
 ```
 
-Ein Materialdatensatz sollte mindestens enthalten:
+A material record should at least contain:
 
-- Basisfarbe und Alpha-Modus;
-- Normalenquelle;
-- Rauheit/Glätte;
-- Metallanteil;
-- Emission;
-- Brechung/Transluzenz;
-- Textur-/Atlas-Koordinaten;
-- Block-/Biome-Tint;
-- Versions-/Pack-Identität.
+- base color and alpha mode;
+- normal source;
+- roughness/smoothness;
+- metalness;
+- emission;
+- refraction/translucency;
+- texture/atlas coordinates;
+- block/biome tint;
+- version/pack identity.
 
-Ein zukünftiger Iris-Provider darf nicht voraussetzen, dass jedes Pack dieselben
-Kanäle verwendet. Er benötigt eine dokumentierte Pack-Konvention oder eine
-explizite Kooperation mit Iris. Bis dahin muss die Diagnose sagen:
-„Shaderpack-Materialien werden vom Vulkan-RT-Pfad nicht übernommen.“
+A future Iris provider must not assume that every pack uses the same
+channels. It needs a documented pack convention or
+explicit cooperation with Iris. Until then, diagnostics must state:
+"Shader pack materials are not carried over to the Vulkan RT path."
 
-## 10. Mixin- und Dependency-Strategie
+## 10. Mixin and dependency strategy
 
-### 10.1 Öffentliche API bevorzugen
+### 10.1 Prefer the public API
 
-- Iris: optional gegen die öffentliche API v0 kompilieren und ausschließlich
-  `isShaderPackInUse()` für den Supportzustand verwenden.
-- Sodium: keine passende öffentliche Render-Ressourcen-API vorhanden; Mojangs
-  Backend verwenden.
+- Iris: optionally compile against the public API v0 and use exclusively
+  `isShaderPackInUse()` for the support state.
+- Sodium: no suitable public render resource API exists; use Mojang's
+  backend.
 
-### 10.2 Optionale Abhängigkeiten
+### 10.2 Optional dependencies
 
-Wenn Build-Artefakte verfügbar sind:
+When build artifacts are available:
 
-- `modCompileOnly`/äquivalente Compile-only-Abhängigkeit;
-- keine Iris-/Sodium-Klassen aus dem unverzweigten Basispfad laden;
-- Integration in eigene Klasse kapseln;
-- Klasse erst aufrufen, nachdem Fabric die Mod-Anwesenheit bestätigt hat;
-- `NoClassDefFoundError`, API-Revisionsfehler und Linkage-Fehler fail-closed
-  behandeln.
+- `modCompileOnly`/equivalent compile-only dependency;
+- do not load any Iris/Sodium classes from the unbranched base path;
+- encapsulate integration in its own class;
+- only call the class after Fabric has confirmed the mod presence;
+- handle `NoClassDefFoundError`, API revision errors, and linkage errors as fail-closed.
 
-### 10.3 Optionale interne Mixins
+### 10.3 Optional internal mixins
 
-Nur wenn Phase 1 einen konkreten Bedarf beweist:
+Only if phase 1 proves a concrete need:
 
-- eigene Mixin-Konfiguration für Sodium-/Iris-Interop;
-- Plugin prüft Mod-ID und getesteten Versionsbereich;
+- own mixin configuration for Sodium/Iris interop;
+- plugin checks mod ID and tested version range;
 - `required: false`;
-- Injections mit niedriger/gezielter Erwartung und verständlicher Diagnose;
-- keine globale Abschaltung des Spiels bei einem nicht gefundenen optionalen Hook;
-- jeder interne Hook bekommt einen Integrationstest und eine Quellstandnotiz.
+- injections with low/targeted expectations and understandable diagnostics;
+- do not shut down the game globally when an optional hook is not found;
+- every internal hook gets an integration test and a source state note.
 
-Keine private Klasse per Reflection „erraten“. Bei nicht passender Version wird die
-betroffene Funktion deaktiviert.
+Do not "guess" a private class via reflection. If the version does not match,
+disable the affected feature.
 
-### 10.4 Lizenzhinweise
+### 10.4 License notes
 
-- Sodium: PolyForm Shield 1.0.0 im geprüften Stand.
-- Iris: LGPL-3.0-only; Teilkomponenten können weitere Lizenzen besitzen.
+- Sodium: PolyForm Shield 1.0.0 as of the checked state.
+- Iris: LGPL-3.0-only; subcomponents may have additional licenses.
 
-Vor Binärverteilung muss eine rechtliche Prüfung klären, welche optionalen
-Compile-/Link-/Bundle-Formen zulässig sind. Insbesondere keine Sodium- oder
-Iris-JAR und keinen kopierten Quellcode ungeprüft in diese Mod einbetten.
+Before binary distribution, a legal review must clarify which optional
+compile/link/bundle forms are permissible. In particular, do not embed an unchecked Sodium or
+Iris JAR or copied source code in this mod.
 
-## 11. Vorgeschlagene spätere Dateizuordnung
+## 11. Proposed future file mapping
 
-Diese Liste ist eine Arbeitskarte, keine Anweisung, alle Dateien zwingend zu ändern.
+This list is a working map, not an instruction to change all files mandatorily.
 
-| Bereich | Bestehende Datei | Spätere Aufgabe |
+| Area | Existing file | Future task |
 |---|---|---|
-| Backenderkennung | `RendererDetector.java` | konkrete Device-Erkennung, Modversionen, Iris-Shaderstatus |
-| Supportzustand | `CompatibilityManager.java` | strukturierte Capabilities und lokalisierbare Gründe |
-| Ressourcenvertrag | `RendererBackendAdapter.java` | atomisches `FrameResourceSet` statt loser Handles |
-| Sodium | `SodiumVulkanAdapter.java` | nur validierte Mojang-Vulkan-Delegation; optionaler Versionsstatus |
-| Vulkan-Basis | `VanillaVulkanAdapter.java` | Frameidentität, Layout, Format, Generation, Fehlerzustände |
-| Frame-Lifecycle | `GameRendererMixin.java` | Capture-Punkt gegen Sodium und Iris absichern |
-| Present/Swapchain | `VulkanGpuSurfaceMixin.java` | Generation und Synchronisation robust verwalten |
-| Registry | `VulkanRegistry.java` | keine unabhängigen globalen Ressourcenreste; Diagnose |
-| Motion Pipeline | `motion/VulkanFrameGenerationPipeline.java` | explizite Depth-/MV-Konventionen und Layouts |
-| UI | Einstellungs-/Diagnose-Screens | verständliche Zustände für Sodium/Iris |
-| Übersetzungen | `assets/dlss_fg/lang/*.json` | alle neuen Gründe und Hinweise in jeder Sprache |
-| Metadaten | `fabric.mod.json` | getestete Versionen dokumentieren, keine falsche Zusage |
-| Tests | vorhandene Testquellen | Matrix- und Capability-Tests ergänzen |
+| Backend detection | `RendererDetector.java` | concrete device detection, mod versions, Iris shader status |
+| Support state | `CompatibilityManager.java` | structured capabilities and localizable reasons |
+| Resource contract | `RendererBackendAdapter.java` | atomic `FrameResourceSet` instead of loose handles |
+| Sodium | `SodiumVulkanAdapter.java` | only validated Mojang Vulkan delegation; optional version status |
+| Vulkan base | `VanillaVulkanAdapter.java` | frame identity, layout, format, generation, error states |
+| Frame lifecycle | `GameRendererMixin.java` | secure capture point against Sodium and Iris |
+| Present/swapchain | `VulkanGpuSurfaceMixin.java` | manage generation and synchronization robustly |
+| Registry | `VulkanRegistry.java` | no independent global resource leftovers; diagnostics |
+| Motion pipeline | `motion/VulkanFrameGenerationPipeline.java` | explicit depth/MV conventions and layouts |
+| UI | Settings/diagnostics screens | understandable states for Sodium/Iris |
+| Translations | `assets/dlss_fg/lang/*.json` | all new reasons and hints in every language |
+| Metadata | `fabric.mod.json` | document tested versions, no false promise |
+| Tests | existing test sources | add matrix and capability tests |
 
-## 12. Testmatrix
+## 12. Test matrix
 
-### 12.1 Pflichtkombinationen
+### 12.1 Required combinations
 
-Mindestens:
+At minimum:
 
-| GPU | Backend | Sodium | Iris | Shaderpack |
+| GPU | Backend | Sodium | Iris | Shader pack |
 |---|---|---:|---:|---:|
-| NVIDIA RTX 40 | Vulkan | aus | aus | aus |
-| NVIDIA RTX 40 | Vulkan | an | aus | aus |
-| NVIDIA RTX 40 | Vulkan | an | an | aus/unter Vulkan blockiert |
-| NVIDIA RTX 40 | OpenGL | an | an | an |
-| AMD RX 6000/7000 | Vulkan | an | aus/an | aus |
-| Intel Arc | Vulkan | an | aus/an | aus |
-| je ein Hersteller | OpenGL | an | aus | aus |
+| NVIDIA RTX 40 | Vulkan | off | off | off |
+| NVIDIA RTX 40 | Vulkan | on | off | off |
+| NVIDIA RTX 40 | Vulkan | on | on | off/blocked under Vulkan |
+| NVIDIA RTX 40 | OpenGL | on | on | on |
+| AMD RX 6000/7000 | Vulkan | on | off/on | off |
+| Intel Arc | Vulkan | on | off/on | off |
+| one vendor each | OpenGL | on | off | off |
 
-Für Iris/OpenGL muss der erwartete Erfolg „sauber deaktiviert und gut erklärt“
-lauten, nicht „FG aktiv“.
+For Iris/OpenGL the expected success must be "cleanly disabled and well explained",
+not "FG active".
 
-### 12.2 Pflichtszenarien je unterstützter Vulkan-Kombination
+### 12.2 Required scenarios per supported Vulkan combination
 
-- Spielstart und Weltbeitritt;
-- Dimensionwechsel;
-- Welt verlassen und erneut betreten;
-- Fenstergröße mehrfach ändern;
-- Fullscreen ein/aus;
-- Alt-Tab und minimiertes Fenster;
-- Resource-Pack-Reload;
-- Sodium-Einstellungen ändern, die Renderer neu aufbauen;
-- Iris installiert, danach Backendwechsel und Neustart;
-- Pause-Menü und sehr niedrige FPS;
-- Teleport/Kamerasprung/FOV-Sprung;
-- HUD ein/aus und UI-Recomposition;
-- Upscaling an/aus und Qualitätsmodus ändern;
-- Frame Generation an/aus und Multiplikator ändern;
-- Raytracing/Ray Reconstruction an/aus;
-- Motion-Debug in allen Modi.
+- Game launch and world join;
+- Dimension change;
+- Leave world and re-enter;
+- Resize window multiple times;
+- Fullscreen on/off;
+- Alt-tab and minimized window;
+- Resource pack reload;
+- Change Sodium settings that rebuild the renderer;
+- Iris installed, then backend switch and restart;
+- Pause menu and very low FPS;
+- Teleport/camera jump/FOV jump;
+- HUD on/off and UI recomposition;
+- Upscaling on/off and quality mode change;
+- Frame generation on/off and multiplier change;
+- Ray tracing/ray reconstruction on/off;
+- Motion debug in all modes.
 
-### 12.3 Technische Werkzeuge
+### 12.3 Technical tooling
 
-- Vulkan Validation Layers;
-- RenderDoc, sofern der Proxy-Swapchain-Pfad Capture zulässt;
+- Vulkan validation layers;
+- RenderDoc, if the proxy swapchain path allows capture;
 - NVIDIA Nsight Graphics;
 - AMD Radeon GPU Profiler/Analyzer;
-- apitrace oder RenderDoc für einen getrennten Iris/OpenGL-Forschungspfad;
-- strukturierte Projektlogs mit Frame- und Swapchain-Generation.
+- apitrace or RenderDoc for a separate Iris/OpenGL research path;
+- structured project logs with frame and swapchain generation.
 
-### 12.4 Harte Abnahmekriterien
+### 12.4 Hard acceptance criteria
 
-Support darf erst als „kompatibel“ bezeichnet werden, wenn:
+Support may only be called "compatible" when:
 
-1. keine Vulkan-Validation-Fehler auftreten;
-2. zehn Resize-/Fullscreen-Wechsel ohne Device Loss funktionieren;
-3. Farbe, Tiefe, Motion und Matrizen dieselbe Frame-ID tragen;
-4. Motion-Vektoren bei Kamerabewegung die dokumentierte Richtung haben;
-5. UI nicht in generierten Frames verschmiert oder doppelt erscheint;
-6. Shader-/Resource-Reload keine alten Handles verwendet;
-7. unsupported Kombinationen keine nativen Provider-Aufrufe erhalten;
-8. Diagnose und Benutzeroberfläche den echten Zustand melden;
-9. mindestens ein System je GPU-Hersteller getestet wurde, bevor
-   herstellerübergreifender Support behauptet wird.
+1. no Vulkan validation errors occur;
+2. ten resize/fullscreen toggles work without device loss;
+3. color, depth, motion, and matrices carry the same frame ID;
+4. motion vectors have the documented direction for camera movement;
+5. UI does not smear or appear duplicated in generated frames;
+6. shader/resource reload does not use old handles;
+7. unsupported combinations do not receive native provider calls;
+8. diagnostics and UI report the true state;
+9. at least one system per GPU vendor was tested before
+   cross-vendor support is claimed.
 
-## 13. Diagnose- und Logging-Vertrag
+## 13. Diagnostics and logging contract
 
-Jeder Supportbericht sollte ohne Debugger mindestens folgende Werte liefern:
+Every support report should provide at least the following values without a debugger:
 
 ```text
 Minecraft version
@@ -777,7 +767,7 @@ Iris shader pack active
 requested graphics backend
 actual GpuDevice class
 backend name/description
-Sodium draw backend, falls sicher bestimmbar
+Sodium draw backend, if reliably determinable
 GPU vendor/device/driver
 Vulkan instance/device/queue/family
 swapchain handle + generation + image index
@@ -792,7 +782,7 @@ last accepted frame ID
 last skipped frame reason
 ```
 
-Logs dürfen nicht nur „unsupported“ schreiben. Beispiele für präzise Gründe:
+Logs must not just write "unsupported". Examples of precise reasons:
 
 - `IRIS_SHADERPACK_REQUIRES_OPENGL`
 - `VULKAN_DEVICE_NOT_READY`
@@ -805,148 +795,145 @@ Logs dürfen nicht nur „unsupported“ schreiben. Beispiele für präzise Grü
 - `NATIVE_PROVIDER_REJECTED_RESOURCES`
 - `MOTION_VECTOR_CONVENTION_UNKNOWN`
 
-## 14. Bekannte Fehlannahmen, die eine KI vermeiden muss
+## 14. Known false assumptions an AI must avoid
 
-1. **„Sodium war gefunden, also funktioniert Vulkan.“**  
-   Falsch. Das konkrete aktive `GpuDevice` und die Ressourcen entscheiden.
+1. **"Sodium was found, so Vulkan works."**  
+   Wrong. The specific active `GpuDevice` and resources decide.
 
-2. **„Iris war gefunden, also sind Shader aktiv.“**  
-   Falsch. Die öffentliche Iris-API muss den aktiven Packzustand melden.
+2. **"Iris was found, so shaders are active."**  
+   Wrong. The public Iris API must report the active pack state.
 
-3. **„Iris + Vulkan bedeutet Iris-Shader unter Vulkan.“**  
-   Falsch im geprüften Stand. Iris lässt die JAR geladen, blockiert aber Shaderpacks.
+3. **"Iris + Vulkan means Iris shaders under Vulkan."**  
+   Wrong as of the checked state. Iris leaves the JAR loaded but blocks shader packs.
 
-4. **„SodiumVulkanAdapter ist bereits eine vollständige Integration.“**  
-   Falsch. Er delegiert momentan nur an den Vanilla-Adapter.
+4. **"SodiumVulkanAdapter is already a complete integration."**  
+   Wrong. It currently only delegates to the vanilla adapter.
 
-5. **„colortex0 ist immer die finale HUD-lose Farbe.“**  
-   Nicht garantiert. Finalpass, Ping-Pong-Zustand und Farbraum sind relevant.
+5. **"colortex0 is always the final HUD-free color."**  
+   Not guaranteed. Final pass, ping-pong state, and color space matter.
 
-6. **„Ein vorhandener Tiefenpuffer reicht.“**  
-   Falsch. Reversed-Z, Near/Far, Layout, Auflösung und Matrix müssen passen.
+6. **"A present depth buffer is enough."**  
+   Wrong. Reversed-Z, near/far, layout, resolution, and matrix must match.
 
-7. **„Kamerareprojektion ersetzt vollständige Motion Vectors.“**  
-   Nur teilweise. Entity-/Partikel-/Vegetationsbewegung benötigt zusätzliche Daten
-   oder eine bildbasierte Rekonstruktion mit Artefakten.
+7. **"Camera reprojection replaces complete motion vectors."**  
+   Only partially. Entity/particle/vegetation motion needs additional data
+   or an image-based reconstruction with artifacts.
 
-8. **„OpenGL-Textur-ID kann an Vulkan/Streamline übergeben werden.“**  
-   Falsch. Dafür wäre explizites External-Memory-/Semaphore-Interop nötig.
+8. **"An OpenGL texture ID can be passed to Vulkan/Streamline."**  
+   Wrong. That would require explicit external memory/semaphore interop.
 
-9. **„Ein CPU-Copy macht Iris schnell kompatibel.“**  
-   Technisch als Prototyp denkbar, für FG-Leistung und Latenz ungeeignet.
+9. **"A CPU copy makes Iris quickly compatible."**  
+   Technically conceivable as a prototype, unsuitable for FG performance and latency.
 
-10. **„`suggests` in fabric.mod.json garantiert Support.“**  
-    Falsch. Es ist lediglich eine optionale Empfehlung.
+10. **"suggests in fabric.mod.json guarantees support."**  
+     Wrong. It is merely an optional recommendation.
 
-11. **„Minecrafts Projektionskonvention ist noch normales Z.“**  
-    Falsch für 26.2; Reversed-Z muss berücksichtigt werden.
+11. **"Minecraft's projection convention is still regular Z."**  
+     Wrong for 26.2; reversed-Z must be taken into account.
 
-12. **„Neuere Sodium-/Iris-Versionen sind automatisch kompatibel.“**  
-    Falsch. Interne Renderpfade und Mixins können sich ändern.
+12. **"Newer Sodium/Iris versions are automatically compatible."**  
+     Wrong. Internal render paths and mixins can change.
 
-## 15. Entscheidungsbaum für die Laufzeit
-
-```text
-Ist das endgültige GpuDevice Vulkan?
- ├─ Nein
- │   ├─ Iris-Shaderpack aktiv?
- │   │   ├─ Ja: Vulkan-FG/RT deaktivieren; Iris/OpenGL als Grund anzeigen
- │   │   └─ Nein: Vulkan-FG/RT deaktivieren; OpenGL als Grund anzeigen
- │   └─ Keine Vulkan-Handles oder nativen Vulkan-Provider aufrufen
- └─ Ja
-     ├─ Iris geladen?
-     │   ├─ Ja und Shaderpack angeblich aktiv:
-     │   │   inkonsistenter Zustand; fail-closed und Diagnose
-     │   └─ Ja, Shaderpack aus: normal mit Vulkan-Prüfung fortfahren
-     ├─ Sodium geladen?
-     │   ├─ Ja: Version + Mojang-Vulkan-Ressourcenvertrag validieren
-     │   └─ Nein: Vanilla-Vulkan-Ressourcenvertrag validieren
-     ├─ Alle Ressourcen gehören zum selben Frame und zur selben Generation?
-     │   ├─ Nein: Frame überspringen
-     │   └─ Ja: Synchronisation/Layout validieren
-     └─ Nativer Provider akzeptiert die Ressourcen?
-         ├─ Nein: Funktion deaktivieren bzw. Frame überspringen, Grund anzeigen
-         └─ Ja: Providerarbeit aufzeichnen und Present-Vertrag erfüllen
-```
-
-## 16. Empfohlene Produktkommunikation
-
-Bis die Testmatrix abgeschlossen ist, sollte die öffentliche Beschreibung nicht
-pauschal „Sodium und Iris unterstützt“ sagen. Präziser:
-
-> Sodium wird mit Minecrafts Vulkan-Backend unterstützt, sobald die getestete
-> Versionskombination und die Laufzeitdiagnose den Vulkan-Ressourcenpfad bestätigen.
-> Iris darf installiert sein, aber Iris-Shaderpacks benötigen derzeit OpenGL und
-> können deshalb nicht gleichzeitig mit den Vulkan-basierten Frame-Generation-,
-> Upscaling- und Raytracing-Funktionen verwendet werden.
-
-Nach erfolgreicher Phase 1 kann „Sodium 0.9.1 + Vulkan getestet“ ergänzt werden.
-Aktive Iris-Shaderpacks dürfen erst nach einem echten, getesteten Interop-Backend
-als unterstützt beworben werden.
-
-## 17. Offene Fragen vor der späteren Implementierung
-
-1. Ist der `GameRendererMixin`-Capture-Punkt mit Sodiums beiden Vulkan-Draw-Backends
-   garantiert außerhalb eines aktiven Renderpasses?
-2. Welches Layout haben Mojangs Hauptfarb- und Tiefenbild exakt an diesem Punkt?
-3. Ist der über `VulkanCommandEncoderAccessor` gelesene Buffer immer der Encoder,
-   der den aktuellen Frame besitzt?
-4. Kann die globale `activeColorImage`-Registrierung vollständig entfernt und durch
-   das konkrete Frame-RenderTarget ersetzt werden?
-5. Welche Semaphoren erwartet jeder native Provider wirklich: Acquire, Render
-   Complete, eigener Timeline-Wert oder Proxy-intern?
-6. In welchem Farbraum liegt das Display-Target vor und nach UI-Komposition?
-7. Wie werden Sodium-interne Renderer-Rebuilds zuverlässig erkannt?
-8. Welche genauen Iris-/Sodium-Artefakte sind für optionale Compile-only-APIs
-   veröffentlicht?
-9. Soll aktive Iris/OpenGL-Nutzung langfristig nur gut erklärt deaktiviert bleiben,
-   oder wird ein eigenes Interop-Projekt finanziert?
-10. Welche PBR-Konvention soll ein zukünftiger `MaterialProvider` zuerst
-    unterstützen?
-
-## 18. Arbeitsanweisung für den nächsten KI-Agenten
-
-Vor jeder Codeänderung:
-
-1. aktuellen Git-Status prüfen und fremde Änderungen nicht überschreiben;
-2. Minecraft-, Sodium- und Iris-Versionen erneut feststellen;
-3. die verlinkten Primärquellen auf Änderungen prüfen;
-4. zuerst Phase 0 implementieren und testen;
-5. danach Phase 1 in kleinen, getrennten Änderungen ausführen;
-6. keine Funktion allein aufgrund einer Mod-ID freischalten;
-7. keine OpenGL-Ressource als Vulkan-Handle interpretieren;
-8. keine internen Sodium-/Iris-Klassen ohne Versionswächter verwenden;
-9. bei unbekanntem Layout, Lifecycle oder Framebezug fail-closed bleiben;
-10. Dokumentation, Übersetzungen, Diagnose und Testnachweise zusammen mit dem Code
-    aktualisieren.
-
-Die bevorzugte Reihenfolge ist:
+## 15. Runtime decision tree
 
 ```text
-korrekte Erkennung
-→ atomarer Ressourcenvertrag
-→ Sodium-Vulkan-Validierung
-→ Synchronisation und Resize-Härtung
-→ Iris-installiert/Vulkan-Test
-→ klare Iris/OpenGL-Ablehnung
-→ erst danach optionales OpenGL–Vulkan-Interop
-→ anschließend Map-Support als separates Vorhaben
+Is the final GpuDevice Vulkan?
+ ├─ No
+ │   ├─ Iris shader pack active?
+ │   │   ├─ Yes: disable Vulkan FG/RT; show Iris/OpenGL as reason
+ │   │   └─ No: disable Vulkan FG/RT; show OpenGL as reason
+ │   └─ Do not call any Vulkan handles or native Vulkan providers
+ └─ Yes
+     ├─ Iris loaded?
+     │   ├─ Yes and shader pack allegedly active:
+     │   │   inconsistent state; fail-closed and diagnose
+     │   └─ Yes, shader pack off: continue normally with Vulkan check
+     ├─ Sodium loaded?
+     │   ├─ Yes: validate version + Mojang Vulkan resource contract
+     │   └─ No: validate vanilla Vulkan resource contract
+     ├─ Do all resources belong to the same frame and generation?
+     │   ├─ No: skip frame
+     │   └─ Yes: validate synchronization/layout
+     └─ Does the native provider accept the resources?
+         ├─ No: disable feature or skip frame, show reason
+         └─ Yes: record provider work and satisfy present contract
 ```
 
-## 19. Endfazit
+## 16. Recommended product messaging
 
-Die Mod ist architektonisch deutlich näher an Sodium-Kompatibilität als an
-Iris-Shaderpack-Kompatibilität:
+Until the test matrix is complete, the public description should not
+say "Sodium and Iris supported" across the board. More precise:
 
-- Sodium 0.9.1 kann auf Mojangs Vulkan-Backend rendern. Die vorhandene Delegation
-  kann deshalb die richtige Basis sein, braucht aber echte Lifecycle-, Ressourcen-
-  und Synchronisationsbeweise.
-- Iris 1.11.2 kann installiert sein, bietet seine Shaderpacks unter Vulkan aber
-  bewusst nicht an.
-- Aktive Iris-Shaderpacks laufen über OpenGL und liefern nicht die Vulkan-
-  Ressourcen, die der aktuelle FG-/Upscaling-/RT-Pfad verlangt.
-- Die sinnvollste kurzfristige Umsetzung ist vollständiger, getesteter
-  Sodium-Vulkan-Support plus ehrliches fail-closed Verhalten für Iris-Shaderpacks.
-- Ein späterer aktiver Iris-Shader-Support ist als eigenständiges
-  OpenGL–Vulkan-Interop- oder Iris-Vulkan-Projekt zu behandeln, nicht als kleiner
-  Adapter.
+> Sodium is supported with Minecraft's Vulkan backend once the tested
+> version combination and runtime diagnostics confirm the Vulkan resource path.
+> Iris may be installed, but Iris shader packs currently require OpenGL and
+> therefore cannot be used at the same time as the Vulkan-based frame generation,
+> upscaling, and ray tracing features.
+
+After successful phase 1, "Sodium 0.9.1 + Vulkan tested" can be added.
+Active Iris shader packs may only be advertised as supported after a real, tested interop backend
+exists.
+
+## 17. Open questions before future implementation
+
+1. Is the `GameRendererMixin` capture point guaranteed to be outside an active render pass with both of Sodium's Vulkan draw backends?
+2. What layout do Mojang's main color and depth images have exactly at that point?
+3. Is the buffer read via `VulkanCommandEncoderAccessor` always the encoder
+   that owns the current frame?
+4. Can the global `activeColorImage` registration be fully removed and replaced by
+   the concrete frame render target?
+5. What semaphores does each native provider actually expect: acquire, render
+   complete, custom timeline value, or proxy-internal?
+6. What color space does the display target have before and after UI composition?
+7. How are Sodium-internal renderer rebuilds reliably detected?
+8. What exact Iris/Sodium artifacts are published for optional compile-only APIs?
+9. Should active Iris/OpenGL usage remain cleanly disabled with a good explanation long-term,
+   or will a separate interop project be funded?
+10. Which PBR convention should a future `MaterialProvider` support
+    first?
+
+## 18. Work instructions for the next AI agent
+
+Before any code change:
+
+1. check the current git status and do not overwrite external changes;
+2. re-establish Minecraft, Sodium, and Iris versions;
+3. check the linked primary sources for changes;
+4. implement and test phase 0 first;
+5. then execute phase 1 in small, separate changes;
+6. do not enable any feature based solely on a mod ID;
+7. do not interpret any OpenGL resource as a Vulkan handle;
+8. do not use any internal Sodium/Iris classes without a version guard;
+9. stay fail-closed for unknown layout, lifecycle, or frame association;
+10. update documentation, translations, diagnostics, and test evidence together with the code.
+
+The preferred order is:
+
+```text
+correct detection
+→ atomic resource contract
+→ Sodium-Vulkan validation
+→ synchronization and resize hardening
+→ Iris-installed/Vulkan test
+→ clear Iris/OpenGL rejection
+→ only then optional OpenGL–Vulkan interop
+→ then map support as a separate effort
+```
+
+## 19. Final conclusion
+
+The mod is architecturally much closer to Sodium compatibility than to
+Iris shader pack compatibility:
+
+- Sodium 0.9.1 can render on Mojang's Vulkan backend. The existing delegation
+  can therefore be the right foundation, but it needs real lifecycle, resource,
+  and synchronization proof.
+- Iris 1.11.2 can be installed but deliberately does not offer its shader packs
+  under Vulkan.
+- Active Iris shader packs run via OpenGL and do not provide the Vulkan
+  resources required by the current FG/upscaling/RT path.
+- The most sensible near-term implementation is complete, tested
+  Sodium-Vulkan support plus honest fail-closed behavior for Iris shader packs.
+- Later active Iris shader support should be treated as a standalone
+  OpenGL–Vulkan interop or Iris-Vulkan project, not as a small
+  adapter.

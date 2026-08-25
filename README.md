@@ -1,422 +1,137 @@
-# Vulkan Frame Generation Integration for Minecraft
+# Vulkan frame generation for Minecraft
 
 [![Build and test](https://github.com/Malionaro/dlss-frame-generation/actions/workflows/build.yml/badge.svg)](https://github.com/Malionaro/dlss-frame-generation/actions/workflows/build.yml)
 
-[English](#english) · [Deutsch](#deutsch) ·
-[Documentation](docs/README.md) · [Installation](docs/user/INSTALL.md) ·
-[Backend details](docs/architecture/BACKENDS.md) ·
-[Capability audit](docs/architecture/CAPABILITY_AUDIT.md) ·
-[Sodium/Iris status](docs/compatibility/SODIUM_IRIS_COMPATIBILITY.md) ·
-[Feature status and roadmap](docs/status/FEATURE_STATUS.md)
+[English](#english) · [Documentation](docs/README.md) · [Installation](docs/user/INSTALL.md) · [Backend details](docs/architecture/BACKENDS.md) · [Capability audit](docs/architecture/CAPABILITY_AUDIT.md) · [Sodium/Iris status](docs/compatibility/SODIUM_IRIS_COMPATIBILITY.md) · [Feature status](docs/status/FEATURE_STATUS.md)
 
 ## English
 
-Experimental Fabric client mod for Minecraft **26.2**. It connects Minecraft's
-Vulkan renderer with NVIDIA Streamline and provides a capability-gated settings
-screen for NVIDIA DLSS, AMD FSR and Intel XeSS frame-generation backends.
+Fabric client mod for Minecraft 26.2. It hooks Minecraft's Vulkan renderer into NVIDIA Streamline and exposes DLSS, FSR and XeSS behind a settings screen that only enables what your hardware can actually do.
 
-> This remains experimental software. A backend stays disabled unless its
-> native runtime, GPU support and required renderer inputs are all available.
-> AMD and Intel requests are never sent to NVIDIA Streamline.
+I built it because the new Vulkan renderer finally makes this kind of thing possible. It is still experimental. Expect rough edges. Back up a world before you test it.
 
-### Current backend status
+> A backend stays off unless its runtime, GPU and renderer inputs are all present. I route AMD and Intel calls away from Streamline on purpose.
+
+### What works right now
 
 | Backend | Status |
 |---|---|
-| NVIDIA Streamline 2.12 | True DLSS Super Resolution renders the world at Streamline's optimal input size and writes a display-resolution result before a native-resolution HUD is drawn. DLSS-G receives rotating HUD-less colour/depth/motion slots plus a separate transparent UI layer. Reflex pacing, resize resets and DLSS Ray Reconstruction with HDR/material guides are connected and remain capability-gated. |
-| Hybrid Vulkan → D3D12 presentation | Optional Windows-only path. Minecraft still renders with Vulkan, then same-adapter shared images and two shared GPU fences hand frames to a D3D12 queue and DXGI flip-model swapchain. There is no production CPU copy. It is disabled by default, requires a restart, and falls back to normal Vulkan WSI if capability checks fail. This transport is not itself a frame-generation provider. |
-| AMD FSR 4 | The hybrid presenter provides the required D3D12 transport foundation, but the bundled OptiScaler/FidelityFX set does **not** contain `amd_fidelityfx_framegeneration_dx12.dll`. FSR 4 FG therefore remains unavailable rather than being simulated or mislabeled. |
-| AMD FidelityFX FSR 3.1 | The signed FidelityFX Vulkan runtime is bundled. Proxy-swapchain presentation and the prepare/configure dispatches receive renderer-owned colour, depth and dense motion vectors. Activation remains gated until the provider accepts them; driver and pacing tests on AMD hardware are still required. |
-| Intel XeSS-FG / Intel GPUs | The D3D12 transport exists, but the required `libxess_fg.dll` and `libxell.dll` are not bundled. Native XeSS-FG remains unavailable until the official runtime, XeLL lifecycle and Intel proxy swapchain can all be integrated and accepted. On Intel hardware the Vulkan swapchain can instead use the explicitly named cross-vendor **FSR 3.1 fallback**. |
-| Bundled OptiScaler 0.9.4 bridge | On AMD it selects the `fsr31` Vulkan upscaler; on Intel it selects `xess`. It is loaded before FidelityFX and intercepts the mod's standard FFX Vulkan upscaling calls. NVIDIA stays on native Streamline. Native AA plus Quality, Balanced, Performance, Ultra Performance and Ultra Quality use the split world/display targets; the Vulkan bridge still does not make XeFG available. |
-| Expandable compatibility layer | Minecraft's swapchain mixins call a vendor-neutral provider API with an explicit lifecycle and exclusive ownership. Atomic frame identities prevent colour, depth, motion and swapchain generations from different frames being combined. Optional renderer/material interfaces prepare Aperture interop without claiming that Aperture is supported today. |
-| Hybrid hardware ray tracing | Implemented with Vulkan acceleration structures and hardware ray queries for block shadows and reflections. Exact block/fluid `VoxelShape` boxes, raster-depth rejection and block-change invalidation are used. It activates only when the GPU exposes `VK_KHR_acceleration_structure` and `VK_KHR_ray_query`. |
+| NVIDIA Streamline 2.12 | DLSS super resolution renders the world at the size Streamline asks for, then writes the full display image before the HUD. DLSS-G gets HUD-less color, depth and motion plus a separate transparent UI layer. Reflex pacing, resize handling and ray reconstruction with HDR guides are wired up. All of it stays behind capability checks. |
+| Vulkan to D3D12 present | Windows only, and off by default. Minecraft still renders with Vulkan. Two shared fences move the finished image to a D3D12 queue and a DXGI flip swapchain. No CPU copy in the hot path. Needs a restart. If the checks fail it falls back to normal Vulkan present. This is transport, not a frame gen provider by itself. |
+| AMD FSR 4 | Needs `amd_fidelityfx_framegeneration_dx12.dll`. That file is not in the bundled OptiScaler set, so FSR 4 stays off. I would rather show unavailable than fake it. |
+| AMD FSR 3.1 | Bundled and signed Vulkan runtime. Proxy swapchain and prepare/configure get real color, depth and dense motion vectors from the renderer. It only goes live after the provider accepts the inputs. I still need driver and pacing tests on real AMD hardware. |
+| Intel XeSS-FG / Intel GPUs | Same D3D12 transport, but `libxess_fg.dll` and `libxell.dll` are missing. So native XeSS-FG stays off. On Intel the Vulkan path can use the FSR 3.1 fallback instead. It is named clearly as a fallback. |
+| OptiScaler 0.9.4 bridge | Bundled. On AMD it picks `fsr31`, on Intel `xess`. It loads before FidelityFX and catches the mod's FFX Vulkan calls. NVIDIA never touches it and stays on Streamline. All quality modes use the split world and display targets. This still does not make XeSS-FG appear on Vulkan. |
+| Compatibility layer | Mixins talk to a vendor-neutral provider API with a clear lifecycle and one owner for present. Frame identities are atomic, so color, depth, motion and swapchain generation from different frames cannot mix. There are optional renderer and material hooks for Aperture. They are empty on purpose, not forgotten. |
+| Hardware ray tracing | Vulkan acceleration structures and ray queries. Real `VoxelShape` boxes for blocks and fluids, depth rejection, and invalidation on block changes. Only runs if the GPU exposes `VK_KHR_acceleration_structure` and `VK_KHR_ray_query`. I think the 48 block radius is the sweet spot. More just hurts. |
 
 ### Build
 
-Requirements for a clean source build on Windows:
+You need on Windows:
 
-- Java 25;
-- CMake 3.25 or newer;
-- Visual Studio 2022 Build Tools with the Desktop development with C++ workload
-  and a Windows 10/11 SDK.
+- Java 25
+- CMake 3.25 or newer
+- Visual Studio 2022 Build Tools with C++ workload and a Windows 10/11 SDK
 
-The repository includes the required Streamline/FidelityFX headers and
-redistributable runtime files. Gradle builds the JNI bridge, compiles and tests
-the Vulkan shaders, runs the unit tests and then packages the single mod JAR.
+The repo already contains the Streamline and FidelityFX headers and the runtime files you need to distribute. Gradle builds the JNI bridge, compiles the shaders, runs tests and packs the jar.
 
 ```powershell
 .\gradlew.bat build
 ```
 
-The resulting mod JAR is written to:
+You get `build/libs/dlss-frame-generation-1.0-SNAPSHOT.jar`.
 
-`build/libs/dlss-frame-generation-1.0-SNAPSHOT.jar`
+### Source layout
 
-### Source layout and repository integrity
+This is a client only mod with Loom's split source sets. All runtime code lives in `src/client/java`. `compileJava NO-SOURCE` is normal. The real compile is `compileClientJava`.
 
-This is a client-only Fabric mod using Loom's split environment source sets.
-All runtime Java code therefore belongs under `src/client/java`. Seeing
-`compileJava NO-SOURCE` in Gradle output is expected; `compileClientJava` is the
-task that compiles the mod.
+The tree is small and grouped by job:
 
-The source tree is grouped by responsibility:
+- `client/backend`, `config`, `frame` and `render` hold the core
+- `client/render/adapter` holds adapters for vanilla, Sodium and the OpenGL fallback
+- `client/interop` holds native and vendor code
+- `client/motion` and `raytracing` hold the GPU work
+- `client/ui` holds settings and diagnostics
+- `native/bridge` is split into `fidelityfx`, `presentation`, `routing` and `streamline`
+- shaders live in `motion` and `raytracing`
+- docs live in `user`, `architecture`, `compatibility` and `status`
 
-- `client/backend`, `config`, `frame`, and `render` contain the core runtime;
-- `client/render/adapter` contains renderer-specific adapters;
-- `client/interop` contains native and vendor-SDK integration;
-- `client/motion` and `raytracing` contain the GPU pipelines;
-- `client/ui/settings` and `ui/diagnostics` contain the two UI areas;
-- `native/bridge` is split into `fidelityfx`, `presentation`, `routing`, and
-  `streamline`;
-- shader sources are split into `motion` and `raytracing`;
-- `docs` is split into `user`, `architecture`, `compatibility`, and `status`.
+See [docs/README.md](docs/README.md) for the full map.
 
-See the [documentation index](docs/README.md) for the complete document map.
+Audited on 2026-07-29:
 
-The repository was audited on 2026-07-29:
+- all 78 client files are in the jar
+- both entrypoints and all 16 mixins are registered
+- all 53 native methods have a matching JNI export
+- every `.cpp` file is part of the CMake target
+- all four shaders are loaded by real code and by tests
+- no duplicate zip entries
+- dead class `UltrawideLensCorrector` removed
 
-- all 78 top-level client source files are present in the built JAR;
-- both Fabric entrypoints and all 16 Mixins are registered;
-- all 53 Java native declarations have matching JNI exports;
-- every native `.cpp` file is part of the CMake target;
-- all four Vulkan shaders are loaded by production code and compiled by tests;
-- the JAR contains no duplicate ZIP entries;
-- the unused `UltrawideLensCorrector` class was removed.
+`RendererIntegration` and `MaterialProvider` have no Aperture code yet. That is intentional. They are the typed boundary described in the [Sodium/Iris plan](docs/compatibility/SODIUM_IRIS_COMPATIBILITY.md), not leftovers. Build output, worlds, IDE files and logs are ignored via `.gitignore`.
 
-`RendererIntegration` and `MaterialProvider` intentionally have no active
-Aperture implementation yet. They are the typed, frame-atomic extension
-boundary documented in [the Sodium/Iris compatibility plan](docs/compatibility/SODIUM_IRIS_COMPATIBILITY.md),
-not forgotten runtime classes. Build output, development worlds, IDE files and
-local logs are excluded through `.gitignore`.
+### OptiScaler that ships inside
 
-### Bundled OptiScaler
+You do not need to download OptiScaler separately. The jar contains the verified 0.9.4 runtime, its GPLv3 text, source notes, third party licenses and a SHA-256 manifest. On AMD or Intel the mod extracts it to a temp folder and sets it up. It is on by default. NVIDIA never loads it.
 
-No separate OptiScaler download is required. The mod JAR contains the verified
-v0.9.4 runtime, its GPLv3 text, corresponding-source directions, dependency
-licenses and SHA-256 manifest. On AMD/Intel, the runtime is extracted to the
-mod's temporary native directory and configured automatically. It is enabled by
-default; NVIDIA never loads it and stays on Streamline.
-
-The helper remains available only for developers who deliberately want an
-external override:
+Only for developers who want to override it:
 
 ```powershell
 .\tools\install-optiscaler.ps1
 ```
 
-An external `config/dlss_fg/optiscaler/OptiScaler.dll` takes precedence over
-the embedded copy. The loader resolves library/plugin paths, enables FFX inputs
-and disables DXGI and Streamline GPU spoofing when those values are still
-`auto`; explicit custom values are preserved.
+If `config/dlss_fg/optiscaler/OptiScaler.dll` exists, the mod uses that file instead. The loader fixes paths, turns on FFX inputs and turns off DXGI and Streamline spoofing when the ini still says `auto`. Your own values stay untouched.
 
-Only use releases from the
-[official OptiScaler repository](https://github.com/optiscaler/OptiScaler).
-OptiScaler itself warns against use in multiplayer/anti-cheat environments.
+Only use builds from the [official OptiScaler repo](https://github.com/optiscaler/OptiScaler). OptiScaler itself warns about multiplayer and anti-cheat. Take that seriously.
 
-### Development launch (IntelliJ IDEA)
+### Run it in IntelliJ
 
-1. Open the project as a Gradle project and let IntelliJ finish its Gradle sync.
-2. Select the **Minecraft Client** run configuration in the top toolbar.
-3. Start that configuration.
+1. Open as Gradle project, wait for sync.
+2. Pick the **Minecraft Client** run config at the top.
+3. Hit run.
 
-Do not start `net.fabricmc.devlaunchinjector.Main.main()` directly from the
-editor gutter. The shared **Minecraft Client** configuration provides the
-required Fabric/Loom launch configuration and classpath.
+Do not run `net.fabricmc.devlaunchinjector.Main.main()` from the gutter. The shared run config sets the right launch args and classpath.
 
-If IntelliJ reports a missing `launch.cfg`, run this once from the project root
-and refresh the Gradle project:
+If IntelliJ complains about missing `launch.cfg`, run once:
 
 ```powershell
 .\gradlew.bat ideaSyncTask
 ```
 
-### In-game settings and debug overlay
+Then reimport.
 
-Open the settings screen via:
+### In game
 
-`Options... → Video Settings... → Frame Generation...`
+Open `Options... -> Video Settings... -> Frame Generation...`
 
-The entry is at the bottom of the scrollable Video Settings list. Mod Menu can
-also open the same screen when it is installed.
+It is at the bottom of the scrollable video list. Mod Menu opens the same screen if you have it.
 
-The settings screen adapts to small window sizes. Use the mouse wheel or the
-arrow buttons beside **Done** to reach every option.
+The screen works in small windows. Use the wheel or the arrows next to **Done**.
 
-AMD/Intel reconstruction now exposes Native AA plus the reduced-resolution
-quality modes. **Dynamic Resolution** adjusts only an active temporal-upscaler
-world target, with a 1/3-output safety floor and a configurable target FPS.
-**Motion-Vector Blur** runs after reconstruction and provides strength control.
-**Safe Auto Fallback** disables a known-unavailable FG request for the session
-and continues with reconstruction or native Vulkan presentation; it never
-routes calls through an incompatible vendor ABI.
+AMD and Intel now show Native AA plus the scaled quality modes. Dynamic resolution only touches the world target of an active temporal upscaler. It keeps a 1/3 floor and a target FPS you can set. Motion blur runs after reconstruction and has a strength slider. Safe auto fallback turns off a FG request that is known to be unavailable for this session and keeps rendering through reconstruction or plain Vulkan present. It never mixes vendor ABIs.
 
-The mod screen has separate **Frame Gen** and **Graphics** sections. Graphics
-contains the **Hardware Raytracing** and **Vulkan → D3D12** subtabs. The latter
-shows the real bridge stage, adapter LUID and runtime audit. Its toggle is
-available only after same-GPU D3D12 and Vulkan external-memory capabilities
-have been confirmed. On supported hardware the ray-tracing path:
+Frame gen and graphics are separate sections. Graphics has two subtabs, hardware ray tracing and Vulkan to D3D12. The second shows the real bridge stage, adapter LUID and runtime audit. The switch only becomes active after the same-adapter D3D12 and Vulkan external memory checks pass.
 
-- enables acceleration structures, ray queries and buffer device addresses
-  during Vulkan device creation;
-- converts exact nearby block and fluid `VoxelShape` boxes into a
-  camera-prioritized, block-coloured AABB scene;
-- builds a BLAS and TLAS on the GPU;
-- rejects ray hits hidden behind closer raster geometry, then traces shadows
-  and optional reflections in a compute shader before DLSS/HUD work;
-- produces low-resolution HDR noisy colour, albedo, specular albedo,
-  normal/roughness and specular-hit-distance guides for DLSS Ray
-  Reconstruction on supported NVIDIA hardware;
-- leaves the normal raster renderer active and composites the RT result over it.
+On hardware that supports it, ray tracing does this:
 
-The scene radius is capped at 48 blocks. `RT Distance` controls that radius,
-`RT Quality` controls reflection reach, `RT Samples` controls soft-shadow rays,
-and `RT Stable Sampling` raises the minimum sample count to four. The scene
-refreshes after movement, nearby block updates and a low-frequency safety
-interval.
-This is hybrid ray tracing, not full path tracing.
+- turns on acceleration structures, ray queries and buffer device address when the Vulkan device is created
+- turns nearby block and fluid `VoxelShape` boxes into a block-colored AABB scene sorted by camera distance
+- builds BLAS and TLAS on the GPU
+- drops hits that sit behind raster geometry, then traces shadows and optional reflections in a compute shader before DLSS and HUD
+- writes low res HDR guides, albedo, specular, normal and roughness and hit distance for ray reconstruction on NVIDIA
+- keeps the raster renderer running and composites on top
 
-The controls are disabled on GPUs without Vulkan ray-query support. For example,
-the GeForce GTX 1660 SUPER does not expose `VK_KHR_ray_query`; an RTX 20-series
-or newer NVIDIA GPU, or a Vulkan ray-query capable AMD/Intel GPU, is required.
+Radius is capped at 48 blocks. `RT Distance` sets it, `RT Quality` sets reflection reach, `RT Samples` sets shadow rays, `RT Stable Sampling` bumps the minimum to four. The scene rebuilds after you move, after nearby block changes and on a slow timer. This is hybrid tracing, not full path tracing. It is impressive when it lines up, but also a bit fragile. I like it, I also do not fully trust it yet.
 
-**Motion Debug** cycles through `OFF`, `ARROWS`, `HEATMAP` and `RAW PREVIEW`.
-The overlay is rendered only while a world is loaded; it is intentionally not
-shown in the main menu or in settings screens. When the renderer-owned
-motion-vector image is available, the modes use a delayed sparse GPU readback
-of the real RG16F image after the corresponding present has completed; it no
-longer forces `vkDeviceWaitIdle` every debug frame. Before the first readback,
-the overlay falls back to a live camera-motion preview. Arrows use the SDK's
-current-to-previous vectors
-with corrected GUI axes, so they follow camera look direction vertically and
-horizontally. RAW Preview color-encodes the same unmodified values. The heatmap
-shows local motion magnitude: blue is slow, green is medium and red is fast.
+The switches stay disabled without `VK_KHR_ray_query`. A GTX 1660 SUPER does not have it. You need RTX 20 or newer, or an AMD or Intel GPU with ray query.
+
+Motion debug cycles through `OFF`, `ARROWS`, `HEATMAP` and `RAW PREVIEW`. It only shows in a loaded world, in the HUD. Not in menus. When the real RG16F image is ready, the overlay reads it with a sparse delayed readback after present. No more `vkDeviceWaitIdle` every frame. Before the first readback you get a live camera preview. Arrows use current to previous vectors with fixed GUI axes, so they follow where you look. Raw preview shows the same values as colors. Heatmap is simple, blue is slow, green is mid, red is fast.
 
 ### Diagnostics
 
-The settings screen includes **Run Diagnostics**. Backend availability depends
-on the detected GPU, the renderer and the native runtime. A visible option does
-not guarantee that vendor frame generation can be activated. The report
-distinguishes informational/skipped checks from passes and failures, wraps and
-scrolls long native messages, and reports a provider as hardware-validated only
-after it accepted an actual frame and completed presentation.
+The settings screen has **Run Diagnostics**. What you see depends on GPU, renderer and native runtime. Seeing an option does not mean the vendor can actually do frame generation. The report separates info and skipped from pass and fail, wraps long native messages, and only says hardware validated after a provider accepted a frame and finished present.
 
-For the detailed backend contracts and remaining implementation work, see
-[BACKENDS.md](docs/architecture/BACKENDS.md).
+See [docs/architecture/BACKENDS.md](docs/architecture/BACKENDS.md) for the real contracts and what is still open.
 
-The packaged AMD component is the signed `amd_fidelityfx_vk.dll` distributed
-with the verified OptiScaler 0.9.4 bundle and used through the public
-FidelityFX Vulkan API. Its license is reproduced in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The AMD part is the signed `amd_fidelityfx_vk.dll` from the verified OptiScaler 0.9.4 bundle, used through the public FidelityFX Vulkan API. License is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-## Deutsch
-
-Experimentelle Fabric-Client-Mod für Minecraft **26.2**. Sie verbindet den
-Vulkan-Renderer von Minecraft mit NVIDIA Streamline und stellt einen
-Capability-basierten Einstellungsbildschirm für NVIDIA DLSS, AMD FSR und Intel
-XeSS bereit.
-
-> Die Mod bleibt experimentell. Ein Backend bleibt deaktiviert, solange
-> native Laufzeit, GPU-Unterstützung oder erforderliche Renderer-Daten fehlen.
-> AMD- und Intel-Anfragen werden niemals an NVIDIA Streamline weitergeleitet.
-
-### Backend-Status
-
-| Backend | Status |
-|---|---|
-| NVIDIA Streamline 2.12 | Echtes DLSS Super Resolution rendert die Welt in der von Streamline gelieferten optimalen Eingabeauflösung und schreibt das Ergebnis in voller Anzeigeauflösung, bevor das HUD nativ gerendert wird. DLSS-G erhält rotierende HUD-lose Farb-/Tiefen-/Motion-Slots plus eine getrennte transparente UI-Ebene. Reflex-Pacing, Resize-Resets und DLSS Ray Reconstruction mit HDR-/Material-Guides sind angebunden und Capability-gesteuert. |
-| Hybride Vulkan→D3D12-Präsentation | Optionaler, Windows-exklusiver Pfad. Minecraft rendert weiter mit Vulkan; gemeinsam genutzte Bilder auf derselben GPU und zwei GPU-Fences übergeben Frames an eine D3D12-Queue und eine DXGI-Flip-Model-Swapchain. Es gibt keine CPU-Kopie im Produktionspfad. Der Pfad ist standardmäßig aus, erfordert einen Neustart und fällt bei fehlenden Fähigkeiten sicher auf Vulkan-WSI zurück. Dieser Transport ist noch kein FG-Provider. |
-| AMD FSR 4 | Die Hybrid-Bridge stellt die D3D12-Transportgrundlage bereit. Im mitgelieferten OptiScaler-/FidelityFX-Paket fehlt jedoch `amd_fidelityfx_framegeneration_dx12.dll`. FSR-4-FG bleibt daher ehrlich nicht verfügbar. |
-| AMD FidelityFX FSR 3.1 | Die signierte FidelityFX-Vulkan-Laufzeit ist enthalten. Proxy-Swapchain sowie Prepare-/Configure-Dispatch erhalten Farbe, Tiefe und dichte Motion Vectors aus dem Renderer. Aktiviert wird erst nach Annahme durch den Provider; Treiber- und Pacing-Tests auf AMD-Hardware stehen noch aus. |
-| Intel XeSS-FG / Intel-GPUs | Der D3D12-Transport ist vorhanden, aber `libxess_fg.dll` und `libxell.dll` fehlen im mitgelieferten Paket. Echtes XeSS-FG bleibt deaktiviert, bis offizielle Runtime, XeLL-Lifecycle und Intel-Proxy-Swapchain vollständig integriert und vom Provider akzeptiert sind. Auf Intel-Hardware bleibt der ausdrücklich benannte **FSR-3.1-Fallback** verfügbar. |
-| Mitgelieferte OptiScaler-0.9.4-Bridge | Auf AMD wählt sie den Vulkan-Upscaler `fsr31`, auf Intel `xess`. Sie wird vor FidelityFX geladen und fängt die standardisierten FFX-Vulkan-Upscaling-Aufrufe der Mod ab. NVIDIA bleibt bei nativem Streamline. Native AA sowie Qualität, Ausgeglichen, Leistung, Ultra-Leistung und Ultra-Qualität verwenden die getrennten Welt-/Anzeigeziele; XeFG wird dadurch unter Vulkan weiterhin nicht verfügbar. |
-| Erweiterbarer Kompatibilitäts-Layer | Die Minecraft-Swapchain-Mixins verwenden eine herstellerneutrale Provider-API mit eindeutigem Lifecycle und exklusivem Present-Besitz. Atomare Frame-Identitäten verhindern das Mischen von Farbe, Tiefe, Motion und Swapchain-Generationen verschiedener Frames. Optionale Renderer-/Material-Schnittstellen bereiten Aperture-Interop vor, ohne heutigen Aperture-Support zu behaupten. |
-| Hybrides Hardware-Raytracing | Mit Vulkan-Beschleunigungsstrukturen und Hardware-Ray-Queries für Blockschatten und Reflexionen umgesetzt. Exakte Block-/Fluid-`VoxelShape`-Boxen, Raster-Tiefenprüfung und Blockänderungs-Invalidierung werden verwendet. Aktivierung nur mit `VK_KHR_acceleration_structure` und `VK_KHR_ray_query`. |
-
-### Build
-
-Für einen sauberen Quellcode-Build unter Windows werden benötigt:
-
-- Java 25;
-- CMake 3.25 oder neuer;
-- Visual Studio 2022 Build Tools mit „Desktop development with C++“ und einem
-  Windows-10/11-SDK.
-
-Das Repository enthält die benötigten Streamline-/FidelityFX-Header und
-weiterverteilbaren Laufzeitdateien. Gradle baut die JNI-Bridge, kompiliert und
-testet die Vulkan-Shader, führt die Unit-Tests aus und erstellt anschließend die
-einzelne Mod-JAR.
-
-```powershell
-.\gradlew.bat build
-```
-
-Die fertige Mod-JAR liegt anschließend unter:
-
-`build/libs/dlss-frame-generation-1.0-SNAPSHOT.jar`
-
-### Quellstruktur und Repository-Integrität
-
-Dies ist eine reine Fabric-Client-Mod mit getrennten Loom-Source-Sets. Der
-gesamte Java-Laufzeitcode gehört deshalb nach `src/client/java`.
-`compileJava NO-SOURCE` in der Gradle-Ausgabe ist erwartetes Verhalten;
-`compileClientJava` kompiliert die eigentliche Mod.
-
-Der Quellbaum ist nach Zuständigkeit gegliedert:
-
-- `client/backend`, `config`, `frame` und `render` enthalten den Kern;
-- `client/render/adapter` enthält rendererspezifische Adapter;
-- `client/interop` enthält Native- und Hersteller-SDK-Anbindungen;
-- `client/motion` und `raytracing` enthalten die GPU-Pipelines;
-- `client/ui/settings` und `ui/diagnostics` enthalten die beiden UI-Bereiche;
-- `native/bridge` ist in `fidelityfx`, `presentation`, `routing` und
-  `streamline` unterteilt;
-- Shader-Quellen sind in `motion` und `raytracing` getrennt;
-- `docs` ist in `user`, `architecture`, `compatibility` und `status` gegliedert.
-
-Der [Dokumentationsindex](docs/README.md) zeigt die gesamte Dokumentstruktur.
-
-Das Repository wurde am 29.07.2026 vollständig geprüft:
-
-- alle 78 Top-Level-Client-Quelldateien befinden sich in der gebauten JAR;
-- beide Fabric-Einstiegspunkte und alle 16 Mixins sind registriert;
-- alle 53 nativen Java-Deklarationen besitzen einen passenden JNI-Export;
-- jede native `.cpp`-Datei ist dem CMake-Target zugeordnet;
-- alle vier Vulkan-Shader werden vom Produktivcode geladen und in Tests
-  kompiliert;
-- die JAR enthält keine doppelten ZIP-Einträge;
-- die unbenutzte Klasse `UltrawideLensCorrector` wurde entfernt.
-
-`RendererIntegration` und `MaterialProvider` besitzen absichtlich noch keine
-aktive Aperture-Implementierung. Sie sind die typisierte, frame-atomare
-Erweiterungsgrenze aus dem
-[Sodium-/Iris-Kompatibilitätsplan](docs/compatibility/SODIUM_IRIS_COMPATIBILITY.md) und keine
-vergessenen Laufzeitklassen. Build-Ausgaben, Entwicklungswelten, IDE-Dateien
-und lokale Logs werden über `.gitignore` ausgeschlossen.
-
-### Mitgeliefertes OptiScaler
-
-Ein separater OptiScaler-Download ist nicht mehr erforderlich. Die Mod-JAR
-enthält die geprüfte v0.9.4-Laufzeit, den GPLv3-Lizenztext, Hinweise zum
-zugehörigen Quellcode, die Lizenzen der Laufzeitabhängigkeiten und ein
-SHA-256-Manifest. Auf AMD/Intel wird sie automatisch in den temporären
-Native-Ordner der Mod entpackt und eingerichtet. Sie ist standardmäßig
-aktiviert; NVIDIA lädt sie nie und bleibt auf Streamline.
-
-Das Hilfsskript bleibt nur für Entwickler erhalten, die bewusst eine externe
-Version verwenden möchten:
-
-```powershell
-.\tools\install-optiscaler.ps1
-```
-
-Eine externe Datei unter
-`config/dlss_fg/optiscaler/OptiScaler.dll` überschreibt die eingebettete
-Version. Der Loader löst Bibliotheks-/Plugin-Pfade auf, aktiviert FFX-Eingaben
-und deaktiviert DXGI- und Streamline-GPU-Spoofing, solange diese Werte noch auf
-`auto` stehen. Explizite eigene Werte bleiben erhalten.
-
-Verwende ausschließlich Releases aus dem
-[offiziellen OptiScaler-Repository](https://github.com/optiscaler/OptiScaler).
-OptiScaler selbst warnt vor der Nutzung in Multiplayer-/Anti-Cheat-Umgebungen.
-
-### Entwicklungsstart mit IntelliJ IDEA
-
-1. Öffne das Projekt als Gradle-Projekt und warte, bis der Gradle-Sync beendet ist.
-2. Wähle oben in der Werkzeugleiste die Startkonfiguration **Minecraft Client**.
-3. Starte diese Konfiguration.
-
-Starte nicht `net.fabricmc.devlaunchinjector.Main.main()` direkt über den
-grünen Pfeil im Editor. Die geteilte Konfiguration **Minecraft Client** setzt
-die benötigte Fabric-/Loom-Startkonfiguration und den Klassenpfad.
-
-Falls IntelliJ eine fehlende `launch.cfg` meldet, führe im Projektordner einmal
-diesen Befehl aus und aktualisiere danach das Gradle-Projekt:
-
-```powershell
-.\gradlew.bat ideaSyncTask
-```
-
-### In-Game-Menü und Debug-Overlay
-
-Öffne den Einstellungsbildschirm über:
-
-`Optionen... → Video Settings... → Frame Generation...`
-
-Der Eintrag befindet sich unten in der scrollbaren Liste der
-Videoeinstellungen. Wenn Mod Menu installiert ist, kann es denselben Bildschirm
-ebenfalls öffnen.
-
-Der Einstellungsbildschirm passt sich kleinen Fenstern an. Mit Mausrad oder den
-Pfeiltasten neben **Fertig** erreichst du alle Optionen.
-
-Die AMD-/Intel-Rekonstruktion bietet jetzt Native AA sowie reduzierte
-Qualitätsmodi. **Dynamische Auflösung** regelt nur das Weltziel eines aktiven
-temporalen Upscalers, mit einer Sicherheitsgrenze von 1/3 der Ausgabeauflösung
-und einstellbaren Ziel-FPS. **Motion-Vector-Unschärfe** läuft nach der
-Rekonstruktion und besitzt eine Stärkeregelung. Der **sichere Auto-Fallback**
-deaktiviert eine sicher nicht verfügbare FG-Anfrage für die Sitzung und rendert
-über Rekonstruktion oder natives Vulkan-Present weiter; inkompatible Vendor-ABIs
-werden niemals vermischt.
-
-Der Mod-Bildschirm besitzt getrennte Bereiche für **Frame Gen** und
-**Graphics**. Graphics enthält die Untertabs **Hardware Raytracing** und
-**Vulkan→D3D12**. Der zweite zeigt den echten Bridge-Zustand, die Adapter-LUID
-und das Runtime-Audit. Sein Schalter wird erst verfügbar, wenn das D3D12-Gerät
-auf derselben GPU und die Vulkan-External-Memory-Fähigkeiten bestätigt sind.
-Auf unterstützter Hardware erledigt der Raytracing-Pfad Folgendes:
-
-- Aktivierung von Acceleration Structures, Ray Queries und Buffer Device
-  Addresses beim Erstellen des Vulkan-Geräts;
-- Umwandlung exakter naher Block- und Fluid-`VoxelShape`-Boxen in eine von der
-  Kamera aus priorisierte, blockfarbige AABB-Szene;
-- Aufbau einer BLAS und TLAS auf der GPU;
-- Verwerfen von Ray-Hits hinter näherer Rastergeometrie und Raytracing von
-  Schatten sowie optionalen Reflexionen vor DLSS und HUD;
-- Erzeugung niedrig aufgelöster HDR-, Albedo-, Specular-, Normal/Roughness-
-  und Specular-Hit-Distance-Guides für DLSS Ray Reconstruction auf
-  unterstützter NVIDIA-Hardware;
-- Kombination des Ergebnisses mit dem weiterhin aktiven Raster-Renderer.
-
-Der Szenenradius ist auf 48 Blöcke begrenzt. `RT Distance` steuert diesen
-Radius, `RT Quality` die Reflexionsreichweite, `RT Samples` die Strahlen für
-weiche Schatten und `RT Stable Sampling` erhöht die Mindestzahl auf vier.
-Nach Bewegung, nahen Blockänderungen und über ein seltenes Sicherheitsintervall
-wird die Szene erneuert. Das ist hybrides Raytracing, kein vollständiges
-Pathtracing.
-
-Auf GPUs ohne Vulkan-Ray-Query-Unterstützung bleiben die Schalter deaktiviert.
-Die GeForce GTX 1660 SUPER stellt zum Beispiel `VK_KHR_ray_query` nicht bereit;
-benötigt wird eine NVIDIA RTX 20-Serie oder neuer beziehungsweise eine
-Vulkan-Ray-Query-fähige AMD-/Intel-GPU.
-
-**Motion Debug** wechselt zwischen `OFF`, `ARROWS`, `HEATMAP` und `RAW PREVIEW`.
-Das Overlay wird nur innerhalb einer geladenen Welt im HUD gerendert – nicht im
-Hauptmenü und nicht im Einstellungsbildschirm. Sobald das renderer-eigene
-Motion-Vector-Bild verfügbar ist, verwenden die Modi einen verzögerten, dünn
-abgetasteten GPU-Readback des echten RG16F-Bildes, sobald dessen Present
-abgeschlossen ist. Ein `vkDeviceWaitIdle` pro Debug-Bild ist nicht mehr nötig.
-Vor dem ersten Readback dient die Kamerabewegungs-Vorschau als Fallback. Die
-Pfeile verwenden die
-Current-to-Previous-Vektoren des SDKs mit korrigierten GUI-Achsen und folgen
-dadurch der Blickrichtung vertikal wie horizontal. RAW Preview kodiert dieselben
-unveränderten Werte als Farben. Die Heatmap zeigt die Bewegungsstärke: Blau ist
-langsam, Grün mittel und Rot schnell.
-
-### Diagnose
-
-Der Einstellungsbildschirm enthält **Run Diagnostics**. Ob ein Backend verfügbar
-ist, hängt von erkannter GPU, Renderer und nativer Laufzeit ab. Eine sichtbare
-Option bedeutet nicht automatisch, dass die Frame Generation aktiviert werden
-kann. Der Bericht trennt Hinweise/übersprungene Prüfungen von Erfolgen und
-Fehlern, bricht lange native Meldungen um und ist scrollbar. „Auf Hardware
-validiert“ erscheint erst, nachdem der Provider einen echten Frame angenommen
-und dessen Präsentation abgeschlossen hat.
-
-Die genauen Backend-Verträge und offenen Arbeiten stehen in
-[BACKENDS.md](docs/architecture/BACKENDS.md).
-
-Enthalten ist die signierte `amd_fidelityfx_vk.dll` aus dem geprüften
-OptiScaler-0.9.4-Paket. Sie wird über die öffentliche FidelityFX-Vulkan-API
-verwendet. Ihre Lizenz steht in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

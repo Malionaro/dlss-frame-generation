@@ -1,143 +1,142 @@
-# Funktionsstatus und Roadmap
+# Feature status and roadmap
 
-Stand: 22. August 2026  
-Getestetes Minecraft-Ziel: **26.2**
+Status: August 22, 2026  
+Tested Minecraft target: **26.2**
 
-Diese Übersicht zeigt, welche Funktionen bereits nachgewiesen funktionieren,
-welche noch echte Hardwaretests benötigen und welche nur vorbereitet oder
-geplant sind. Eine sichtbare Einstellung ist nicht automatisch auf jeder GPU
-verfügbar: Die Mod schaltet Funktionen nur frei, wenn GPU, Treiber, Renderer,
-native Laufzeit und alle benötigten Frame-Daten akzeptiert wurden.
+This overview shows which features have already been proven to work,
+which still need real hardware tests and which are only prepared or
+planned. A visible setting is not automatically available on every GPU:
+The mod only enables features when GPU, driver, renderer,
+native runtime and all required frame data have been accepted.
 
-## Statuslegende
+## Status legend
 
-| Status | Bedeutung |
+| Status | Meaning |
 |---|---|
-| ✅ Getestet | Automatisiert oder auf der genannten Hardware erfolgreich getestet |
-| 🟡 Experimentell | Implementiert und angebunden, aber noch nicht auf allen Ziel-GPUs und Anzeigemodi validiert |
-| 🧩 Grundlage vorhanden | Architektur oder Transport ist vorhanden; der eigentliche Anbieterpfad fehlt noch |
-| 🔒 Nicht verfügbar | Wird absichtlich nicht aktiviert, weil eine technische Voraussetzung oder offizielle Laufzeit fehlt |
-| 📅 Geplant | Noch nicht implementiert |
+| ✅ Tested | Tested successfully in an automated way or on the stated hardware |
+| 🟡 Experimental | Implemented and wired up, but not yet validated on all target GPUs and display modes |
+| 🧩 Foundation present | Architecture or transport exists; the actual provider path is still missing |
+| 🔒 Not available | Intentionally not enabled because a technical requirement or official runtime is missing |
+| 📅 Planned | Not yet implemented |
 
-## Build, Paket und gemeinsame Infrastruktur
+## Build, packaging and shared infrastructure
 
-| Funktion | Status | Aktueller Stand | Noch zu tun |
+| Feature | Status | Current state | Still to do |
 |---|---|---|---|
-| Java-, Native- und Shader-Build | ✅ Getestet | Lokaler Windows-Build und GitHub Actions mit Java 25 erfolgreich | Bei Änderungen weiterhin über CI prüfen |
-| Einzelne Mod-JAR | ✅ Getestet | Java-Code, JNI-Bridge, Shader und zulässige Laufzeitdateien werden gemeinsam verpackt | Release-Build und Versionsnummer für Veröffentlichung festlegen |
-| JNI-Anbindung | ✅ Getestet | Alle 53 Java-Native-Deklarationen besitzen passende JNI-Exports | Neue Native-Funktionen in denselben Prüfungen erfassen |
-| Fabric-Registrierung | ✅ Getestet | Beide Entrypoints und alle 16 Mixins sind registriert | Für neue Minecraft-Versionen erneut prüfen |
-| Provider-Auswahl | ✅ Getestet | Genau ein FG-Provider, ein Upscaler und ein Präsentationspfad dürfen gleichzeitig aktiv sein | Zusätzliche Provider in dieselbe Exklusivitätslogik integrieren |
-| Atomare Frame-Daten | ✅ Getestet | Farbe, Tiefe, Motion, Frame-ID und Swapchain-Generation werden nicht zwischen Frames vermischt | Mit realen Sodium-/Iris-Läufen zusätzlich validieren |
-| Sichere Rückfallebene | ✅ Getestet | Nicht unterstützte Pfade bleiben deaktiviert oder fallen auf normales Vulkan-WSI zurück | Weitere Treiber- und Fehlerfälle sammeln |
+| Java, native and shader build | ✅ Tested | Local Windows build and GitHub Actions with Java 25 successful | Continue to verify via CI when changed |
+| Single mod JAR | ✅ Tested | Java code, JNI bridge, shaders and allowed runtime files are packaged together | Define release build and version number for publication |
+| JNI binding | ✅ Tested | All 53 Java native declarations have matching JNI exports | Cover new native functions in the same checks |
+| Fabric registration | ✅ Tested | Both entrypoints and all 16 mixins are registered | Re-check for new Minecraft versions |
+| Provider selection | ✅ Tested | Exactly one FG provider, one upscaler and one presentation path may be active at the same time | Integrate additional providers into the same exclusivity logic |
+| Atomic frame data | ✅ Tested | Color, depth, motion, frame ID and swapchain generation are not mixed between frames | Additionally validate with real Sodium/Iris runs |
+| Safe fallback | ✅ Tested | Unsupported paths stay disabled or fall back to normal Vulkan WSI | Collect additional driver and error cases |
 
 ## NVIDIA
 
-| Funktion | Status | Aktueller Stand | Noch zu tun |
+| Feature | Status | Current state | Still to do |
 |---|---|---|---|
-| GPU- und Streamline-Erkennung | ✅ Getestet | NVIDIA-Gerät, Streamline-Laufzeit und einzelne Fähigkeiten werden getrennt geprüft | Auf mehreren RTX-Generationen testen |
-| DLSS Super Resolution / DLAA | 🟡 Experimentell | Qualitätsmodi, optimale Renderauflösung, Upscaling vor dem nativen HUD und History-Reset sind angebunden | Bildqualität, Resize, Vollbild und alle Qualitätsmodi auf RTX-Hardware validieren |
-| DLSS Frame Generation | 🟡 Experimentell | Farbe ohne HUD, Tiefe, Motion und getrennte UI-Ebene werden an Streamline übergeben; Aktivstatus erst nach Provider-Annahme | RTX-40-Hardwaretest mit VSync, Tearing, Resize und Vollbild abschließen |
-| NVIDIA Reflex | 🟡 Experimentell | Pacing und Streamline-Reflex-Pfad sind angebunden | Latenz und Marker auf unterstützter RTX-Hardware messen |
-| DLSS Ray Reconstruction | 🟡 Experimentell | DLSS-RR sowie HDR-, Albedo-, Normal-, Roughness- und Hit-Distance-Guides sind verbunden | Qualität und Stabilität zusammen mit Hardware-RT auf RTX testen |
-| GTX-Unterstützung | ✅ Getestet, begrenzt | GTX 1660 SUPER wird korrekt erkannt; nicht vorhandenes DLSS-G und Ray Query werden abgelehnt | Keine Freischaltung nicht unterstützter RTX-Funktionen geplant |
+| GPU and Streamline detection | ✅ Tested | NVIDIA device, Streamline runtime and individual capabilities are checked separately | Test on multiple RTX generations |
+| DLSS Super Resolution / DLAA | 🟡 Experimental | Quality modes, optimal render resolution, upscaling before the native HUD and history reset are wired up | Validate image quality, resize, fullscreen and all quality modes on RTX hardware |
+| DLSS Frame Generation | 🟡 Experimental | Color without HUD, depth, motion and separate UI layer are passed to Streamline; active status only after provider acceptance | Complete RTX 40 hardware test with VSync, tearing, resize and fullscreen |
+| NVIDIA Reflex | 🟡 Experimental | Pacing and Streamline Reflex path are wired up | Measure latency and markers on supported RTX hardware |
+| DLSS Ray Reconstruction | 🟡 Experimental | DLSS-RR and HDR, albedo, normal, roughness and hit distance guides are connected | Test quality and stability together with hardware RT on RTX |
+| GTX support | ✅ Tested, limited | GTX 1660 SUPER is correctly detected; missing DLSS-G and Ray Query are rejected | No plan to enable unsupported RTX features |
 
 ## AMD
 
-| Funktion | Status | Aktueller Stand | Noch zu tun |
+| Feature | Status | Current state | Still to do |
 |---|---|---|---|
-| FSR 3.1 Vulkan Frame Generation | 🟡 Experimentell | Signierte FidelityFX-Vulkan-Laufzeit, Proxy-Swapchain und Prepare-/Configure-Aufrufe sind angebunden | Provider-Annahme, Pacing, Resize, Vollbild und Treiber auf AMD-Hardware validieren |
-| FSR 3.1 Native AA | 🟡 Experimentell | Standardisierte FFX-Eingaben und ein separates Ausgabeziel sind vorhanden | Reale AMD-Bildqualitäts- und Stabilitätstests |
-| FSR-Upscaling unterhalb 1:1 | 🟡 Experimentell | Qualität, Ausgeglichen, Leistung, Ultra-Leistung und Ultra-Qualität verwenden ein reduziertes Weltziel, FFX-Rekonstruktion und ein HUD in Anzeigeauflösung | Bildqualität, Resize und dynamische Auflösung auf AMD-Hardware validieren |
-| FSR 4 Frame Generation | 🔒 Nicht verfügbar | D3D12-Transportgrundlage existiert, aber `amd_fidelityfx_framegeneration_dx12.dll` ist nicht enthalten | Offizielle weiterverteilbare Laufzeit beschaffen, Lizenz prüfen und echten Provider integrieren |
+| FSR 3.1 Vulkan Frame Generation | 🟡 Experimental | Signed FidelityFX Vulkan runtime, proxy swapchain and Prepare/Configure calls are wired up | Validate provider acceptance, pacing, resize, fullscreen and driver on AMD hardware |
+| FSR 3.1 Native AA | 🟡 Experimental | Standardized FFX inputs and a separate output target are present | Real AMD image quality and stability tests |
+| FSR upscaling below 1:1 | 🟡 Experimental | Quality, Balanced, Performance, Ultra Performance and Ultra Quality use a reduced world target, FFX reconstruction and a HUD at display resolution | Validate image quality, resize and dynamic resolution on AMD hardware |
+| FSR 4 Frame Generation | 🔒 Not available | D3D12 transport foundation exists, but `amd_fidelityfx_framegeneration_dx12.dll` is not included | Obtain official redistributable runtime, check license and integrate real provider |
 
 ## Intel
 
-| Funktion | Status | Aktueller Stand | Noch zu tun |
+| Feature | Status | Current state | Still to do |
 |---|---|---|---|
-| XeSS / FSR-Upscaling über OptiScaler | 🟡 Experimentell | OptiScaler wählt auf Intel `xess`; Native AA und reduzierte Qualitätsmodi verwenden getrennte Welt-/Anzeigeziele | Auf Intel Arc mit Resize und allen Qualitätsmodi testen |
-| FSR 3.1 Fallback auf Intel | 🟡 Experimentell | Explizit benannter, herstellerübergreifender Vulkan-Proxy-Pfad ist angebunden | Provider-Annahme, Pacing und Resize auf Intel Arc validieren |
-| Intel XeSS Frame Generation | 🔒 Nicht verfügbar | D3D12-Präsentationsgrundlage existiert, aber `libxess_fg.dll` und `libxell.dll` fehlen | Offizielle Laufzeiten, XeLL-Lifecycle und Intel-Proxy-Swapchain integrieren |
+| XeSS / FSR upscaling via OptiScaler | 🟡 Experimental | OptiScaler selects `xess` on Intel; Native AA and reduced quality modes use separate world/display targets | Test on Intel Arc with resize and all quality modes |
+| FSR 3.1 fallback on Intel | 🟡 Experimental | Explicitly named, cross-vendor Vulkan proxy path is wired up | Validate provider acceptance, pacing and resize on Intel Arc |
+| Intel XeSS Frame Generation | 🔒 Not available | D3D12 presentation foundation exists, but `libxess_fg.dll` and `libxell.dll` are missing | Integrate official runtimes, XeLL lifecycle and Intel proxy swapchain |
 
 ## OptiScaler
 
-| Funktion | Status | Aktueller Stand | Noch zu tun |
+| Feature | Status | Current state | Still to do |
 |---|---|---|---|
-| OptiScaler 0.9.4 in der JAR | ✅ Getestet | Runtime, Lizenz, Hashmanifest und Quellcodehinweise werden mitgeliefert und automatisch entpackt | Bei Updates Version, Hashes und Lizenzen erneut prüfen |
-| Automatische Anbieterauswahl | ✅ Getestet | AMD verwendet standardmäßig `fsr31`, Intel `xess`, NVIDIA bleibt auf Streamline | Weitere zulässige Provider nur nach echten Laufzeittests ergänzen |
-| OptiScaler Frame Generation | 🔒 Nicht verfügbar | Die eigenen OptiScaler-FG-Hooks bleiben deaktiviert, damit nur ein Präsentationsbesitzer existiert | Nur neu bewerten, wenn ein sicherer, exklusiver Vulkan-Pfad verfügbar wird |
+| OptiScaler 0.9.4 in the JAR | ✅ Tested | Runtime, license, hash manifest and source notes are bundled and extracted automatically | Re-check version, hashes and licenses on updates |
+| Automatic provider selection | ✅ Tested | AMD defaults to `fsr31`, Intel to `xess`, NVIDIA stays on Streamline | Add further allowed providers only after real runtime tests |
+| OptiScaler Frame Generation | 🔒 Not available | OptiScaler's own FG hooks stay disabled so only one presentation owner exists | Re-evaluate only when a safe, exclusive Vulkan path becomes available |
 
-## Rendering, Motion und Raytracing
+## Rendering, motion and ray tracing
 
-| Funktion | Status | Aktueller Stand | Noch zu tun |
+| Feature | Status | Current state | Still to do |
 |---|---|---|---|
-| Dichte Motion Vectors | ✅ Getestet, mit Einschränkung | Reversed-Z, Current-to-Previous, positive Y-Richtung nach unten und getrennte Jitter-Daten sind festgelegt | Volle Bewegungsdaten für einzelne Entities statt temporaler Bildschätzung ergänzen |
-| Motion-Debug: Pfeile | ✅ Getestet | Kamera-Vorschau und verzögerter GPU-Readback verwenden korrigierte horizontale und vertikale Achsen | Auf weiteren Seitenverhältnissen und GPUs visuell prüfen |
-| Motion-Debug: Heatmap | ✅ Getestet | Blau, Grün und Rot zeigen zunehmende lokale Bewegungsstärke | Legende optional direkt im Overlay ergänzen |
-| Motion-Debug: Raw Preview | ✅ Getestet | Unveränderte Motion-Werte werden farbcodiert angezeigt | Zusätzliche Zahlenanzeige für Entwickler optional ergänzen |
-| Motion-Vector-Unschärfe | 🟡 Experimentell | Ein Vulkan-Compute-Pass tastet das rekonstruierte Bild entlang der dichten Motion Vectors ab; Stärke und Samples sind begrenzt, unbekannte Ausgabeformate fallen sicher zurück | Bildqualität und GPU-Kosten auf mehreren Auflösungen validieren |
-| Dynamische Auflösung | 🟡 Experimentell | Geglättete Framezeiten, Hysterese und ausgerichtete Weltziele regeln schrittweise auf die Ziel-FPS; benötigt einen aktiven temporalen Upscaler | Auf NVIDIA-, AMD- und Intel-Hardware abstimmen |
-| Sicherer Auto-Fallback | ✅ Getestete Policy | Bei sicher bekannter Nichtverfügbarkeit von FG wird sitzungsbezogen auf Rekonstruktion oder natives Vulkan-Present zurückgefallen, ohne Vendor-ABIs zu vermischen | Zusätzliche echte Provider nur nach Lizenz- und Hardwaretests aufnehmen |
-| Tiefendaten | ✅ Getestet | Tiefe gehört atomar zum Frame und verwendet die dokumentierte Reversed-Z-Konvention | Mit allen Renderer-/Resize-Kombinationen weiter prüfen |
-| Hybrides Vulkan-Raytracing | 🟡 Experimentell | BLAS/TLAS, Ray Queries, Blockschatten, Reflexionen, Raster-Tiefenprüfung und Szenen-Invalidierung sind implementiert | Auf RTX sowie Ray-Query-fähigen AMD-/Intel-GPUs validieren und optimieren |
-| Vollständiges Path Tracing | 📅 Geplant / kein aktueller Umfang | Derzeit bleibt der Raster-Renderer aktiv und das RT-Ergebnis wird darübergelegt | Nur als separates größeres Renderer-Projekt umsetzen |
-| Vulkan → D3D12 Präsentation | ✅ Getestet, begrenzt | Zero-Copy-Transport auf derselben GPU, gemeinsame Fences, DXGI-Flip-Swapchain, Resize und sauberer Fallback wurden auf GTX 1660 SUPER getestet | RTX-/AMD-/Intel-Tests sowie HDR-Unterstützung ergänzen |
-| HDR im D3D12-Präsentationspfad | 🔒 Nicht verfügbar | Der Produktionspfad unterstützt momentan SDR; nicht unterstützte HDR-Formate fallen auf Vulkan zurück | HDR-Formate, Farbräume und Tone-Mapping-Lifecycle implementieren |
+| Dense motion vectors | ✅ Tested, with limitation | Reversed-Z, current-to-previous, positive Y downward and separate jitter data are defined | Add full motion data for individual entities instead of temporal estimation |
+| Motion debug: arrows | ✅ Tested | Camera preview and delayed GPU readback use corrected horizontal and vertical axes | Visually verify on additional aspect ratios and GPUs |
+| Motion debug: heatmap | ✅ Tested | Blue, green and red show increasing local motion strength | Optionally add legend directly in the overlay |
+| Motion debug: raw preview | ✅ Tested | Unmodified motion values are shown color-coded | Optionally add additional numeric display for developers |
+| Motion vector blur | 🟡 Experimental | A Vulkan compute pass samples the reconstructed image along dense motion vectors; strength and samples are limited, unknown output formats fall back safely | Validate image quality and GPU cost at multiple resolutions |
+| Dynamic resolution | 🟡 Experimental | Smoothed frame times, hysteresis and aligned world targets gradually regulate toward the target FPS; requires an active temporal upscaler | Tune on NVIDIA, AMD and Intel hardware |
+| Safe auto fallback | ✅ Tested policy | When FG is known to be unavailable, the session falls back to reconstruction or native Vulkan present without mixing vendor ABIs | Include additional real providers only after license and hardware tests |
+| Depth data | ✅ Tested | Depth belongs atomically to the frame and uses the documented reversed-Z convention | Continue to verify with all renderer/resize combinations |
+| Hybrid Vulkan ray tracing | 🟡 Experimental | BLAS/TLAS, ray queries, block shadows, reflections, raster depth test and scene invalidation are implemented | Validate and optimize on RTX and ray-query-capable AMD/Intel GPUs |
+| Full path tracing | 📅 Planned / out of current scope | The raster renderer currently stays active and the RT result is composited on top | Implement only as a separate, larger renderer project |
+| Vulkan -> D3D12 presentation | ✅ Tested, limited | Zero-copy transport on the same GPU, shared fences, DXGI flip swapchain, resize and clean fallback were tested on GTX 1660 SUPER | Add RTX/AMD/Intel tests and HDR support |
+| HDR in the D3D12 presentation path | 🔒 Not available | The production path currently supports SDR; unsupported HDR formats fall back to Vulkan | Implement HDR formats, color spaces and tone mapping lifecycle |
 
-## Oberfläche und Diagnose
+## UI and diagnostics
 
-| Funktion | Status | Aktueller Stand | Noch zu tun |
+| Feature | Status | Current state | Still to do |
 |---|---|---|---|
-| Menü unter Videoeinstellungen | ✅ Getestet | Die Mod-Einstellungen sind über die Videoeinstellungen und optional über Mod Menu erreichbar | Weitere Mod-Menü-Kombinationen prüfen |
-| Kleine Fenster und GUI-Skalierung | ✅ Getestet | Inhalt ist scrollbar; Navigationsknöpfe bleiben erreichbar | Zusätzliche Auflösungen und Sprachlängen testen |
-| Gegenseitige FG-Sperren | ✅ Getestet | Unvereinbare Frame-Generation- und Präsentationsoptionen können nicht gleichzeitig aktiviert werden | Neue Provider in die Konfliktmatrix aufnehmen |
-| Diagnosebildschirm | ✅ Getestet | Ergebnisse besitzen sichtbaren Text, Statusfarben, Umbruch und Scrollfunktion | Weitere verständliche Lösungshinweise für seltene Treiberfehler ergänzen |
-| Laufzeitstatus und Ablehnungsgrund | ✅ Getestet | Hardware-Unterstützung, Runtime-Bereitschaft und echte Provider-Annahme werden getrennt angezeigt | Zusätzliche Provider-Fehlercodes übersetzen |
-| Sprachunterstützung | 🟡 Experimentell | Zentrale Bedienelemente und Beschreibungen sind lokalisiert | Alle neuen Statusmeldungen vollständig in jede unterstützte Sprache übertragen |
+| Menu under video settings | ✅ Tested | Mod settings are accessible via video settings and optionally via Mod Menu | Check additional Mod Menu combinations |
+| Small windows and GUI scale | ✅ Tested | Content is scrollable; navigation buttons stay reachable | Test additional resolutions and language lengths |
+| Mutual FG locks | ✅ Tested | Incompatible frame generation and presentation options cannot be enabled at the same time | Add new providers to the conflict matrix |
+| Diagnostics screen | ✅ Tested | Results have visible text, status colors, wrapping and scrolling | Add further user-friendly hints for rare driver errors |
+| Runtime status and rejection reason | ✅ Tested | Hardware support, runtime readiness and real provider acceptance are shown separately | Translate additional provider error codes |
+| Language support | 🟡 Experimental | Core controls and descriptions are localized | Translate all new status messages completely into every supported language |
 
-## Renderer- und Mod-Kompatibilität
+## Renderer and mod compatibility
 
-| Kombination | Status | Aktueller Stand | Noch zu tun |
+| Combination | Status | Current state | Still to do |
 |---|---|---|---|
-| Vanilla Minecraft 26.2 + Vulkan | ✅ Getestete Zielarchitektur | Aktuell kompilierter und getesteter Hauptpfad | Breitere GPU-/Treiber-Matrix testen |
-| Sodium 0.9.1 + Vulkan | 🟡 Experimentell | Verwendet öffentliche Mojang-Vulkan-Ressourcen statt instabiler privater Sodium-Klassen | Echten Mod-JAR-Lauf mit Resize, Reload und Vulkan-Validierung abschließen |
-| Iris installiert + Vulkan, Shaderpack aus | 🟡 Experimentell | Soll denselben Vulkan-Pfad wie Sodium verwenden; Iris-Zustand wird erkannt | Echten Iris-1.11.2-Mod-JAR-Lauf validieren |
-| Aktives Iris-Shaderpack / OpenGL | 🔒 Nicht verfügbar | Die benötigten finalen Bilder sind OpenGL- statt Vulkan-Ressourcen | Nur mit einer separaten OpenGL-/Iris-Ressourcenintegration möglich |
-| Aperture-Materialdaten | 🧩 Grundlage vorhanden | `RendererIntegration` und `MaterialProvider` definieren einen frame-atomaren Vertrag | Einen echten Aperture-Provider und dessen Material-/Synchronisationspfad implementieren |
-| Minecraft 26.3 | 🧩 Grundlage vorhanden | Als nächstes Ziel dokumentiert, aber nicht als aktuell getestet behauptet | Rendererklassen, Mixins, Framegrenzen und ABI getrennt prüfen und versionieren |
+| Vanilla Minecraft 26.2 + Vulkan | ✅ Tested target architecture | Currently compiled and tested main path | Test broader GPU/driver matrix |
+| Sodium 0.9.1 + Vulkan | 🟡 Experimental | Uses public Mojang Vulkan resources instead of unstable private Sodium classes | Complete real mod JAR run with resize, reload and Vulkan validation |
+| Iris installed + Vulkan, shader pack off | 🟡 Experimental | Should use the same Vulkan path as Sodium; Iris state is detected | Validate real Iris 1.11.2 mod JAR run |
+| Active Iris shader pack / OpenGL | 🔒 Not available | Required final images are OpenGL resources instead of Vulkan resources | Only possible with a separate OpenGL/Iris resource integration |
+| Aperture material data | 🧩 Foundation present | `RendererIntegration` and `MaterialProvider` define a frame-atomic contract | Implement a real Aperture provider and its material/synchronization path |
+| Minecraft 26.3 | 🧩 Foundation present | Documented as the next target, but not claimed as currently tested | Check and version renderer classes, mixins, frame boundaries and ABI separately |
 
-## 2026-08-22 Fix-Runde
+## 2026-08-22 Fix round
 
-- H1: Drain mit `finally` + Timeout meldet jetzt FAILED statt zu blockieren.
-- H2: Jitter ist im Mode 0 konsequent 0.
-- H3: Vendor-Switch läuft über eine eigene UI-Layer.
-- H4: Composite-Fallback greift, wenn die Komposition verweigert wird.
-- H5: Pipeline-Leak behoben.
-- K1/K2: Fence-Stubs entfernt bzw. sauber ersetzt.
-- OOM-Latch führt jetzt zu Retry statt dauerhafter Sperrung.
-- `configVersion=2` plus atomares Speichern der Konfiguration.
-- Mixin-Level auf JAVA_21 angehoben.
-- JNI Exception-Hygiene nachgezogen.
-- D3D12-Deadlock-Fix im Hybrid-Pfad.
-- OptiScaler: externer SHA256-Check vor der Nutzung.
-- copyNative: Ninja-Pfad-Fix im Build.
-- RT: Dirty-Chunk-Budget begrenzt Raytracing-Rebuilds pro Frame.
-- DRS: adaptive Schritte für dynamische Auflösung.
+- H1: Drain with `finally` + timeout now reports FAILED instead of blocking.
+- H2: Jitter is consistently 0 in mode 0.
+- H3: Vendor switch runs via a dedicated UI layer.
+- H4: Composite fallback applies when composition is refused.
+- H5: Pipeline leak fixed.
+- K1/K2: Fence stubs removed or cleanly replaced.
+- OOM latch now leads to retry instead of permanent lockout.
+- `configVersion=2` plus atomic config save.
+- Mixin level raised to JAVA_21.
+- JNI exception hygiene tightened.
+- D3D12 deadlock fix in hybrid path.
+- OptiScaler: external SHA256 check before use.
+- copyNative: Ninja path fix in build.
+- RT: Dirty chunk budget limits ray tracing rebuilds per frame.
+- DRS: adaptive steps for dynamic resolution.
 
-## Empfohlene nächste Schritte
+## Recommended next steps
 
-1. NVIDIA DLSS-G, DLSS-RR, Reflex und den D3D12-Pfad auf einer RTX-40-GPU
-   mit Resize, VSync, Tearing und Vollbild validieren.
-2. FSR 3.1 Frame Generation und Pacing auf einer AMD-GPU validieren.
-3. XeSS Native AA sowie den benannten FSR-3.1-Fallback auf Intel Arc validieren.
-4. Sodium 0.9.1 und Iris 1.11.2 als echte Mod-JARs in einer reproduzierbaren
-   Testinstanz prüfen.
-5. Dynamische Auflösung und Motion Blur auf NVIDIA-, AMD- und Intel-Hardware abstimmen.
-6. Separate, versionsgeschützte Minecraft-26.3-Hooks erstellen.
-7. Erst nach Erhalt und Lizenzprüfung der offiziellen Anbieterdateien FSR 4 FG
-   oder XeSS-FG implementieren.
+1. Validate NVIDIA DLSS-G, DLSS-RR, Reflex and the D3D12 path on an RTX 40 GPU
+   with resize, VSync, tearing and fullscreen.
+2. Validate FSR 3.1 Frame Generation and pacing on an AMD GPU.
+3. Validate XeSS Native AA and the named FSR 3.1 fallback on Intel Arc.
+4. Check Sodium 0.9.1 and Iris 1.11.2 as real mod JARs in a reproducible
+   test instance.
+5. Tune dynamic resolution and motion blur on NVIDIA, AMD and Intel hardware.
+6. Create separate, version-protected Minecraft 26.3 hooks.
+7. Implement FSR 4 FG or XeSS FG only after receiving and checking the license for the official vendor files.
 
-Weitere technische Einzelheiten stehen in
+Further technical details are in
 [BACKENDS.md](../architecture/BACKENDS.md),
-[CAPABILITY_AUDIT.md](../architecture/CAPABILITY_AUDIT.md) und
+[CAPABILITY_AUDIT.md](../architecture/CAPABILITY_AUDIT.md) and
 [SODIUM_IRIS_COMPATIBILITY.md](../compatibility/SODIUM_IRIS_COMPATIBILITY.md).
