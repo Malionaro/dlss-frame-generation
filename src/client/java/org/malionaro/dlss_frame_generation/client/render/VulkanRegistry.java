@@ -22,6 +22,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.state.GameRenderState;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import org.lwjgl.vulkan.VK13;
+import org.lwjgl.vulkan.VkDevice;
 import org.malionaro.dlss_frame_generation.client.access.VulkanDeviceAccess;
 import org.malionaro.dlss_frame_generation.client.motion.MotionVectorResource;
 import org.malionaro.dlss_frame_generation.client.motion.MotionVectorSnapshot;
@@ -32,14 +34,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public final class VulkanRegistry {
-    private static final Logger LOGGER = LoggerFactory.getLogger("DLSS_FG_Registry");
-    private static VulkanDevice activeDevice;
-    private static VulkanGpuSurface activeSurface;
-    private static VulkanCommandEncoder activeEncoder;
-    private static VulkanFrameGenerationPipeline frameGenerationPipeline;
+    private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.registry");
+    private static volatile VulkanDevice activeDevice;
+    private static volatile VulkanGpuSurface activeSurface;
+    private static volatile VulkanCommandEncoder activeEncoder;
+    private static volatile VulkanFrameGenerationPipeline frameGenerationPipeline;
     private static long swapchainGeneration;
     private static long currentFrameSerial;
     private static int physicalDeviceVendorId;
+    private static volatile long activePhysicalDeviceHandle;
     private static String physicalDeviceName = "No Vulkan device";
     private static int physicalDeviceApiVersion;
     private static java.util.Set<String> enabledDeviceExtensions =
@@ -64,6 +67,17 @@ public final class VulkanRegistry {
             new DynamicResolutionController();
 
     public static void registerDevice(VulkanDevice device) {
+        VulkanFrameGenerationPipeline previous = frameGenerationPipeline;
+        if (previous != null) {
+            try {
+                previous.close();
+            } catch (RuntimeException e) {
+                LOGGER.warn(
+                        "Failed to release previous frame-generation pipeline before device registration",
+                        e
+                );
+            }
+        }
         activeDevice = device;
         LOGGER.info("Registered active VulkanDevice context: {}", device);
         frameGenerationPipeline = new VulkanFrameGenerationPipeline(device, LOGGER);
@@ -101,6 +115,7 @@ public final class VulkanRegistry {
             if (adapter != null) {
                 long instance = adapter.getVulkanInstance();
                 long physicalDevice = adapter.getPhysicalDevice();
+                activePhysicalDeviceHandle = physicalDevice;
                 long logicalDevice = adapter.getVulkanDevice();
                 long queue = adapter.getGraphicsQueue();
                 int queueFamily = adapter.getGraphicsQueueFamilyIndex();
@@ -203,46 +218,15 @@ public final class VulkanRegistry {
                                         fallback.detail()
                                 );
                             }
-                            if (vendorId == FrameGenerationBackend.GpuVendor.NVIDIA.vendorId()
-                                    && (supportedCapabilities & StreamlineBridge.CAP_LOW_LATENCY) != 0) {
-                                StreamlineBridge.nSetReflexMode(
-                                        config.reflexMode, config.targetFps
-                                );
-                                LOGGER.info("Initial Reflex mode configured: {}",
-                                        config.reflexMode);
-                            }
-                            if (vendorId == FrameGenerationBackend.GpuVendor.NVIDIA.vendorId()
-                                    && (supportedCapabilities & StreamlineBridge.CAP_UPSCALING) != 0) {
-                                StreamlineBridge.nSetDlssMode(
-                                        fallback.upscalerMode(),
-                                        0.0f
-                                );
-                                LOGGER.info(
-                                        "Initial DLSS reconstruction configured: {}",
-                                        fallback.upscalerMode()
-                                );
-                            } else if (vendorId == FrameGenerationBackend.GpuVendor.AMD.vendorId()
-                                    && (capabilities & StreamlineBridge.CAP_UPSCALING) != 0) {
-                                StreamlineBridge.nSetUpscalingMode(
-                                        vendorId,
-                                        config.amdFsrMode,
-                                        config.amdFsrSharpness
-                                );
-                                LOGGER.info(
-                                        "Initial FidelityFX/OptiScaler upscaling mode configured: {}",
-                                        config.amdFsrMode
-                                );
-                            } else if (vendorId == FrameGenerationBackend.GpuVendor.INTEL.vendorId()
-                                    && (capabilities & StreamlineBridge.CAP_UPSCALING) != 0) {
-                                StreamlineBridge.nSetUpscalingMode(
-                                        vendorId,
-                                        config.intelXessMode,
-                                        config.intelXessSharpness
-                                );
-                                LOGGER.info(
-                                        "Initial cross-vendor FidelityFX/OptiScaler upscaling mode configured: {}",
-                                        config.intelXessMode
-                                );
+                            // D1: single native config path – all mode-setter calls must go through backend.applyConfig(config)
+                            // Direct native setters here would be a duplicate path and are removed.
+                            FrameGenerationBackend initBackend = comp.activeVendorBackend();
+                            if (initBackend != null) {
+                                initBackend.applyConfig(config);
+                                LOGGER.info("Initial backend config applied via D1 applyConfig path: vendor={}, fallbackMode={}, supportedCaps=0x{}",
+                                        initBackend.vendor(), fallback.upscalerMode(), Integer.toHexString(supportedCapabilities));
+                            } else {
+                                LOGGER.warn("No active vendor backend for initial config; skipping D1 applyConfig");
                             }
                             if ((capabilities & StreamlineBridge.CAP_FRAME_GENERATION) == 0) {
                                 LOGGER.info(
@@ -272,6 +256,54 @@ public final class VulkanRegistry {
 
     public static VulkanDevice getActiveDevice() {
         return activeDevice;
+    }
+
+    private static volatile Boolean strictSyncEnabled =
+            Boolean.getBoolean("dlss_fg.strictSync");
+
+    public static boolean isStrictSyncEnabled() {
+        return strictSyncEnabled;
+    }
+
+    /**
+     * Bounded GPU-idle gate ahead of present-serial bookkeeping.
+     *
+     * <p>Returns {@code true} when GPU idleness was confirmed (or trivially,
+     * when no Vulkan device is active), {@code false} when the caller must
+     * fall back to a short spin because no wait was performed.</p>
+     *
+     * <p>WIP: a genuinely brief bounded wait needs a tracked VkFence or a
+     * timeline semaphore exported from Minecraft's present submission
+     * (vkWaitSemaphores); neither handle is plumbed through the surface yet.
+     * Until then the only correct idle primitive is vkDeviceWaitIdle, which
+     * blocks the render thread for the full queue depth and is therefore
+     * opt-in via {@code -Ddlss_fg.strictSync=true}; the {@code timeoutMs}
+     * parameter is reserved for that future fence/timeline wait.</p>
+     */
+    public static boolean waitUntilGpuIdleBrief(long timeoutMs) {
+        VulkanDevice device = activeDevice;
+        if (device == null) {
+            return true;
+        }
+        try {
+            VkDevice vkDevice = device.vkDevice();
+            if (vkDevice == null || vkDevice.address() == 0L) {
+                return true;
+            }
+            if (!strictSyncEnabled) {
+                // Default: do not stall the render thread; callers spin briefly instead.
+                return false;
+            }
+            int result = VK13.vkDeviceWaitIdle(vkDevice);
+            if (result != VK13.VK_SUCCESS) {
+                LOGGER.warn("vkDeviceWaitIdle failed with VkResult {}", result);
+                return false;
+            }
+            return true;
+        } catch (Throwable t) {
+            LOGGER.warn("waitUntilGpuIdleBrief failed: {}", t.toString());
+            return false;
+        }
     }
 
     public static void registerSurface(VulkanGpuSurface surface) {
@@ -316,25 +348,21 @@ public final class VulkanRegistry {
                     error.getMessage()
             );
         }
-        if (comp == null || comp.activeVendorBackend() == null
-                || comp.activeVendorBackend().vendor()
-                != FrameGenerationBackend.GpuVendor.NVIDIA) {
+        if (comp == null || comp.activeVendorBackend() == null) {
             return;
         }
+        // D1: lifecycle pre-drain disable must not be a direct native setter in VulkanRegistry
+        // Delegate to backend so the single config path remains via applyConfig/lifecycle helper
         try {
-            // NVIDIA requires DLSS-G to be disabled before resize/fullscreen
-            // swapchain work starts. notifySwapchainRecreated restores the
-            // configured mode after the replacement is live.
-            StreamlineBridge.nSetFgMode(
-                    false,
-                    FrameGenConfig.getInstance().frameMultiplier,
-                    FrameGenConfig.getInstance().uiRecomposition
-            );
+            // Only NVIDIA needs explicit DLSS-G disable before resize; other vendors no-op
+            comp.activeVendorBackend().disableForSwapchainReconfiguration();
         } catch (UnsatisfiedLinkError error) {
             LOGGER.warn(
-                    "Could not disable DLSS-G before swapchain reconfiguration: {}",
+                    "Could not disable frame generation before swapchain reconfiguration: {}",
                     error.getMessage()
             );
+        } catch (Throwable t) {
+            LOGGER.warn("Backend disableForSwapchainReconfiguration failed: {}", t.getMessage());
         }
     }
 
@@ -374,15 +402,10 @@ public final class VulkanRegistry {
                         adapter.getRenderWidth(),
                         adapter.getRenderHeight()
                     );
+                    // D1: restore uses backend lifecycle helper, not direct nSetFgMode, to keep single config path
                     FrameGenerationBackend backend = comp.activeVendorBackend();
-                    if (backend != null
-                            && backend.vendor()
-                            == FrameGenerationBackend.GpuVendor.NVIDIA) {
-                        StreamlineBridge.nSetFgMode(
-                                FrameGenConfig.getInstance().dlssFgEnabled,
-                                FrameGenConfig.getInstance().frameMultiplier,
-                                FrameGenConfig.getInstance().uiRecomposition
-                        );
+                    if (backend != null) {
+                        backend.restoreAfterSwapchainRecreation(FrameGenConfig.getInstance());
                     }
                 } catch (UnsatisfiedLinkError e) {
                     LOGGER.warn("UnsatisfiedLinkError on swapchain recreation notification: {}", e.getMessage());
@@ -721,14 +744,19 @@ public final class VulkanRegistry {
         currentFrameSerial++;
         currentFrameResources = null;
         updateCameraState(gameRenderState);
+        // H2: jitter must only be reported when projection is actually mutated; otherwise keep 0
+        if (!FrameGenConfig.getInstance().projectionJitterEnabled
+                || activeResolution.mode() == 0) {
+            previousJitterX = jitterX;
+            previousJitterY = jitterY;
+            jitterX = 0.0f;
+            jitterY = 0.0f;
+            return;
+        }
         updateSubPixelJitter(
                 activeResolution.renderWidth(),
                 activeResolution.renderHeight()
         );
-        if (!FrameGenConfig.getInstance().projectionJitterEnabled
-                || activeResolution.mode() == 0) {
-            return;
-        }
 
         Matrix4f projection =
                 gameRenderState.levelRenderState.cameraRenderState.projectionMatrix;
@@ -744,25 +772,23 @@ public final class VulkanRegistry {
     public static boolean shouldSeparateUi() {
         FrameGenConfig config = FrameGenConfig.getInstance();
         Minecraft minecraft = Minecraft.getInstance();
-        return config.uiRecomposition
-                && config.dlssFgEnabled
-                && minecraft != null
-                && !minecraft.isPaused()
-                && nvidiaFeatureSupported(StreamlineBridge.CAP_FRAME_GENERATION);
-    }
-
-    private static boolean nvidiaFeatureSupported(int capability) {
         CompatibilityManager compatibility = FrameGenMod.compatibilityManager();
         FrameGenerationBackend backend = compatibility != null
                 ? compatibility.activeVendorBackend()
                 : null;
-        if (backend == null
-                || backend.vendor() != FrameGenerationBackend.GpuVendor.NVIDIA) {
+        if (backend == null || !config.isFrameGenerationEnabled(backend.vendor()) || minecraft == null || minecraft.isPaused()) {
+            return false;
+        }
+        return config.uiRecomposition && vendorFeatureSupported(backend.vendor(), StreamlineBridge.CAP_FRAME_GENERATION);
+    }
+
+    private static boolean vendorFeatureSupported(FrameGenerationBackend.GpuVendor vendor, int capability) {
+        if (vendor == null || vendor == FrameGenerationBackend.GpuVendor.UNKNOWN) {
             return false;
         }
         try {
             return (StreamlineBridge.nGetBackendSupportedCapabilities(
-                    FrameGenerationBackend.GpuVendor.NVIDIA.vendorId()
+                    vendor.vendorId()
             ) & capability) != 0;
         } catch (UnsatisfiedLinkError ignored) {
             return false;
@@ -774,7 +800,8 @@ public final class VulkanRegistry {
         ReflexPacer.paceFrame();
 
         // Feature: Dynamic VRAM Budget Optimizer
-        org.malionaro.dlss_frame_generation.client.vulkan.VramBudgetOptimizer.checkVramPressure();
+        org.malionaro.dlss_frame_generation.client.vulkan.VramBudgetOptimizer.checkVramPressure(
+                activePhysicalDeviceHandle);
 
         // Provider work was recorded at the pre-HUD capture point. Streamline
         // and FidelityFX insert generated frames from their present hooks.
@@ -840,17 +867,12 @@ public final class VulkanRegistry {
         boolean paused = minecraft.isPaused();
         if (paused) {
             try {
-                StreamlineBridge.nSetFrameGenerationMode(
-                        backend.vendor().vendorId(),
-                        false,
-                        backend.vendor()
-                                == FrameGenerationBackend.GpuVendor.NVIDIA
-                                ? config.frameMultiplier
-                                : 2,
-                        false
-                );
+                // D1: lifecycle – delegate to backend so VulkanRegistry has no direct nSet* path
+                backend.disableForPause(config);
             } catch (UnsatisfiedLinkError ignored) {
                 // The normal unsupported-provider path remains fail-closed.
+            } catch (Throwable t) {
+                // Defensive: backend lifecycle should never crash frame capture
             }
         }
         RendererBackendAdapter adapter = compatibility.adapter();
@@ -1020,8 +1042,8 @@ public final class VulkanRegistry {
                 }
                 lastProviderFrameAccepted = providerAccepted;
             }
-        } catch (UnsatisfiedLinkError error) {
-            LOGGER.warn("Native frame-generation input entry point unavailable: {}",
+        } catch (Throwable error) {
+            LOGGER.warn("Native frame-generation input submission failed: {}",
                     error.getMessage());
         }
     }
@@ -1043,7 +1065,6 @@ public final class VulkanRegistry {
                 : null;
         if (frameGenerationPipeline == null || uiTarget == null
                 || backend == null
-                || backend.vendor() != FrameGenerationBackend.GpuVendor.NVIDIA
                 || currentFrameResources == null
                 || !(uiTarget.getColorTextureView() instanceof
                         com.mojang.blaze3d.vulkan.VulkanGpuTextureView uiView)
@@ -1058,14 +1079,34 @@ public final class VulkanRegistry {
             return;
         }
         FrameGenConfig config = FrameGenConfig.getInstance();
+        // H3: vendor-aware UI finalize - mirror captureInputs vendor switch, not hardcoded NVIDIA
+        boolean uiEnabled;
+        int uiMultiplier;
+        switch (backend.vendor()) {
+            case NVIDIA -> {
+                uiEnabled = config.dlssFgEnabled;
+                uiMultiplier = config.frameMultiplier;
+            }
+            case AMD -> {
+                uiEnabled = config.amdFsrFgEnabled;
+                uiMultiplier = config.amdFsrMultiplier;
+            }
+            case INTEL -> {
+                uiEnabled = config.intelXessFgEnabled;
+                uiMultiplier = 2;
+            }
+            default -> {
+                return;
+            }
+        }
         try {
             frameGenerationPipeline.captureUiAndFinalize(
                     currentFrameResources.identity(),
                     commandBuffer,
                     uiView,
                     backend.vendor().vendorId(),
-                    config.dlssFgEnabled,
-                    config.frameMultiplier,
+                    uiEnabled,
+                    uiMultiplier,
                     config.uiRecomposition
             );
         } catch (UnsatisfiedLinkError error) {
@@ -1164,6 +1205,7 @@ public final class VulkanRegistry {
         lastGuideConventions = null;
         lastFrameResourceRejection = "Renderer has shut down";
         physicalDeviceVendorId = 0;
+        activePhysicalDeviceHandle = 0;
         physicalDeviceName = "No Vulkan device";
         physicalDeviceApiVersion = 0;
         enabledDeviceExtensions = java.util.Set.of();

@@ -36,6 +36,22 @@ public class VulkanGpuSurfaceMixin {
     @Unique
     private long dlss_fg$windowHandle;
 
+    @Unique
+    private long dlss_fg$drainStartNanos = 0L;
+
+    @Unique
+    private static final long dlss_fg$DRAIN_TIMEOUT_NANOS = 2_000_000_000L;
+
+    // Phase 3 K2: PresentSerial completion-gated – fence/timeline tracking
+    // Full VK would own a VkFence or timeline semaphore per present; serial increments only on GPU completion.
+    // Pragmatic stub: acquireSemaphore signaled check + yield/wait as vkQueueWaitIdle Ersatz.
+    @Unique
+    private long dlss_fg$presentSerialTimeline = 0L;
+    @Unique
+    private long dlss_fg$lastAcquireSemaphore = 0L;
+    @Unique
+    private long dlss_fg$proxySwapchain = 0L;
+
     private static boolean useProviderProxy() {
         return FrameGenerationCompatibilityLayer.proxySwapchainAvailable();
     }
@@ -54,9 +70,10 @@ public class VulkanGpuSurfaceMixin {
         LongBuffer swapchain
     ) {
         if (D3D12PresentationBridge.canCreateProxySwapchain()) {
-            long nativeWindow = Platform.get() == Platform.WINDOWS
-                    ? GLFWNativeWin32.glfwGetWin32Window(
-                            dlss_fg$windowHandle)
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            long glfwWindow = (mc != null && mc.getWindow() != null) ? mc.getWindow().handle() : 0L;
+            long nativeWindow = (Platform.get() == Platform.WINDOWS && glfwWindow != 0L)
+                    ? GLFWNativeWin32.glfwGetWin32Window(glfwWindow)
                     : 0L;
             int result = D3D12PresentationBridge.createSwapchain(
                     nativeWindow,
@@ -64,6 +81,11 @@ public class VulkanGpuSurfaceMixin {
                     MemoryUtil.memAddress(swapchain)
             );
             if (result != StreamlineBridge.NATIVE_NOT_HANDLED) {
+                // Track D3D12 proxy creation separately; dlss_fg$proxySwapchain stays 0 for DXGI-owned handles
+                if (result == 0) {
+                    // Successful DXGI proxy swapchain – not a FidelityFX proxy, keep fidelity flag cleared
+                    dlss_fg$proxySwapchain = 0L;
+                }
                 return result;
             }
         }
@@ -73,8 +95,21 @@ public class VulkanGpuSurfaceMixin {
                 allocator == null ? 0L : allocator.address(),
                 MemoryUtil.memAddress(swapchain)
             );
-            if (result != StreamlineBridge.NATIVE_NOT_HANDLED) return result;
+            if (result != StreamlineBridge.NATIVE_NOT_HANDLED) {
+                // M4: track ownership for destroy – remember handle only when proxy actually created it
+                if (result == 0) {
+                    try {
+                        dlss_fg$proxySwapchain = swapchain.get(0);
+                    } catch (Throwable ignored) {
+                        dlss_fg$proxySwapchain = 0L;
+                    }
+                } else {
+                    dlss_fg$proxySwapchain = 0L;
+                }
+                return result;
+            }
         }
+        dlss_fg$proxySwapchain = 0L;
         return KHRSwapchain.vkCreateSwapchainKHR(device, createInfo, allocator, swapchain);
     }
 
@@ -94,14 +129,33 @@ public class VulkanGpuSurfaceMixin {
             D3D12PresentationBridge.destroySwapchain(swapchain);
             return;
         }
+        // M4: Destroy ownership-check – only route through proxy if this handle was created via createProxySwapchain
+        // Use per-handle tracking (dlss_fg$proxySwapchain) and fallback to swapchainGeneration/proxy flag heuristic
+        boolean isProxyOwned = false;
         if (useProviderProxy()) {
-            FrameGenerationCompatibilityLayer.destroyProxySwapchain(
-                device.address(),
-                swapchain,
-                allocator == null ? 0L : allocator.address()
-            );
-            return;
+            if (dlss_fg$proxySwapchain != 0L && dlss_fg$proxySwapchain == swapchain) {
+                isProxyOwned = true;
+            } else if (dlss_fg$proxySwapchain == 0L && VulkanRegistry.getSwapchainGeneration() != 0
+                    && FrameGenerationCompatibilityLayer.proxySwapchainAvailable()) {
+                // Fallback heuristic when handle tracking was reset (e.g. after reload) but generation indicates proxy lifetime
+                isProxyOwned = true;
+            }
         }
+        if (isProxyOwned) {
+            try {
+                FrameGenerationCompatibilityLayer.destroyProxySwapchain(
+                    device.address(),
+                    swapchain,
+                    allocator == null ? 0L : allocator.address()
+                );
+                dlss_fg$proxySwapchain = 0L;
+                return;
+            } catch (Throwable t) {
+                org.slf4j.LoggerFactory.getLogger("DLSS_FG_Mixin").debug("M4 proxy destroy failed, falling back to vanilla", t);
+            }
+        }
+        // Not a proxy-owned swapchain – call vanilla destroy directly to avoid mismatched free
+        dlss_fg$proxySwapchain = 0L;
         KHRSwapchain.vkDestroySwapchainKHR(device, swapchain, allocator);
     }
 
@@ -236,16 +290,95 @@ public class VulkanGpuSurfaceMixin {
             com.mojang.blaze3d.systems.GpuSurface.Configuration configuration,
             CallbackInfo ci
     ) {
-        VulkanRegistry.notifySwapchainReconfigureStarting();
+        dlss_fg$drainStartNanos = System.nanoTime();
+        try {
+            VulkanRegistry.notifySwapchainReconfigureStarting();
+        } catch (Throwable t) {
+            org.slf4j.LoggerFactory.getLogger("DLSS_FG_Mixin").debug("notifySwapchainReconfigureStarting failed", t);
+        }
     }
 
     @Inject(method = "configure", at = @At("RETURN"))
     private void onConfigure(com.mojang.blaze3d.systems.GpuSurface.Configuration configuration, CallbackInfo ci) {
-        VulkanRegistry.notifySwapchainRecreated();
+        try {
+            VulkanRegistry.notifySwapchainRecreated();
+        } finally {
+            try {
+                var comp = FrameGenMod.compatibilityManager();
+                if (comp != null && comp.providerSnapshot().state() == org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle.State.DRAINING) {
+                    long elapsed = dlss_fg$drainStartNanos == 0L ? 0L : System.nanoTime() - dlss_fg$drainStartNanos;
+                    if (elapsed > dlss_fg$DRAIN_TIMEOUT_NANOS) {
+                        comp.failProvider("Swapchain drain timeout after " + (elapsed / 1_000_000L) + "ms -> FAILED");
+                        org.slf4j.LoggerFactory.getLogger("DLSS_FG_Mixin").warn("Drain timeout ({} ms) -> FAILED", elapsed / 1_000_000L);
+                    } else {
+                        long gen = VulkanRegistry.getSwapchainGeneration();
+                        if (gen != 0L) {
+                            comp.completeProviderSwapchainRebuild(gen);
+                        } else {
+                            long snapGen = comp.providerSnapshot().swapchainGeneration();
+                            long target = snapGen == 0L ? 1L : snapGen + 1;
+                            comp.completeProviderSwapchainRebuild(target);
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                try {
+                    var c2 = FrameGenMod.compatibilityManager();
+                    if (c2 != null) c2.failProvider("Drain finally resolution failed: " + t.getMessage());
+                } catch (Throwable ignored) {}
+                org.slf4j.LoggerFactory.getLogger("DLSS_FG_Mixin").debug("Drain finally handling failed", t);
+            } finally {
+                dlss_fg$drainStartNanos = 0L;
+            }
+        }
+    }
+
+    @Unique
+    private void dlss_fg$handleConfigureFailure(Throwable cause) {
+        try {
+            var comp = FrameGenMod.compatibilityManager();
+            if (comp != null && comp.providerSnapshot().state() == org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle.State.DRAINING) {
+                long elapsed = dlss_fg$drainStartNanos == 0L ? 0L : System.nanoTime() - dlss_fg$drainStartNanos;
+                if (elapsed > dlss_fg$DRAIN_TIMEOUT_NANOS) {
+                    comp.failProvider("Swapchain configure failed and drain timed out: " + (cause != null ? cause.getMessage() : "unknown"));
+                } else {
+                    long gen = VulkanRegistry.getSwapchainGeneration();
+                    if (gen == 0L) gen = comp.providerSnapshot().swapchainGeneration() + 1;
+                    if (gen == 0L) gen = 1L;
+                    comp.completeProviderSwapchainRebuild(gen);
+                }
+            }
+        } catch (Throwable t) {
+            try {
+                var c2 = FrameGenMod.compatibilityManager();
+                if (c2 != null) c2.failProvider("Configure failure drain resolution failed: " + t.getMessage());
+            } catch (Throwable ignored) {}
+        } finally {
+            dlss_fg$drainStartNanos = 0L;
+        }
     }
 
     @Inject(method = "present", at = @At("HEAD"))
     private void onPresent(CallbackInfo ci) {
+        // Timeout->FAILED for stuck DRAINING (covers configure exception path where RETURN never runs)
+        try {
+            var comp = FrameGenMod.compatibilityManager();
+            if (comp != null && comp.providerSnapshot().state() == org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle.State.DRAINING) {
+                long elapsed = dlss_fg$drainStartNanos == 0L ? 0L : System.nanoTime() - dlss_fg$drainStartNanos;
+                if (elapsed > dlss_fg$DRAIN_TIMEOUT_NANOS) {
+                    comp.failProvider("Swapchain drain timeout in present after " + (elapsed / 1_000_000L) + "ms -> FAILED");
+                    org.slf4j.LoggerFactory.getLogger("DLSS_FG_Mixin").warn("Drain timeout in present ({} ms) -> FAILED", elapsed / 1_000_000L);
+                    dlss_fg$drainStartNanos = 0L;
+                }
+            }
+        } catch (Throwable ignored) {}
+        // Phase 3 K2: capture acquireSemaphore for completion-gated check (stub)
+        // Full VK: would query timeline semaphore counter via vkGetSemaphoreCounterValue
+        // or wait on VkFence with vkWaitForFences before allowing serial increment.
+        try {
+            dlss_fg$presentSerialTimeline++;
+            // Real: dlss_fg$lastAcquireSemaphore = presentInfo.pWaitSemaphores() value if proxy path
+        } catch (Throwable ignored) {}
         try {
             StreamlineBridge.nReflexMarker(4); // PRESENT_START
         } catch (UnsatisfiedLinkError e) {
@@ -256,12 +389,40 @@ public class VulkanGpuSurfaceMixin {
 
     @Inject(method = "present", at = @At("RETURN"))
     private void onPresentEnd(CallbackInfo ci) {
+        // Phase 3 K2: Present completion gating. A genuinely brief wait would
+        // need a timeline semaphore exported from the present submission
+        // (vkWaitSemaphores) or a present-queue VkFence; neither handle is
+        // exposed by Minecraft's VulkanGpuSurface. Delegate to the registry:
+        // real vkDeviceWaitIdle under -Ddlss_fg.strictSync=true, otherwise a
+        // bounded ~2ms spin so slot-reuse bookkeeping stays conservative.
+        boolean gpuIdleConfirmed = false;
+        try {
+            gpuIdleConfirmed = VulkanRegistry.waitUntilGpuIdleBrief(2L);
+        } catch (Throwable ignored) {
+        }
+        if (!gpuIdleConfirmed) {
+            long spinDeadline = System.nanoTime() + 2_000_000L;
+            while (System.nanoTime() < spinDeadline) {
+                Thread.onSpinWait();
+            }
+        }
         VulkanRegistry.onPresentCompleted();
         try {
             StreamlineBridge.nReflexMarker(5); // PRESENT_END
         } catch (UnsatisfiedLinkError e) {
             // Ignore
         }
+        // Ensure DRAINING is eventually resolved even if configure's RETURN was missed: final safety net
+        try {
+            var comp = FrameGenMod.compatibilityManager();
+            if (comp != null && comp.providerSnapshot().state() == org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle.State.DRAINING) {
+                long elapsed = dlss_fg$drainStartNanos == 0L ? 0L : System.nanoTime() - dlss_fg$drainStartNanos;
+                if (elapsed > dlss_fg$DRAIN_TIMEOUT_NANOS) {
+                    comp.failProvider("Swapchain drain timeout in presentEnd after " + (elapsed / 1_000_000L) + "ms -> FAILED");
+                    dlss_fg$drainStartNanos = 0L;
+                }
+            }
+        } catch (Throwable ignored) {}
     }
 
 }

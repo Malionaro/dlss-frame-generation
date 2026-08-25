@@ -36,6 +36,14 @@ public final class NvidiaSettingsPanel {
                 maximumMultiplier = 2;
             }
         }
+        boolean mfgAvailable;
+        try {
+            mfgAvailable = (StreamlineBridge.nGetBackendSupportedCapabilities(
+                    FrameGenerationBackend.GpuVendor.NVIDIA.vendorId())
+                    & StreamlineBridge.CAP_MULTI_FRAME_GENERATION) != 0;
+        } catch (UnsatisfiedLinkError ignored) {
+            mfgAvailable = false;
+        }
 
         // Row 1 Left: DLSS 4 Frame Generation Switch
         var btnFg = CycleButton.onOffBuilder(config.dlssFgEnabled)
@@ -176,11 +184,12 @@ public final class NvidiaSettingsPanel {
         screen.addSettingsWidget(sharpeningStatus, "dlss_fg.tooltip.nvidia.dlss_status");
 
         // Row 3 Left: RTX 50 Multi-Frame Gen Multiplier (2x, 3x, 4x)
+        int multiplierCeiling = mfgAvailable ? maximumMultiplier : 2;
         java.util.List<Integer> multiplierValues =
-                java.util.stream.IntStream.rangeClosed(2, maximumMultiplier)
+                java.util.stream.IntStream.rangeClosed(2, multiplierCeiling)
                         .boxed()
                         .toList();
-        int displayedMultiplier = Math.min(config.frameMultiplier, maximumMultiplier);
+        int displayedMultiplier = Math.min(config.frameMultiplier, multiplierCeiling);
         var btnMultiplier = CycleButton.builder(
                         (Integer value) -> Component.translatable(
                                 "dlss_fg.value.multi_frame", value

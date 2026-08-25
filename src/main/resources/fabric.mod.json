@@ -7,8 +7,11 @@
   "authors": [
     "Malionaro"
   ],
-  "icon": "assets/dlss_fg/icon.png",
-  "contact": {},
+  "contact": {
+    "homepage": "https://github.com/Malionaro/dlss-frame-generation",
+    "sources": "https://github.com/Malionaro/dlss-frame-generation",
+    "issues": "https://github.com/Malionaro/dlss-frame-generation/issues"
+  },
   "license": "All-Rights-Reserved",
   "environment": "client",
   "entrypoints": {
@@ -27,12 +30,12 @@
   ],
   "depends": {
     "fabricloader": ">=${loader_version}",
-    "fabric-api": "*",
+    "fabric-api": ">=0.155.2",
     "minecraft": "${minecraft_version}"
   },
   "suggests": {
-    "sodium": "*",
-    "iris": "*",
-    "modmenu": "*"
+    "sodium": ">=0.9.1",
+    "iris": ">=1.11.2",
+    "modmenu": ">=20.0.1"
   }
 }

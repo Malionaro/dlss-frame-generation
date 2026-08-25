@@ -3,9 +3,11 @@ package org.malionaro.dlss_frame_generation.client.mixin;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.MainTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.state.GameRenderState;
 import org.joml.Vector4f;
+import org.malionaro.dlss_frame_generation.client.render.CompositeFallbackPolicy;
 import org.malionaro.dlss_frame_generation.client.render.NvidiaDlssRenderResolution;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
@@ -32,7 +34,7 @@ public class GameRendererMixin {
     @Unique private boolean dlss_fg$separateUiForFrame;
 
     @Inject(method = "render", at = @At("HEAD"))
-    private void onRenderStart(CallbackInfo ci) {
+    private void onRenderStart(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
         if (dlss_fg$displayTarget != null) {
             // A previous frame always hands control back to Minecraft with the
             // display target active. Enforce that invariant before vanilla's
@@ -49,7 +51,7 @@ public class GameRendererMixin {
     }
 
     @Inject(method = "render", at = @At("RETURN"))
-    private void onRenderEnd(CallbackInfo ci) {
+    private void onRenderEnd(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
         if (dlss_fg$displayTarget != null) {
             mainRenderTarget = dlss_fg$displayTarget;
         }
@@ -67,7 +69,7 @@ public class GameRendererMixin {
             target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel(Lnet/minecraft/client/DeltaTracker;)V"
         )
     )
-    private void prepareReducedResolutionWorld(CallbackInfo ci) {
+    private void prepareReducedResolutionWorld(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
         dlss_fg$displayTarget = mainRenderTarget;
         NvidiaDlssRenderResolution.Resolution resolution =
                 VulkanRegistry.resolveWorldResolution(
@@ -104,6 +106,19 @@ public class GameRendererMixin {
         VulkanRegistry.beginWorldFrame(gameRenderState);
     }
 
+    @Unique
+    private void dlss_fg$copyWorldToDisplay(RenderTarget src, RenderTarget dst) {
+        if (src == null || dst == null || src == dst) return;
+        if (src.getColorTextureView() == null || dst.getColorTextureView() == null) return;
+        if (src.getDepthTextureView() == null || dst.getDepthTextureView() == null) return;
+        try {
+            // Vanilla outline blit handles both same-size copy and reduced-resolution upscale.
+            src.blitAndBlendToTexture(dst.getColorTextureView(), dst.getDepthTextureView());
+        } catch (Throwable t) {
+            org.slf4j.LoggerFactory.getLogger("DLSS_FG_Mixin").debug("H4 fallback blit failed", t);
+        }
+    }
+
     @Inject(
         method = "render",
         at = @At(
@@ -111,7 +126,7 @@ public class GameRendererMixin {
             target = "Lcom/mojang/blaze3d/systems/CommandEncoder;clearDepthTexture(Lcom/mojang/blaze3d/textures/GpuTexture;D)V"
         )
     )
-    private void captureSceneBeforeHud(CallbackInfo ci) {
+    private void captureSceneBeforeHud(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
         RenderTarget worldTarget = dlss_fg$worldTargetForFrame != null
                 ? dlss_fg$worldTargetForFrame
                 : mainRenderTarget;
@@ -124,6 +139,17 @@ public class GameRendererMixin {
                 displayTarget,
                 dlss_fg$separateUiForFrame
         );
+
+        // H4: guaranteed composite fallback – if capture bailed (no CmdBuffer, slot busy, validation fail)
+        // and we are rendering at reduced resolution, blit worldTarget -> displayTarget via Java so HUD never composites over black.
+        boolean frameResourcesCaptured = VulkanRegistry.getCurrentFrameResources() != null;
+        boolean worldTargetDiffersFromDisplay = worldTarget != displayTarget
+                && worldTarget.getColorTexture() != null
+                && displayTarget.getColorTexture() != null;
+        if (CompositeFallbackPolicy.evaluate(frameResourcesCaptured, worldTargetDiffersFromDisplay)
+                == CompositeFallbackPolicy.Decision.FALLBACK_BLIT_REQUIRED) {
+            dlss_fg$copyWorldToDisplay(worldTarget, displayTarget);
+        }
 
         if (dlss_fg$separateUiForFrame) {
             if (dlss_fg$uiTarget == null) {
@@ -156,7 +182,7 @@ public class GameRendererMixin {
             shift = At.Shift.AFTER
         )
     )
-    private void compositeFullResolutionUi(CallbackInfo ci) {
+    private void compositeFullResolutionUi(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
         if (!dlss_fg$separateUiForFrame
                 || dlss_fg$uiTarget == null
                 || dlss_fg$displayTarget == null) {

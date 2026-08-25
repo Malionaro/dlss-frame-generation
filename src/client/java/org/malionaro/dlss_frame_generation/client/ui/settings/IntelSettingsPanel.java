@@ -58,33 +58,15 @@ public final class IntelSettingsPanel {
         );
 
         // FSR 3.1 inserts one interpolated frame and therefore exposes 2x only.
-        var btnMfg = CycleButton.builder(
-                        (Integer value) -> Component.translatable(
-                                "dlss_fg.value.multiplier", value
-                        ),
-                        config.intelXessMfgMultiplier)
-                .withValues(2)
-                .create(rightX, topY, columnWidth, 20,
-                        Component.translatable("dlss_fg.option.fsr.fg_factor"), (button, value) -> {
-                            config.intelXessMfgMultiplier = value;
-                            config.save();
-                            try {
-                                StreamlineBridge.nSetFrameGenerationMode(FrameGenerationBackend.GpuVendor.INTEL.vendorId(), config.intelXessFgEnabled, value, config.uiRecomposition);
-                            } catch (UnsatisfiedLinkError e) {
-                                // Ignore
-                            }
-                        });
-        btnMfg.active = fsrFallbackReady
-                && config.intelXessFgEnabled
-                && !frameGenerationConflict
-                && !config.hybridD3D12PresentationEnabled;
-        screen.addSettingsWidget(
-                btnMfg,
-                screen.frameGenerationDependentTooltip(
-                        FrameGenerationBackend.GpuVendor.INTEL,
-                        "dlss_fg.tooltip.fsr.fg_factor"
-                )
-        );
+        // The multiplier is shown as a read-only fixed value instead of a
+        // cycle button.
+        var lblMfgFixed = net.minecraft.client.gui.components.Button.builder(
+                        Component.translatable("dlss_fg.option.frame_multiplier_fixed", 2),
+                        button -> {})
+                .bounds(rightX, topY, columnWidth, 20)
+                .build();
+        lblMfgFixed.active = false;
+        screen.addSettingsWidget(lblMfgFixed, "dlss_fg.tooltip.frame_multiplier_fixed");
 
         // OptiScaler consumes the standard FFX Vulkan input on Intel. The
         // renderer-owned world target can run below the display resolution.

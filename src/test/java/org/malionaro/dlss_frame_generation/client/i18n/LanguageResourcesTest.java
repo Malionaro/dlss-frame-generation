@@ -24,7 +24,7 @@ class LanguageResourcesTest {
             Pattern.compile(
                     "dlss_fg\\.(?:video_settings|screen|section|tab|tooltip|"
                             + "option|value|status|diagnostics|osd|motion_debug)"
-                            + "[a-zA-Z0-9_.]*"
+                            + "\\.[a-zA-Z0-9_.]+"
             );
 
     @Test

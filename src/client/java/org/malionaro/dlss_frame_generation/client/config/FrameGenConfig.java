@@ -10,9 +10,10 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 public class FrameGenConfig {
-    private static final Logger LOGGER = LoggerFactory.getLogger("FrameGen_Config");
+    private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.config");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static Path getConfigPath() {
         try {
@@ -25,7 +26,9 @@ public class FrameGenConfig {
         return Path.of("build", "tmp", "frame_gen.json");
     }
 
-    private static FrameGenConfig instance;
+    private static volatile FrameGenConfig instance;
+
+    public int configVersion = 2;
 
     public enum Preset {
         CUSTOM("Custom"),
@@ -88,6 +91,13 @@ public class FrameGenConfig {
 
     public void applyPreset(Preset preset) {
         this.activePreset = preset;
+        FrameGenerationBackend.GpuVendor vendor = selectedFrameGenerationVendor();
+        if (vendor == FrameGenerationBackend.GpuVendor.UNKNOWN) {
+            vendor = selectedUpscalerVendor();
+        }
+        if (vendor == FrameGenerationBackend.GpuVendor.UNKNOWN) {
+            vendor = FrameGenerationBackend.GpuVendor.NVIDIA;
+        }
         switch (preset) {
             case ESPORTS -> {
                 this.reflexMode = 2; // Reflex + Boost
@@ -95,64 +105,73 @@ public class FrameGenConfig {
                 this.reflexInputMarkerEnabled = true;
                 this.targetFps = 240;
                 this.motionBlurEnabled = false;
-                setUpscalerMode(
-                        FrameGenerationBackend.GpuVendor.NVIDIA, 1
-                ); // DLAA at native resolution
+                setUpscalerMode(vendor, 1); // Native AA at native resolution
                 this.projectionJitterEnabled = true;
+                // Keep DRS and motion blur off for esports, low latency matters most.
+                this.drsEnabled = false;
             }
             case CINEMA -> {
                 this.dlaaEnabled = true;
                 this.hdrEnabled = true;
                 this.motionBlurEnabled = true;
                 this.motionBlurIntensity = 0.6f;
-                setUpscalerMode(
-                        FrameGenerationBackend.GpuVendor.NVIDIA, 2
-                ); // Quality
+                setUpscalerMode(vendor, 2); // Quality
                 this.projectionJitterEnabled = true;
+                // Cinema needs quality, so DRS stays off.
+                this.drsEnabled = false;
             }
             case MAX_PERFORMANCE -> {
+                // Only enable FG when a vendor is already selected.
                 FrameGenerationBackend.GpuVendor selectedVendor =
                         selectedFrameGenerationVendor();
                 if (selectedVendor
                         != FrameGenerationBackend.GpuVendor.UNKNOWN) {
                     setFrameGenerationEnabled(selectedVendor, true);
+                } else {
+                    LOGGER.warn("applyPreset MAX_PERFORMANCE skipped frame-generation enable - no vendor selected");
+                    // No silent fallback to NVIDIA. Preset stays, sanitize checks later if FG is really active.
                 }
                 this.frameMultiplier = 4; // 4x MFG
                 this.amdFsrMultiplier = 2;
                 this.intelXessMfgMultiplier = 2;
-                setUpscalerMode(
-                        FrameGenerationBackend.GpuVendor.NVIDIA, 4
-                ); // Performance
+                setUpscalerMode(vendor, 4); // Performance
                 this.projectionJitterEnabled = true;
                 this.drsEnabled = true;
                 this.targetFps = 144;
+                // P2-01: drs/motionBlur cross-validate - Performance will kein MotionBlur
+                this.motionBlurEnabled = false;
             }
             case CUSTOM -> {}
         }
+        // Clamp UI values after applying a preset. Target is 30 to 360, intensity 0 to 1.
+        this.targetFps = clamp(this.targetFps, 30, 360);
+        this.motionBlurIntensity = clamp(this.motionBlurIntensity, 0.0f, 1.0f);
+        this.motionBlurSamples = clamp(this.motionBlurSamples, 1, 64);
+        sanitize();
         save();
     }
 
-    // Next-Gen Feature 1: Vulkan Motion Vector Driven Motion Blur
+    // Motion blur from dense Vulkan motion vectors.
     public boolean motionBlurEnabled = false;
     public float motionBlurIntensity = 0.5f;
     public int motionBlurSamples = 8;
 
-    // Next-Gen Feature 2: DLAA/DLSS projection-matrix jitter. The selected
-    // Halton sample is injected into Minecraft's world projection before the
-    // world render and reported to Streamline in pixel space.
+    // Projection jitter for DLAA/DLSS. The selected Halton sample goes into
+    // Minecraft's world projection before the world render and is reported to
+    // Streamline in pixel space.
     public boolean dlaaEnabled = false;
     public boolean projectionJitterEnabled = true;
 
-    // Next-Gen Feature 3: Auto-Reflex Latency Pacing
+    // Pacing to keep Reflex at the target frame rate.
     public boolean reflexPacingEnabled = true;
 
-    // Next-Level Feature 1: Auto-HDR Tone Mapping
+    // HDR tone mapping.
     public boolean hdrEnabled = false;
 
-    // Next-Level Feature 2: In-Game Performance Benchmark OSD
+    // On-screen performance overlay.
     public boolean osdEnabled = false;
 
-    // Next-Level Feature 3: Dynamic Resolution Scaling (DRS) Target Lock
+    // Dynamic resolution scaling target.
     public boolean drsEnabled = false;
     public int targetFps = 144;
 
@@ -167,8 +186,12 @@ public class FrameGenConfig {
     public RayTracingQuality rayTracingQuality = RayTracingQuality.MEDIUM;
     public int rayTracingMaxDistance = 48;
     public int rayTracingRaysPerPixel = 1;
-    // Kept under its original JSON field name for config compatibility. This
-    // is stable multi-sampling (minimum four rays), not a temporal denoiser.
+    /**
+     * Legacy JSON field name retained for compatibility.
+     * Despite the name, this controls stable multi-sampling (minimum four rays
+     * when enabled) and not a temporal denoiser. Default {@code true} preserves
+     * historic behaviour where stable sampling is on.
+     */
     public boolean rayTracingDenoiserEnabled = true;
 
     // NVIDIA Streamline options. The runtime-reported maximum multiplier is
@@ -178,8 +201,12 @@ public class FrameGenConfig {
     // 0 Off, 1 DLAA, 2 Quality, 3 Balanced, 4 Performance,
     // 5 Ultra Performance, 6 Ultra Quality.
     public int dlssUpscalingMode = 0;
-    // Retained only to read older config files. Streamline's DLSS sharpness
-    // option is deprecated and is no longer exposed or applied.
+    /**
+     * @deprecated Streamline's DLSS sharpness option is deprecated and no longer
+     * exposed or applied. Retained only to read older config files; sanitize
+     * clamps to 0..1 and the value is otherwise unused.
+     */
+    @Deprecated(since = "1.0", forRemoval = false)
     public float dlssSharpness = 0.0f;
     public int frameMultiplier = 2; // 2x, 3x or 4x when reported by the driver
 
@@ -380,7 +407,7 @@ public class FrameGenConfig {
                 || oldIntelMode != intelXessMode;
     }
 
-    public static FrameGenConfig getInstance() {
+    public static synchronized FrameGenConfig getInstance() {
         if (instance == null) {
             instance = load();
         }
@@ -393,11 +420,19 @@ public class FrameGenConfig {
             try (var reader = Files.newBufferedReader(path)) {
                 FrameGenConfig config = GSON.fromJson(reader, FrameGenConfig.class);
                 if (config != null) {
+                    config.migrateIfNeeded();
                     config.sanitize();
                     return config;
                 }
-            } catch (IOException e) {
+            } catch (IOException | RuntimeException e) {
                 LOGGER.error("Failed to load Frame Generation config, using defaults", e);
+                try {
+                    Path backup = path.resolveSibling(path.getFileName() + ".bak");
+                    Files.move(path, backup, StandardCopyOption.REPLACE_EXISTING);
+                    LOGGER.warn("Corrupt config moved to backup: {}", backup);
+                } catch (IOException moveEx) {
+                    LOGGER.error("Failed to backup corrupt config", moveEx);
+                }
             }
         }
         FrameGenConfig defaultConfig = new FrameGenConfig();
@@ -405,51 +440,110 @@ public class FrameGenConfig {
         return defaultConfig;
     }
 
+    private void migrateIfNeeded() {
+        if (configVersion < 2) {
+            // Migration stub for configVersion 2: sanitize will clamp/normalize new fields
+            configVersion = 2;
+        }
+    }
+
     public void sanitize() {
-        if (activePreset == null) activePreset = Preset.CUSTOM;
-        if (rayTracingMode == null) rayTracingMode = RayTracingMode.OFF;
-        if (rayTracingQuality == null) rayTracingQuality = RayTracingQuality.MEDIUM;
+        if (activePreset == null) {
+            LOGGER.warn("Sanitize: activePreset was null, resetting to CUSTOM");
+            activePreset = Preset.CUSTOM;
+        }
+        if (rayTracingMode == null) {
+            LOGGER.warn("Sanitize: rayTracingMode was null, resetting to OFF");
+            rayTracingMode = RayTracingMode.OFF;
+        }
+        if (rayTracingQuality == null) {
+            LOGGER.warn("Sanitize: rayTracingQuality was null, resetting to MEDIUM");
+            rayTracingQuality = RayTracingQuality.MEDIUM;
+        }
         if (activeVendorId != 0
                 && activeVendorId != FrameGenerationBackend.GpuVendor.NVIDIA.vendorId()
                 && activeVendorId != FrameGenerationBackend.GpuVendor.AMD.vendorId()
                 && activeVendorId != FrameGenerationBackend.GpuVendor.INTEL.vendorId()) {
+            LOGGER.warn("Sanitize: activeVendorId {} is invalid, resetting to Auto (0)", activeVendorId);
             activeVendorId = 0;
         }
         if (activeVendorId != 0) {
-            retainFrameGenerationForVendor(
+            boolean changed = retainFrameGenerationForVendor(
                     FrameGenerationBackend.GpuVendor.fromVendorId(
                             activeVendorId
                     )
             );
+            if (changed) {
+                LOGGER.warn("Sanitize: removed incompatible frame-generation flags for activeVendorId {}", activeVendorId);
+            }
         } else {
             int enabledFrameGenerators = (dlssFgEnabled ? 1 : 0)
                     + (amdFsrFgEnabled ? 1 : 0)
                     + (intelXessFgEnabled ? 1 : 0);
             if (enabledFrameGenerators > 1) {
-                // An auto-detected device cannot safely pick between multiple
-                // saved presentation owners before VkPhysicalDevice exists.
-                setFrameGenerationEnabled(
-                        FrameGenerationBackend.GpuVendor.UNKNOWN,
-                        false
-                );
+                LOGGER.warn("Sanitize: multiple frame-generation providers enabled in Auto mode ({}), preferring NVIDIA", enabledFrameGenerators);
+                if (dlssFgEnabled) {
+                    amdFsrFgEnabled = false;
+                    intelXessFgEnabled = false;
+                } else if (amdFsrFgEnabled) {
+                    dlssFgEnabled = false;
+                    intelXessFgEnabled = false;
+                } else if (intelXessFgEnabled) {
+                    dlssFgEnabled = false;
+                    amdFsrFgEnabled = false;
+                } else {
+                    setFrameGenerationEnabled(
+                            FrameGenerationBackend.GpuVendor.UNKNOWN,
+                            false
+                    );
+                }
             }
         }
         if (hybridD3D12PresentationEnabled) {
+            if (dlssFgEnabled || amdFsrFgEnabled || intelXessFgEnabled) {
+                LOGGER.warn("Sanitize: hybridD3D12PresentationEnabled is true, disabling all frame-generation providers");
+            }
             setFrameGenerationEnabled(
                     FrameGenerationBackend.GpuVendor.UNKNOWN, false);
         }
+        int oldReflex = reflexMode;
         reflexMode = clamp(reflexMode, 0, 2);
+        if (oldReflex != reflexMode) {
+            LOGGER.warn("Sanitize: reflexMode clamped from {} to {}", oldReflex, reflexMode);
+        }
+        int oldDlssMode = dlssUpscalingMode;
         dlssUpscalingMode = clamp(dlssUpscalingMode, 0, 6);
+        if (oldDlssMode != dlssUpscalingMode) {
+            LOGGER.warn("Sanitize: dlssUpscalingMode clamped from {} to {}", oldDlssMode, dlssUpscalingMode);
+        }
+        int oldAmdMode = amdFsrMode;
         amdFsrMode = clamp(amdFsrMode, 0, 6);
+        if (oldAmdMode != amdFsrMode) {
+            LOGGER.warn("Sanitize: amdFsrMode clamped from {} to {}", oldAmdMode, amdFsrMode);
+        }
+        int oldIntelMode = intelXessMode;
         intelXessMode = clamp(intelXessMode, 0, 6);
+        if (oldIntelMode != intelXessMode) {
+            LOGGER.warn("Sanitize: intelXessMode clamped from {} to {}", oldIntelMode, intelXessMode);
+        }
         int enabledUpscalers = (dlssUpscalingMode == 0 ? 0 : 1)
                 + (amdFsrMode == 0 ? 0 : 1)
                 + (intelXessMode == 0 ? 0 : 1);
         if (enabledUpscalers > 1) {
+            LOGGER.warn("Sanitize: multiple upscalers enabled (dlss={}, amd={}, intel={}) with activeVendorId={}, resolving", dlssUpscalingMode, amdFsrMode, intelXessMode, activeVendorId);
             if (activeVendorId == 0) {
-                setUpscalerMode(
-                        FrameGenerationBackend.GpuVendor.UNKNOWN, 0
-                );
+                if (dlssUpscalingMode != 0) {
+                    int retained = dlssUpscalingMode;
+                    setUpscalerMode(
+                            FrameGenerationBackend.GpuVendor.NVIDIA, retained
+                    );
+                    LOGGER.warn("Sanitize: Auto mode - retained NVIDIA upscaler mode {}", retained);
+                } else {
+                    setUpscalerMode(
+                            FrameGenerationBackend.GpuVendor.UNKNOWN, 0
+                    );
+                    LOGGER.warn("Sanitize: Auto mode - cleared all upscalers (no NVIDIA mode to prefer)");
+                }
             } else {
                 FrameGenerationBackend.GpuVendor vendor =
                         FrameGenerationBackend.GpuVendor.fromVendorId(
@@ -461,20 +555,110 @@ public class FrameGenConfig {
                     case INTEL -> intelXessMode;
                     case UNKNOWN -> 0;
                 };
+                LOGGER.warn("Sanitize: retaining {} upscaler mode {} for vendor {}", vendor, retainedMode, activeVendorId);
                 setUpscalerMode(vendor, retainedMode);
             }
         }
+        int oldFrameMult = frameMultiplier;
         frameMultiplier = clamp(frameMultiplier, 2, 4);
-        amdFsrMultiplier = 2;
-        intelXessMfgMultiplier = 2;
+        if (oldFrameMult != frameMultiplier) {
+            LOGGER.warn("Sanitize: frameMultiplier clamped from {} to {}", oldFrameMult, frameMultiplier);
+        }
+        int oldAmdMult = amdFsrMultiplier;
+        int oldIntelMult = intelXessMfgMultiplier;
+        if (hybridD3D12PresentationEnabled) {
+            amdFsrMultiplier = clamp(amdFsrMultiplier, 2, 4);
+            intelXessMfgMultiplier = clamp(intelXessMfgMultiplier, 2, 4);
+        } else {
+            if (amdFsrMultiplier != 2) {
+                LOGGER.warn("Sanitize: amdFsrMultiplier {} clamped to 2 (Vulkan-only, use hybrid D3D12 for 3/4x)", amdFsrMultiplier);
+            }
+            amdFsrMultiplier = 2;
+            if (intelXessMfgMultiplier != 2) {
+                LOGGER.warn("Sanitize: intelXessMfgMultiplier {} clamped to 2 (Vulkan-only)", intelXessMfgMultiplier);
+            }
+            intelXessMfgMultiplier = 2;
+        }
+        if (oldAmdMult != amdFsrMultiplier) {
+            LOGGER.warn("Sanitize: amdFsrMultiplier adjusted from {} to {}", oldAmdMult, amdFsrMultiplier);
+        }
+        if (oldIntelMult != intelXessMfgMultiplier) {
+            LOGGER.warn("Sanitize: intelXessMfgMultiplier adjusted from {} to {}", oldIntelMult, intelXessMfgMultiplier);
+        }
+        float oldDlssSharp = dlssSharpness;
         dlssSharpness = clamp(dlssSharpness, 0.0f, 1.0f);
+        if (oldDlssSharp != dlssSharpness) {
+            LOGGER.warn("Sanitize: dlssSharpness clamped from {} to {}", oldDlssSharp, dlssSharpness);
+        }
+        float oldAmdSharp = amdFsrSharpness;
         amdFsrSharpness = clamp(amdFsrSharpness, 0.0f, 1.0f);
+        if (oldAmdSharp != amdFsrSharpness) {
+            LOGGER.warn("Sanitize: amdFsrSharpness clamped from {} to {}", oldAmdSharp, amdFsrSharpness);
+        }
+        float oldIntelSharp = intelXessSharpness;
         intelXessSharpness = clamp(intelXessSharpness, 0.0f, 1.0f);
+        if (oldIntelSharp != intelXessSharpness) {
+            LOGGER.warn("Sanitize: intelXessSharpness clamped from {} to {}", oldIntelSharp, intelXessSharpness);
+        }
+        float oldBlurIntensity = motionBlurIntensity;
+        motionBlurIntensity = clamp(motionBlurIntensity, 0.0f, 1.0f);
+        if (oldBlurIntensity != motionBlurIntensity) {
+            LOGGER.warn("Sanitize: motionBlurIntensity clamped from {} to {}", oldBlurIntensity, motionBlurIntensity);
+        }
+        int oldBlurSamples = motionBlurSamples;
+        motionBlurSamples = clamp(motionBlurSamples, 1, 64);
+        if (oldBlurSamples != motionBlurSamples) {
+            LOGGER.warn("Sanitize: motionBlurSamples clamped from {} to {}", oldBlurSamples, motionBlurSamples);
+        }
+        int oldTargetFps = targetFps;
+        // Clamp UI values. Slider is 30 to 360, not 1000.
+        targetFps = clamp(targetFps, 30, 360);
+        if (oldTargetFps != targetFps) {
+            LOGGER.warn("Sanitize: targetFps clamped from {} to {}", oldTargetFps, targetFps);
+        }
+        // Max performance needs a selected vendor.
+        if (activePreset == Preset.MAX_PERFORMANCE) {
+            if (selectedFrameGenerationVendor() == FrameGenerationBackend.GpuVendor.UNKNOWN) {
+                LOGGER.warn("Sanitize: MAX_PERFORMANCE preset requires selected vendor, resetting to CUSTOM");
+                activePreset = Preset.CUSTOM;
+            }
+        }
+        // Cross check DRS and motion blur.
+        if (drsEnabled && !Float.isFinite((float) targetFps)) {
+            LOGGER.warn("Sanitize: drsEnabled but targetFps invalid, resetting to 144");
+            targetFps = 144;
+        }
+        if (motionBlurEnabled) {
+            if (!Float.isFinite(motionBlurIntensity) || motionBlurIntensity < 0.0f || motionBlurIntensity > 1.0f) {
+                LOGGER.warn("Sanitize: motionBlurIntensity {} out of UI range 0..1, clamping", motionBlurIntensity);
+                motionBlurIntensity = clamp(motionBlurIntensity, 0.0f, 1.0f);
+            }
+            if (motionBlurSamples < 1 || motionBlurSamples > 64) {
+                LOGGER.warn("Sanitize: motionBlurSamples {} out of UI range 1..64, clamping", motionBlurSamples);
+                motionBlurSamples = clamp(motionBlurSamples, 1, 64);
+            }
+            // Motion blur without an active upscaler does nothing, but it is not fatal. Just warn.
+            if (selectedUpscalerVendor() == FrameGenerationBackend.GpuVendor.UNKNOWN && selectedFrameGenerationVendor() == FrameGenerationBackend.GpuVendor.UNKNOWN) {
+                LOGGER.warn("Sanitize: motionBlurEnabled without any active vendor/upscaler - keeping but requires Vulkan feature");
+            }
+        }
+        if (drsEnabled && targetFps < 30) {
+            LOGGER.warn("Sanitize: drsEnabled but targetFps {} <30, clamping to 30", targetFps);
+            targetFps = 30;
+        }
+        int oldMaxDist = rayTracingMaxDistance;
+        rayTracingMaxDistance = clamp(rayTracingMaxDistance, 16, 48);
+        if (oldMaxDist != rayTracingMaxDistance) {
+            LOGGER.warn("Sanitize: rayTracingMaxDistance clamped from {} to {}", oldMaxDist, rayTracingMaxDistance);
+        }
+        int oldRays = rayTracingRaysPerPixel;
+        rayTracingRaysPerPixel = clamp(rayTracingRaysPerPixel, 1, 8);
+        if (oldRays != rayTracingRaysPerPixel) {
+            LOGGER.warn("Sanitize: rayTracingRaysPerPixel clamped from {} to {}", oldRays, rayTracingRaysPerPixel);
+        }
+        // Final clamp UI-Werte Sicherung: motionBlurIntensity/Samples bereits oben, aber erneut für Nicht-MotionBlur Pfad
         motionBlurIntensity = clamp(motionBlurIntensity, 0.0f, 1.0f);
         motionBlurSamples = clamp(motionBlurSamples, 1, 64);
-        targetFps = clamp(targetFps, 30, 1000);
-        rayTracingMaxDistance = clamp(rayTracingMaxDistance, 16, 48);
-        rayTracingRaysPerPixel = clamp(rayTracingRaysPerPixel, 1, 8);
     }
 
     private static int clamp(int value, int minimum, int maximum) {
@@ -486,15 +670,24 @@ public class FrameGenConfig {
         return Math.max(minimum, Math.min(maximum, value));
     }
 
-    public void save() {
+    public synchronized void save() {
         sanitize();
         try {
             Path path = getConfigPath();
-            if (path.getParent() != null) {
-                Files.createDirectories(path.getParent());
+            Path parent = path.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
             }
-            try (var writer = Files.newBufferedWriter(path)) {
+            Path temp = parent != null
+                    ? Files.createTempFile(parent, "frame_gen", ".tmp")
+                    : Files.createTempFile("frame_gen", ".tmp");
+            try (var writer = Files.newBufferedWriter(temp)) {
                 GSON.toJson(this, writer);
+            }
+            try {
+                Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException atomicFail) {
+                Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException e) {
             LOGGER.error("Failed to save Frame Generation config", e);

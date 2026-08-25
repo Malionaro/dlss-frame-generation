@@ -27,8 +27,10 @@ public class VulkanDeviceMixin implements VulkanDeviceAccess {
     @Inject(method = "<init>", at = @At("HEAD"))
     private static void onInitHead(ShaderSource shaderSource, VulkanInstance instance, VulkanPhysicalDevice physicalDevice,
                         Set<String> enabledExtensions, VkDevice vkDevice, long vma, CheckpointExtension checkpointExtension, CallbackInfo ci) {
-        // CRITICAL: Load Streamline interposer BEFORE VulkanDevice is fully constructed.
-        // This allows Streamline to intercept Vulkan API calls for frame generation.
+        // Load the Streamline interposer before VulkanDevice finishes. Streamline
+        // needs to see the Vulkan calls, otherwise frame generation misses them.
+        // This runs before super(), so there is no `this` yet. That is why Mixin
+        // requires the handler to be static here.
         try {
             NativeLoader.earlyLoadInterposer(LoggerFactory.getLogger("DLSS_FG_EarlyInit"));
         } catch (Throwable t) {

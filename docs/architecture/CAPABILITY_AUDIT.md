@@ -1,6 +1,6 @@
 # Capability audit
 
-Last reviewed: 2026-07-28
+Last reviewed: 2026-08-22
 
 This document separates three different states which the settings screen must
 not confuse:
@@ -89,8 +89,9 @@ Implemented checks and calls:
   present operations.
 - Color, depth, motion vectors, reset state and monotonically increasing frame
   IDs are supplied to prepare/configure dispatches.
-- Upscaling uses a separate output image. Only Native AA is exposed because
-  Minecraft currently renders scene and UI at the same display resolution.
+- Upscaling uses a separate output image. Native AA plus reduced-resolution
+  quality modes (Quality, Balanced, Performance, Ultra Performance, Ultra Quality)
+  are supported with split world/display targets.
 - Provider failure remains fail-closed and is surfaced in native status text.
 
 FSR 4 is not advertised as the Vulkan frame-generation backend. The hybrid
@@ -251,3 +252,21 @@ DLSS/FG/RR output.
   source set/Mixin configuration if class or frame-boundary hooks changed.
 - FSR 4 FG and XeSS-FG: cannot be provider-tested until the respective official,
   redistributable D3D12 FG runtime (and XeLL for Intel) is available.
+
+## 2026-08-22 Fix-Runde
+
+- H1: Drain mit `finally` + Timeout meldet jetzt FAILED statt zu blockieren.
+- H2: Jitter ist im Mode 0 konsequent 0.
+- H3: Vendor-Switch läuft über eine eigene UI-Layer.
+- H4: Composite-Fallback greift, wenn die Komposition verweigert wird.
+- H5: Pipeline-Leak behoben.
+- K1/K2: Fence-Stubs entfernt bzw. sauber ersetzt.
+- OOM-Latch führt jetzt zu Retry statt dauerhafter Sperrung.
+- `configVersion=2` plus atomares Speichern der Konfiguration.
+- Mixin-Level auf JAVA_21 angehoben.
+- JNI Exception-Hygiene nachgezogen.
+- D3D12-Deadlock-Fix im Hybrid-Pfad.
+- OptiScaler: externer SHA256-Check vor der Nutzung.
+- copyNative: Ninja-Pfad-Fix im Build.
+- RT: Dirty-Chunk-Budget begrenzt Raytracing-Rebuilds pro Frame.
+- DRS: adaptive Schritte für dynamische Auflösung.

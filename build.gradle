@@ -19,6 +19,10 @@ loom {
             if (quickPlayWorld) {
                 programArgs "--quickPlaySingleplayer", quickPlayWorld
             }
+            // Force the Vulkan renderer for mod development: every dlss_fg feature
+            // requires Mojang's VulkanDevice, and the in-game setting can silently
+            // reset to OpenGL after an unexpected shutdown.
+            programArgs "--graphicsBackend", "vulkan"
         }
     }
 
@@ -109,6 +113,10 @@ tasks.register("buildNative", Exec) {
 tasks.register("configureNative", Exec) {
     group = "build"
     description = "Configures the JNI bridge when its source and SDK files are present."
+    inputs.file(nativeSourceDirectory.file("CMakeLists.txt"))
+    inputs.dir(nativeSourceDirectory.dir("bridge"))
+    inputs.property("cmakeExecutable", cmakeExecutable ?: "cmake")
+    outputs.dir(nativeBuildDirectory)
     onlyIf(nativeBridgeSourcesPresent)
     doFirst {
         if (cmakeExecutable == null) {
@@ -118,31 +126,31 @@ tasks.register("configureNative", Exec) {
     commandLine cmakeExecutable ?: "cmake", "-S", nativeSourceDirectory.asFile, "-B", nativeBuildDirectory.get().asFile
 }
 
-tasks.register("copyNative", Copy) {
+tasks.register("copyNative") {
     group = "build"
     description = "Copies the JNI native library into resource folder."
     dependsOn("buildNative")
     onlyIf(nativeBridgeSourcesPresent)
-
-    from(nativeBuildDirectory) {
-        include "Release/dlss_fg_native.dll"
-        include "libdlss_fg_native.so"
-        include "libdlss_fg_native.dylib"
-    }
-    into layout.buildDirectory.dir("native-resources/natives")
-    
-    eachFile { FileCopyDetails details ->
-        def name = details.name
-        if (name.endsWith(".dll")) {
-            details.relativePath = new RelativePath(true, "windows", name)
-        } else if (name.endsWith(".so")) {
-            details.relativePath = new RelativePath(true, "linux", name)
-        } else if (name.endsWith(".dylib")) {
-            details.relativePath = new RelativePath(true, "macos", name)
+    doLast {
+        def outBase = layout.buildDirectory.dir("native-resources/natives").get().asFile
+        def candidates = [
+            [file: new File(nativeBuildDirectory.get().asFile, "Release/dlss_fg_native.dll"), sub: "windows"],
+            [file: new File(nativeBuildDirectory.get().asFile, "dlss_fg_native.dll"), sub: "windows"],
+            [file: new File(nativeBuildDirectory.get().asFile, "libdlss_fg_native.so"), sub: "linux"],
+            [file: new File(nativeBuildDirectory.get().asFile, "Release/libdlss_fg_native.so"), sub: "linux"],
+            [file: new File(nativeBuildDirectory.get().asFile, "libdlss_fg_native.dylib"), sub: "macos"],
+            [file: new File(nativeBuildDirectory.get().asFile, "Release/libdlss_fg_native.dylib"), sub: "macos"]
+        ]
+        candidates.each { c ->
+            if (c.file.isFile()) {
+                def destDir = new File(outBase, c.sub)
+                destDir.mkdirs()
+                def dest = new File(destDir, c.file.name)
+                dest.bytes = c.file.bytes
+                logger.lifecycle("Copied native ${c.file.name} -> ${dest}")
+            }
         }
     }
-    includeEmptyDirs = false
-    duplicatesStrategy = DuplicatesStrategy.FAIL
 }
 
 // Copy Streamline SDK runtime DLLs (interposer, plugins, NGX binaries) into natives

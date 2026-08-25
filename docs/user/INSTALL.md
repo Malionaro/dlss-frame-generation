@@ -14,14 +14,14 @@
 | **GPU** | Vulkan 1.3 Compatible GPU | Development/testing hardware; see backend status below |
 | **VRAM** | 4 GB VRAM | 8+ GB VRAM |
 | **Java** | Java 25 | Java 25 (Corretto / Temurin) |
-| **Minecraft** | 1.26.2 | 1.26.2 |
+| **Minecraft** | 26.2 | 26.2 |
 | **Fabric** | 0.155.2+ | 0.155.2+ |
 
 ### 🛠️ Step-by-Step Installation
 
 #### Step 1: Install Fabric Loader & API
-1. Install **Fabric Loader 0.155.2** (or newer) for Minecraft 1.26.2.
-2. Download **Fabric API** and place it into your `.minecraft/mods` directory.
+1. Install **Fabric Loader 0.155.2** (or newer) for Minecraft 26.2.
+2. Download **Fabric API 0.155.2+** (or newer) and place it into your `.minecraft/mods` directory.
 
 #### Step 2: Download Mod Artifacts
 1. Build or download `dlss-frame-generation-1.0-SNAPSHOT.jar`.
@@ -29,7 +29,7 @@
 3. **Automated DLL Extraction:** All native Streamline SDK DLLs (`sl.interposer.dll`, `sl.dlss_g.dll`, etc.) are bundled directly inside the `.jar` and extract automatically upon launching the game!
 
 #### Step 3: In-Game Settings Access
-1. Launch Minecraft 1.26.2.
+1. Launch Minecraft 26.2.
 2. Open menu: **Options... -> Video Settings... -> Frame Generation...**
    (or via **ModMenu**).
 3. Check the backend status shown by the settings screen. An unavailable
@@ -69,9 +69,11 @@ For development only, the helper can install an external override:
 .\tools\install-optiscaler.ps1
 ```
 
-The current Minecraft render path uses the bridge for real 1:1 Native AA;
-performance upscaling modes are not exposed yet. A manually installed
-`config/dlss_fg/optiscaler/OptiScaler.dll` overrides the bundled version.
+The current Minecraft render path uses the bridge for real 1:1 Native AA plus
+Quality, Balanced, Performance, Ultra Performance and Ultra Quality via split
+world/display targets (see [BACKENDS.md](../architecture/BACKENDS.md)).
+A manually installed `config/dlss_fg/optiscaler/OptiScaler.dll` overrides the
+bundled version.
 
 ---
 
@@ -85,14 +87,14 @@ performance upscaling modes are not exposed yet. A manually installed
 | **Grafikkarte** | Vulkan-1.3-kompatible GPU | Entwicklungs-/Testhardware; siehe Backend-Status |
 | **VRAM** | 4 GB VRAM | 8+ GB VRAM |
 | **Java** | Java 25 | Java 25 (Corretto / Temurin) |
-| **Minecraft** | 1.26.2 | 1.26.2 |
+| **Minecraft** | 26.2 | 26.2 |
 | **Fabric** | 0.155.2+ | 0.155.2+ |
 
 ### 🛠️ Schritt-für-Schritt Installation
 
 #### Schritt 1: Fabric Loader & API installieren
-1. Installiere den **Fabric Loader 0.155.2** (oder neuer) für Minecraft 1.26.2.
-2. Lade die **Fabric API** herunter und platziere sie in deinen `.minecraft/mods` Ordner.
+1. Installiere den **Fabric Loader 0.155.2** (oder neuer) für Minecraft 26.2.
+2. Lade die **Fabric API 0.155.2+** (oder neuer) herunter und platziere sie in deinen `.minecraft/mods` Ordner.
 
 #### Schritt 2: Mod-Datei hinzufügen
 1. Erstelle oder lade die `dlss-frame-generation-1.0-SNAPSHOT.jar` herunter.
@@ -100,7 +102,7 @@ performance upscaling modes are not exposed yet. A manually installed
 3. **Automatische DLL-Extraktion:** Alle erforderlichen Streamline SDK DLLs (`sl.interposer.dll`, `sl.dlss_g.dll`, etc.) sind direkt in der JAR enthalten und entpacken sich beim Spielstart automatisch!
 
 #### Schritt 3: In-Game Menü & Konfiguration
-1. Starte Minecraft 1.26.2.
+1. Starte Minecraft 26.2.
 2. Öffne das Menü: **Optionen... -> Videoeinstellungen... -> Frame Generation...**
    (oder über **ModMenu**).
 3. Prüfe den im Einstellungsmenü angezeigten Backend-Status. Ein nicht
@@ -142,7 +144,8 @@ Nur für die Entwicklung kann das Hilfsskript eine externe Version installieren:
 .\tools\install-optiscaler.ps1
 ```
 
-Der aktuelle Minecraft-Renderpfad nutzt die Bridge für echtes 1:1-Native-AA;
-Performance-Upscaling-Modi werden noch nicht angeboten. Eine manuell
-installierte Datei unter `config/dlss_fg/optiscaler/OptiScaler.dll`
+Der aktuelle Minecraft-Renderpfad nutzt die Bridge für echtes 1:1-Native-AA sowie
+Qualität, Ausgeglichen, Leistung, Ultra-Leistung und Ultra-Qualität über
+getrennte Welt-/Anzeigeziele (siehe [BACKENDS.md](../architecture/BACKENDS.md)).
+Eine manuell installierte Datei unter `config/dlss_fg/optiscaler/OptiScaler.dll`
 überschreibt die mitgelieferte Version.

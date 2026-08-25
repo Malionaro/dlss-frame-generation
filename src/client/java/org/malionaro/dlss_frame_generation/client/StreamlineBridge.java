@@ -11,6 +11,7 @@ public final class StreamlineBridge {
     public static final int CAP_LOW_LATENCY = 1 << 3;
     public static final int CAP_PROXY_SWAPCHAIN = 1 << 4;
     public static final int CAP_RAY_RECONSTRUCTION = 1 << 5;
+    public static final int NATIVE_ABI_VERSION = 2;
     public static final int NATIVE_NOT_HANDLED = Integer.MIN_VALUE;
     public static final int VULKAN_REQUIREMENT_INSTANCE_EXTENSIONS = 0;
     public static final int VULKAN_REQUIREMENT_DEVICE_EXTENSIONS = 1;
@@ -19,6 +20,12 @@ public final class StreamlineBridge {
 
     private StreamlineBridge() {
     }
+
+    /**
+     * ABI handshake: returns {@link #NATIVE_ABI_VERSION} of the loaded DLL.
+     * Missing on stale DLLs, which lets the loader fail closed.
+     */
+    public static native int nGetNativeAbiVersion();
 
     /**
      * Initializes Streamline before Vulkan creates an instance or device.
@@ -201,6 +208,17 @@ public final class StreamlineBridge {
      * Retrieves estimated VRAM usage for a specific GPU vendor ID.
      */
     public static native long nGetVramUsage(int vendorId);
+
+    /**
+     * Queries the real VRAM budget via VK_EXT_memory_budget. On success the
+     * budget and usage of the largest device-local heap are written into the
+     * first element of each array and true is returned.
+     */
+    public static native boolean nQueryMemoryBudget(
+        long vkPhysicalDevice,
+        long[] outBudgetBytes,
+        long[] outUsageBytes
+    );
 
     /**
      * Active provider selected by the native compatibility layer.

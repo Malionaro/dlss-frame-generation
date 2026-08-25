@@ -22,6 +22,7 @@ import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 import org.malionaro.dlss_frame_generation.client.raytracing.RayTracingCapabilities;
 
@@ -289,6 +290,41 @@ public class MultiVendorSettingsScreen extends Screen {
 
     public void refreshSettingsWidgets() {
         rebuildWidgets();
+    }
+
+    @Override
+    protected void rebuildWidgets() {
+        // P2-02: scrollOffset bei rebuild merken - verhindert Sprung nach oben
+        int savedScroll = scrollOffset;
+        super.rebuildWidgets();
+        // maxScroll wird erst in finishScrollableLayout berechnet; clampe hier konservativ
+        scrollOffset = Math.clamp(savedScroll, 0, Math.max(savedScroll, maxScroll));
+        if (!scrollableWidgets.isEmpty()) {
+            applyScrollLayout();
+        }
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        // P2-02: Keyboard-Navigation für Scroll + ESC (MC 26.2: KeyEvent statt int,int,int)
+        // GLFW: ESC=256, UP=265, DOWN=264, PAGE_UP=266, PAGE_DOWN=267
+        if (event.isEscape()) { // ESC 256
+            if (this.minecraft != null) {
+                this.minecraft.setScreenAndShow(this.parent);
+            }
+            return true;
+        }
+        int key = event.key();
+        if (key == 265 || event.isUp()) { // UP
+            if (scrollBy(-24)) return true;
+        } else if (key == 264 || event.isDown()) { // DOWN
+            if (scrollBy(24)) return true;
+        } else if (key == 266) { // PAGE_UP
+            if (scrollBy(-72)) return true;
+        } else if (key == 267) { // PAGE_DOWN
+            if (scrollBy(72)) return true;
+        }
+        return super.keyPressed(event);
     }
 
     public int settingsLeftX() {
@@ -584,8 +620,15 @@ public class MultiVendorSettingsScreen extends Screen {
 
                         @Override
                         protected void applyValue() {
-                            config.motionBlurIntensity = (float) value;
+                            // P2-02: clamp + sanitize - verhindert NaN/Out-of-range und sichert UI-Werte 0..1
+                            double sanitized = Double.isFinite(value) ? value : 0.5;
+                            sanitized = Math.clamp(sanitized, 0.0, 1.0);
+                            value = sanitized;
+                            float clamped = (float) Math.clamp(sanitized, 0.0, 1.0);
+                            config.motionBlurIntensity = clamped;
+                            config.sanitize();
                             config.save();
+                            updateMessage();
                         }
                     };
             motionBlurIntensity.active = btnMotionBlur.active
@@ -623,9 +666,16 @@ public class MultiVendorSettingsScreen extends Screen {
 
                         @Override
                         protected void applyValue() {
-                            config.targetFps =
-                                    30 + (int) Math.round(value * 330.0);
+                            // P2-02: clamp + sanitize - value → 30..360, verhindert NaN/Out-of-range
+                            double sanitized = Double.isFinite(value) ? value : Math.clamp((config.targetFps - 30.0) / 330.0, 0.0, 1.0);
+                            sanitized = Math.clamp(sanitized, 0.0, 1.0);
+                            value = sanitized;
+                            int fps = 30 + (int) Math.round(sanitized * 330.0);
+                            fps = Math.clamp(fps, 30, 360);
+                            config.targetFps = fps;
+                            config.sanitize();
                             config.save();
+                            updateMessage();
                         }
                     };
             drsTarget.active = btnDrs.active && config.drsEnabled;
@@ -731,7 +781,7 @@ public class MultiVendorSettingsScreen extends Screen {
                     ? FrameGenMod.rayTracingManager().capabilities()
                     : RayTracingCapabilities.waitingForDevice();
             int statusColor = switch (capabilities.state()) {
-                case READY -> 0xFF00FF00;
+                case READY -> 0xFF00C000;
                 case UNSUPPORTED -> 0xFFFF5555;
                 default -> 0xFFFFAA00;
             };
@@ -778,7 +828,7 @@ public class MultiVendorSettingsScreen extends Screen {
             D3D12PresentationBridge.Status status =
                     D3D12PresentationBridge.status();
             int statusColor = status.presentationReady()
-                    ? 0xFF00FF00
+                    ? 0xFF00C000
                     : status.stage()
                             == D3D12PresentationBridge.Stage.FAILED
                             ? 0xFFFF5555 : 0xFFFFAA00;
@@ -805,7 +855,7 @@ public class MultiVendorSettingsScreen extends Screen {
             FrameGenerationBackend backend = backendForTab();
             boolean active = backend != null && backend.isFrameGenerationActive();
             if (backend != null) {
-                int statusColor = active ? 0xFF00FF00 : 0xFFFFAA00;
+                int statusColor = active ? 0xFF00C000 : 0xFFFFAA00;
                 double vramMb = (double) vramBytes / (1024.0 * 1024.0);
                 String nativeStatus = backend.statusDescription();
                 Component readableStatus = BackendStatusFormatter.description(

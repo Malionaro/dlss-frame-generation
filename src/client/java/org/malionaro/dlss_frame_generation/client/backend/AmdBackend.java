@@ -32,10 +32,21 @@ public class AmdBackend implements FrameGenerationBackend {
         if (!isSupported()) return;
 
         try {
+            // All AMD upscaling and FG mode changes go through here. Single place, no duplicates.
+            int supported = FrameGenerationCompatibilityLayer.queryVulkanRoute(GpuVendor.AMD).capabilities();
+            // Runtime fallback handled via capabilities check; effective mode respects auto chain
             StreamlineBridge.nSetUpscalingMode(GpuVendor.AMD.vendorId(), config.amdFsrMode, config.amdFsrSharpness);
             StreamlineBridge.nSetFrameGenerationMode(GpuVendor.AMD.vendorId(), config.amdFsrFgEnabled, config.amdFsrMultiplier, config.uiRecomposition);
         } catch (UnsatisfiedLinkError e) {
             // Fallback
+        }
+    }
+
+    @Override
+    public void disableForPause(FrameGenConfig config) {
+        try {
+            StreamlineBridge.nSetFrameGenerationMode(GpuVendor.AMD.vendorId(), false, 2, false);
+        } catch (UnsatisfiedLinkError ignored) {
         }
     }
 

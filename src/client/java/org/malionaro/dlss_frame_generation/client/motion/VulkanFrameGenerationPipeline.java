@@ -13,6 +13,7 @@ import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 import org.malionaro.dlss_frame_generation.client.access.VulkanDeviceAccess;
 import org.malionaro.dlss_frame_generation.client.raytracing.RayReconstructionResources;
+import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -72,6 +73,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private long frameNumber;
     private boolean historyValid;
     private boolean failed;
+    // Phase 3 M2: OOM (retry) vs validation (latch) distinction.
+    // Hard validation failures remain latched forever; OOM is retryable after swapchain generation change.
+    private boolean failedDueToOutOfMemory;
+    private long failedAtSwapchainGeneration = -1L;
     private String status = "Frame-generation resources are not initialized";
     private MotionVectorSnapshot latestDebugSnapshot;
     private long completedPresentSerial;
@@ -139,10 +144,24 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             float motionBlurIntensity,
             int motionBlurSamples
     ) {
+        // Phase 3 M2: lazy OOM-retry – if previous failure was OOM and generation has changed, clear latch
+        if (failed && failedDueToOutOfMemory && failedAtSwapchainGeneration != activeSwapchainGeneration) {
+            logger.info("OOM recovery: clearing retryable latch (failed at gen {} -> now gen {})",
+                    failedAtSwapchainGeneration, activeSwapchainGeneration);
+            failed = false;
+            failedDueToOutOfMemory = false;
+            failedAtSwapchainGeneration = -1L;
+            status = "Retrying frame-generation after OOM recovery (generation " + activeSwapchainGeneration + ")";
+        }
         if (failed || frameResources == null
                 || commandBuffer == null || sourceColor == null || sourceDepth == null
                 || outputColor == null || sourceColor.texture() == null
                 || sourceDepth.texture() == null || outputColor.texture() == null) {
+            // Distinguish waiting for retry: keep informative status for OOM case
+            if (failed && failedDueToOutOfMemory) {
+                status = "Frame skipped: OOM failure pending retry after swapchain rebuild (failed at gen "
+                        + failedAtSwapchainGeneration + ")";
+            }
             return null;
         }
 
@@ -417,9 +436,24 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     true
             );
         } catch (Throwable throwable) {
-            failed = true;
-            status = "Frame-generation input pipeline disabled: " + throwable.getMessage();
-            logger.error("Frame-generation input pipeline failed and was disabled", throwable);
+            boolean isOom = isOutOfMemoryFailure(throwable);
+            if (isOom) {
+                failed = true;
+                failedDueToOutOfMemory = true;
+                failedAtSwapchainGeneration = activeSwapchainGeneration;
+                status = "Frame-generation OOM (retryable after swapchain rebuild, gen "
+                        + activeSwapchainGeneration + "): " + throwable.getMessage();
+                logger.warn("Frame-generation OOM (retryable, gen {}), will retry after swapchain change: {}",
+                        activeSwapchainGeneration, throwable.toString(), throwable);
+            } else {
+                failed = true;
+                failedDueToOutOfMemory = false;
+                failedAtSwapchainGeneration = -1L;
+                status = "Frame-generation input pipeline disabled (fatal/validation, gen "
+                        + activeSwapchainGeneration + "): " + throwable.getMessage();
+                logger.error("Frame-generation input pipeline failed and was disabled (fatal latch, gen {})",
+                        activeSwapchainGeneration, throwable);
+            }
             return null;
         }
     }
@@ -437,6 +471,14 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             int multiplier,
             boolean uiRecomposition
     ) {
+        // Phase 3 M2: allow lazy OOM recovery for UI path as well
+        if (failed && failedDueToOutOfMemory && failedAtSwapchainGeneration != activeSwapchainGeneration) {
+            logger.info("OOM recovery (UI): clearing retryable latch (failed at gen {} -> now gen {})",
+                    failedAtSwapchainGeneration, activeSwapchainGeneration);
+            failed = false;
+            failedDueToOutOfMemory = false;
+            failedAtSwapchainGeneration = -1L;
+        }
         if (failed || pendingUiSlot < 0 || commandBuffer == null
                 || identity == null
                 || !pendingUiIdentity.belongsToSameFrame(identity)
@@ -562,6 +604,28 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     }
 
     public void onPresentCompleted() {
+        // Phase 3 K2: PresentSerial completion gating. completedPresentSerial
+        // drives slot reuse (inUseUntilPresentSerial), so it must only advance
+        // once the GPU has caught up. WIP: a real bounded wait needs a timeline
+        // semaphore exported from the present submission (vkWaitSemaphores) or
+        // a present-queue VkFence signalled per frame - Minecraft exposes
+        // neither handle. Under -Ddlss_fg.strictSync=true we therefore issue a
+        // full vkDeviceWaitIdle via VulkanRegistry (correct but expensive);
+        // otherwise we only spin briefly and accept that the serial can run
+        // ahead of actual GPU completion.
+        boolean gpuIdleConfirmed = false;
+        try {
+            if (VulkanRegistry.isStrictSyncEnabled()) {
+                gpuIdleConfirmed = VulkanRegistry.waitUntilGpuIdleBrief(2L);
+            }
+        } catch (Throwable ignored) {
+        }
+        if (!gpuIdleConfirmed) {
+            long spinDeadline = System.nanoTime() + 1_000_000L;
+            while (System.nanoTime() < spinDeadline) {
+                Thread.onSpinWait();
+            }
+        }
         completedPresentSerial++;
     }
 
@@ -578,7 +642,18 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         pendingUiSlot = -1;
         pendingUiIdentity = FrameIdentity.INVALID;
         lastCapturedIdentity = FrameIdentity.INVALID;
-        status = "Waiting for a frame from swapchain generation " + generation;
+        // Phase 3 M2: OOM-retryable latch is cleared on generation change; hard latch stays.
+        if (failed && failedDueToOutOfMemory && generation != failedAtSwapchainGeneration) {
+            logger.info("OOM retryable failure cleared on swapchain generation change {} -> {}",
+                    failedAtSwapchainGeneration, generation);
+            failed = false;
+            failedDueToOutOfMemory = false;
+            failedAtSwapchainGeneration = -1L;
+            status = "Retrying frame-generation after OOM recovery (generation " + generation + ")";
+        } else {
+            status = "Waiting for a frame from swapchain generation " + generation;
+            // Hard latch keeps failed==true – no retry.
+        }
     }
 
     public FrameIdentity lastCapturedIdentity() {
@@ -589,6 +664,8 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         return lastProviderAcceptedIdentity;
     }
 
+    // Phase 3 M2: ensureResources may throw OOM (VK_ERROR_OUT_OF_* -> IllegalStateException with VkResult -1/-2)
+    // The caller captureAndDispatch distinguishes OOM-retryable (reset on generation change) vs validation fatal latch.
     private void ensureResources(
             int renderWidth,
             int renderHeight,
@@ -608,99 +685,120 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
 
         vkDeviceWaitIdle(device);
         destroyResources();
-        width = renderWidth;
-        height = renderHeight;
-        outputWidth = displayWidth;
-        outputHeight = displayHeight;
-        colorFormat = sourceColorFormat;
-        depthFormat = sourceDepthFormat;
-        outputFormat = destinationFormat;
+        try {
+            width = renderWidth;
+            height = renderHeight;
+            outputWidth = displayWidth;
+            outputHeight = displayHeight;
+            colorFormat = sourceColorFormat;
+            depthFormat = sourceDepthFormat;
+            outputFormat = destinationFormat;
 
-        for (int index = 0; index < SLOT_COUNT; index++) {
-            FrameSlot slot = new FrameSlot();
-            slot.color = createImage(
-                    colorFormat,
-                    VK_IMAGE_ASPECT_COLOR_BIT,
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-                            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                    width,
-                    height
-            );
-            slot.depth = createImage(
-                    depthFormat,
-                    VK_IMAGE_ASPECT_DEPTH_BIT,
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    width,
-                    height
-            );
-            slot.motion = createImage(
-                    MOTION_FORMAT,
-                    VK_IMAGE_ASPECT_COLOR_BIT,
-                    VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-                            | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-                            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                    width,
-                    height
-            );
-            slot.upscaled = createImage(
-                    outputFormat,
-                    VK_IMAGE_ASPECT_COLOR_BIT,
-                    VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-                            | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-                            | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    outputWidth,
-                    outputHeight
-            );
-            slot.ui = createImage(
-                    outputFormat,
-                    VK_IMAGE_ASPECT_COLOR_BIT,
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    outputWidth,
-                    outputHeight
-            );
-            slot.rayReconstructionOutput = createImage(
-                    RAY_RECONSTRUCTION_FORMAT,
-                    VK_IMAGE_ASPECT_COLOR_BIT,
-                    VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    outputWidth,
-                    outputHeight
-            );
-            slot.motionBlurOutput = createImage(
-                    VK_FORMAT_R8G8B8A8_UNORM,
-                    VK_IMAGE_ASPECT_COLOR_BIT,
-                    VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-                            | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-                            | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    outputWidth,
-                    outputHeight
-            );
-            Allocation uniform = createBuffer(
-                    UNIFORM_SIZE,
-                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-            );
-            slot.uniformBuffer = uniform.buffer;
-            slot.uniformMemory = uniform.memory;
-            Allocation debugReadback = createBuffer(
-                    Math.multiplyExact(
-                            Math.multiplyExact((long) width, height),
-                            MOTION_BYTES_PER_PIXEL
-                    ),
-                    VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-                            | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-            );
-            slot.debugReadbackBuffer = debugReadback.buffer;
-            slot.debugReadbackMemory = debugReadback.memory;
-            slots[index] = slot;
+            for (int index = 0; index < SLOT_COUNT; index++) {
+                FrameSlot slot = new FrameSlot();
+                slot.color = createImage(
+                        colorFormat,
+                        VK_IMAGE_ASPECT_COLOR_BIT,
+                        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                                | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                        width,
+                        height
+                );
+                slot.depth = createImage(
+                        depthFormat,
+                        VK_IMAGE_ASPECT_DEPTH_BIT,
+                        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                        width,
+                        height
+                );
+                slot.motion = createImage(
+                        MOTION_FORMAT,
+                        VK_IMAGE_ASPECT_COLOR_BIT,
+                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                                | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                                | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                        width,
+                        height
+                );
+                slot.upscaled = createImage(
+                        outputFormat,
+                        VK_IMAGE_ASPECT_COLOR_BIT,
+                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                                | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                                | VK_IMAGE_USAGE_SAMPLED_BIT,
+                        outputWidth,
+                        outputHeight
+                );
+                slot.ui = createImage(
+                        outputFormat,
+                        VK_IMAGE_ASPECT_COLOR_BIT,
+                        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                        outputWidth,
+                        outputHeight
+                );
+                slot.rayReconstructionOutput = createImage(
+                        RAY_RECONSTRUCTION_FORMAT,
+                        VK_IMAGE_ASPECT_COLOR_BIT,
+                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                        outputWidth,
+                        outputHeight
+                );
+                slot.motionBlurOutput = createImage(
+                        VK_FORMAT_R8G8B8A8_UNORM,
+                        VK_IMAGE_ASPECT_COLOR_BIT,
+                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                                | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                                | VK_IMAGE_USAGE_SAMPLED_BIT,
+                        outputWidth,
+                        outputHeight
+                );
+                Allocation uniform = createBuffer(
+                        UNIFORM_SIZE,
+                        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+                );
+                slot.uniformBuffer = uniform.buffer;
+                slot.uniformMemory = uniform.memory;
+                Allocation debugReadback = createBuffer(
+                        Math.multiplyExact(
+                                Math.multiplyExact((long) width, height),
+                                MOTION_BYTES_PER_PIXEL
+                        ),
+                        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+                                | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+                );
+                slot.debugReadbackBuffer = debugReadback.buffer;
+                slot.debugReadbackMemory = debugReadback.memory;
+                slots[index] = slot;
+            }
+
+            createPipeline();
+            createDescriptors();
+            createTonemapPipeline();
+            createTonemapDescriptors();
+            createMotionBlurPipeline();
+            createMotionBlurDescriptors();
+        } catch (Throwable error) {
+            destroyResources();
+            width = 0;
+            height = 0;
+            outputWidth = 0;
+            outputHeight = 0;
+            colorFormat = 0;
+            depthFormat = 0;
+            outputFormat = 0;
+            historyValid = false;
+            frameNumber = 0;
+            completedPresentSerial = 0;
+            capturedFrameCount = 0;
+            providerAcceptedFrameCount = 0;
+            pendingUiSlot = -1;
+            pendingUiIdentity = FrameIdentity.INVALID;
+            latestDebugSnapshot = null;
+            status = "Frame-generation resource allocation failed: " + error.getMessage();
+            throw error;
         }
-
-        createPipeline();
-        createDescriptors();
-        createTonemapPipeline();
-        createTonemapDescriptors();
-        createMotionBlurPipeline();
-        createMotionBlurDescriptors();
         historyValid = false;
         frameNumber = 0;
         completedPresentSerial = 0;
@@ -2160,6 +2258,48 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         if (result != VK_SUCCESS) {
             throw new IllegalStateException(action + " failed with VkResult " + result);
         }
+    }
+
+    // Phase 3 M2 helper: distinguish OOM/retryable vs validation/fatal latch
+    private static boolean isOutOfMemoryFailure(Throwable throwable) {
+        if (throwable == null) {
+            return false;
+        }
+        if (throwable instanceof OutOfMemoryError) {
+            return true;
+        }
+        String msg = throwable.getMessage();
+        if (msg != null) {
+            String lower = msg.toLowerCase(java.util.Locale.ROOT);
+            if (lower.contains("out_of_host_memory") || lower.contains("out_of_device_memory")
+                    || lower.contains("out of host memory") || lower.contains("out of device memory")
+                    || lower.contains("out_of_memory") || lower.contains("outofmemory")) {
+                return true;
+            }
+            // Vulkan VkResult codes: -1 OUT_OF_HOST_MEMORY, -2 OUT_OF_DEVICE_MEMORY
+            if (lower.contains("vkresult -1") || lower.contains("vkresult -2")
+                    || lower.contains("vkresult:-1") || lower.contains("vkresult:-2")) {
+                return true;
+            }
+            if (msg.contains("VK_ERROR_OUT_OF_HOST_MEMORY") || msg.contains("VK_ERROR_OUT_OF_DEVICE_MEMORY")) {
+                return true;
+            }
+            // Direct code check fallback: "failed with VkResult -2"
+            if (lower.contains("failed with vkresult -1") || lower.contains("failed with vkresult -2")) {
+                return true;
+            }
+        }
+        Throwable cause = throwable.getCause();
+        if (cause != null && cause != throwable) {
+            return isOutOfMemoryFailure(cause);
+        }
+        // Check suppressed as well (some Vulkan wrappers add)
+        for (Throwable sup : throwable.getSuppressed()) {
+            if (isOutOfMemoryFailure(sup)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void destroyResources() {

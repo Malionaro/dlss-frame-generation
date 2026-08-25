@@ -42,6 +42,20 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Intel Xe Super Sampling (XeSS) SDK
+
+This project includes runtime components from the Intel XeSS SDK distributed in the
+verified OptiScaler v0.9.4 runtime bundle under `optiscaler/windows/libxess.dll`.
+The complete license terms are stored under `optiscaler/windows/Licenses/XeSS_LICENSE.txt`.
+
+Copyright (C) 2025 Intel Corporation
+
+Redistribution and use in binary form, without modification, are permitted provided
+that the following conditions are met:
+1. Redistributions must reproduce the above copyright notice and these terms of use in the Software and in documentation and/or other materials provided with the distribution.
+2. Neither the name of Intel nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+3. No reverse engineering, decompilation, or disassembly of this software is permitted.
+
 ## Bundled OptiScaler interoperability
 
 The mod contains the unmodified OptiScaler v0.9.4 runtime and uses the public

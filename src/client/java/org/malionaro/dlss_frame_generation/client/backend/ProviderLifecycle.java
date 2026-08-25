@@ -43,6 +43,11 @@ public final class ProviderLifecycle {
         Objects.requireNonNull(detectedProvider, "detectedProvider");
         if (detectedProvider
                 == FrameGenerationCompatibilityLayer.ProviderId.NONE) {
+            if (state == State.ACTIVE) {
+                throw new IllegalStateException(
+                        "Illegal provider transition from ACTIVE to UNAVAILABLE via NONE; drain required"
+                );
+            }
             provider = detectedProvider;
             state = State.UNAVAILABLE;
             detail = nonBlank(detectionDetail, "No provider detected");
@@ -65,7 +70,7 @@ public final class ProviderLifecycle {
     }
 
     public synchronized void ready(String readinessDetail) {
-        requireState(State.INITIALIZING, State.DRAINING, State.READY);
+        requireState(State.DETECTED, State.INITIALIZING, State.DRAINING, State.READY);
         state = State.READY;
         detail = nonBlank(readinessDetail, "Provider initialized");
     }
@@ -79,7 +84,7 @@ public final class ProviderLifecycle {
                     "Swapchain generation must be positive"
             );
         }
-        requireState(State.INITIALIZING, State.DRAINING, State.READY);
+        requireState(State.DETECTED, State.INITIALIZING, State.DRAINING, State.READY);
         swapchainGeneration = rebuiltSwapchainGeneration;
         state = State.READY;
         detail = nonBlank(readinessDetail, "Provider initialized");
@@ -95,10 +100,15 @@ public final class ProviderLifecycle {
                     "Provider activation requires a safe frame boundary"
             );
         }
-        requireState(State.READY, State.ACTIVE);
+        requireState(State.READY, State.DRAINING);
         if (acceptedFrame == null || !acceptedFrame.isValid()) {
             throw new IllegalArgumentException(
                     "Provider activation requires a valid accepted frame"
+            );
+        }
+        if (acceptedFrame.swapchainGeneration() == 0L) {
+            throw new IllegalArgumentException(
+                    "Accepted frame swapchain generation must be non-zero"
             );
         }
         if (swapchainGeneration != 0L
@@ -106,6 +116,11 @@ public final class ProviderLifecycle {
                         != swapchainGeneration) {
             throw new IllegalStateException(
                     "Accepted frame belongs to a stale swapchain generation"
+            );
+        }
+        if (swapchainGeneration == 0L && acceptedFrame.swapchainGeneration() == 0L) {
+            throw new IllegalStateException(
+                    "Swapchain generation must be non-zero before activation"
             );
         }
         swapchainGeneration = acceptedFrame.swapchainGeneration();
@@ -121,6 +136,16 @@ public final class ProviderLifecycle {
         if (!safeFrameBoundary) {
             throw new IllegalStateException(
                     "Provider draining requires a safe frame boundary"
+            );
+        }
+        if (generation == 0L) {
+            throw new IllegalArgumentException(
+                    "Swapchain generation must be non-zero for draining"
+            );
+        }
+        if (generation < 0L) {
+            throw new IllegalArgumentException(
+                    "Swapchain generation must be positive"
             );
         }
         requireState(State.READY, State.ACTIVE, State.DRAINING);

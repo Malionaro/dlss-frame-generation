@@ -50,6 +50,14 @@ public record RayTracingFrameData(
                 (float) Math.cos(sunAngle),
                 0.22f
         ).normalize();
+        // M10: clamped horizon - when sun is below horizon (<0) clamp Y to keep shading stable (ambient fallback)
+        if (sunDirection.y < 0.0f) {
+            sunDirection.y = Math.max(sunDirection.y, 0.05f);
+            if (sunDirection.y < 0.05f) {
+                sunDirection.y = 0.05f;
+            }
+            sunDirection.normalize();
+        }
 
         return new RayTracingFrameData(
                 (float) position.x,

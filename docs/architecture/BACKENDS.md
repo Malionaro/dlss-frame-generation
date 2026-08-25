@@ -169,10 +169,9 @@ inputs. OptiScaler's own frame-generation input/output hooks stay disabled;
 the FidelityFX Vulkan proxy remains the sole owner of presentation.
 
 This bridge can select supported Vulkan upscalers for the standard FFX input.
-It does not change these renderer/API limits:
+Native AA remains 1:1, while Quality through Ultra Performance use aligned reduced
+world targets via the split world/display ownership described above. Remaining limits:
 
-- Native AA is currently the only valid mode because input and output have the
-  same dimensions.
 - XeFG remains unsupported on Vulkan.
 - FSR4/XeFG frame generation cannot replace the existing FSR 3.1 Vulkan proxy
   path merely by loading OptiScaler.

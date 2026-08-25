@@ -56,34 +56,15 @@ public final class AmdSettingsPanel {
         );
 
         // FSR 3.1 inserts one interpolated frame. Values above 2x would be a
-        // fake multi-frame mode and must not be exposed.
-        var btnMult = CycleButton.builder(
-                        (Integer value) -> Component.translatable(
-                                "dlss_fg.value.multiplier", value
-                        ),
-                        config.amdFsrMultiplier)
-                .withValues(2)
-                .create(rightX, topY, columnWidth, 20,
-                        Component.translatable("dlss_fg.option.fsr.fg_factor"), (button, value) -> {
-                            config.amdFsrMultiplier = value;
-                            config.save();
-                            try {
-                                StreamlineBridge.nSetFrameGenerationMode(FrameGenerationBackend.GpuVendor.AMD.vendorId(), config.amdFsrFgEnabled, value, config.uiRecomposition);
-                            } catch (UnsatisfiedLinkError e) {
-                                // Ignore
-                            }
-                        });
-        btnMult.active = amdSupported
-                && config.amdFsrFgEnabled
-                && !frameGenerationConflict
-                && !config.hybridD3D12PresentationEnabled;
-        screen.addSettingsWidget(
-                btnMult,
-                screen.frameGenerationDependentTooltip(
-                        FrameGenerationBackend.GpuVendor.AMD,
-                        "dlss_fg.tooltip.fsr.fg_factor"
-                )
-        );
+        // fake multi-frame mode and must not be exposed. The multiplier is
+        // shown as a read-only fixed value instead of a cycle button.
+        var lblMultFixed = net.minecraft.client.gui.components.Button.builder(
+                        Component.translatable("dlss_fg.option.frame_multiplier_fixed", 2),
+                        button -> {})
+                .bounds(rightX, topY, columnWidth, 20)
+                .build();
+        lblMultFixed.active = false;
+        screen.addSettingsWidget(lblMultFixed, "dlss_fg.tooltip.frame_multiplier_fixed");
 
         // Row 2 Left: FSR Mode
         var btnFsrMode = CycleButton.builder((Integer value) -> {

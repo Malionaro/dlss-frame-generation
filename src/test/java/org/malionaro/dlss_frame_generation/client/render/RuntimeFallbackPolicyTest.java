@@ -58,4 +58,39 @@ public class RuntimeFallbackPolicyTest {
         assertTrue(decision.frameGenerationEnabled());
         assertEquals(0, decision.upscalerMode());
     }
+
+    @Test
+    public void drainingIsExcludedFromFallback() {
+        // DRAINING must not trigger fallback when FG capability is present; only FAILED/UNAVAILABLE are failures
+        RuntimeFallbackPolicy.Decision decision =
+                RuntimeFallbackPolicy.resolve(
+                        FrameGenerationBackend.GpuVendor.NVIDIA,
+                        true,
+                        true,
+                        0,
+                        StreamlineBridge.CAP_FRAME_GENERATION | StreamlineBridge.CAP_UPSCALING,
+                        ProviderLifecycle.State.DRAINING
+                );
+        assertFalse(decision.fallbackActive(),
+                "DRAINING is an intentional transition, not a failure; fallback must stay inactive");
+        assertTrue(decision.frameGenerationEnabled());
+        assertEquals(0, decision.upscalerMode());
+    }
+
+    @Test
+    public void safeModeZeroRespectedWhenReconstructionUnavailable() {
+        RuntimeFallbackPolicy.Decision decision =
+                RuntimeFallbackPolicy.resolve(
+                        FrameGenerationBackend.GpuVendor.NVIDIA,
+                        true,
+                        true,
+                        0,
+                        0, // neither FG nor UPSCALING available
+                        ProviderLifecycle.State.FAILED
+                );
+        assertTrue(decision.fallbackActive());
+        assertFalse(decision.frameGenerationEnabled());
+        assertEquals(0, decision.upscalerMode(),
+                "safeMode==0 must stay 0 when reconstruction is unavailable (no promotion to 1)");
+    }
 }

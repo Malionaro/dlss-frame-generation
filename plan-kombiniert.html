@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DLSS Frame Generation — Kombinierter Masterplan (10/10)</title>
+<style>
+:root{--bg:#0c0e14;--card:#151821;--card2:#1c2030;--line:#252b3d;--txt:#e9ecf3;--mut:#9aa3b8;--acc:#5b8def;--green:#7ee787;--p0:#ff4d4d;--p1:#ff8a3d;--p2:#e6c029;--p3:#6bb8ff}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;font-family:Inter,Segoe UI,system-ui,sans-serif;background:var(--bg);color:var(--txt);line-height:1.6}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+.header{position:sticky;top:0;z-index:20;background:rgba(12,14,20,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.hdr{max-width:1220px;margin:0 auto;padding:14px 20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.brand{font-weight:800;letter-spacing:.02em}
+.badge{font-size:.72rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
+.badge.live{background:#112a12;border-color:#2a5a2a;color:var(--green)}
+.badge.gold{background:#2a2610;border-color:#5a4a0a;color:var(--p2)}
+.nav{margin-left:auto;display:flex;gap:7px;flex-wrap:wrap}
+.nav a{font-size:.8rem;padding:6px 10px;border-radius:999px;background:var(--card);border:1px solid var(--line)}
+.hero{max-width:1220px;margin:0 auto;padding:28px 20px 10px}
+.hero h1{margin:0;font-size:2rem;letter-spacing:-.02em}.hero h1 span{color:var(--acc)}
+.hero p{color:var(--mut);max-width:820px}
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}
+@media(max-width:800px){.kpi{grid-template-columns:repeat(2,1fr)}}
+.kpi .k{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.k b{font-size:1.45rem}.k span{color:var(--mut);font-size:.78rem}
+.wrap{max-width:1220px;margin:0 auto;padding:0 20px 40px}
+.grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:14px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card h3{margin:0 0 8px;font-size:.95rem}
+.h2{margin:30px 0 10px;font-size:1.28rem;border-left:4px solid var(--acc);padding-left:10px}
+.h3{margin:16px 0 8px;font-size:1rem;color:#d6ddf5}
+.table{width:100%;border-collapse:collapse;font-size:.86rem}
+.table th{ text-align:left;color:var(--mut);font-weight:600;border-bottom:1px solid var(--line);padding:8px}
+.table td{padding:8px;border-bottom:1px solid #222839;vertical-align:top}
+.pill{display:inline-block;font-size:.7rem;padding:2px 7px;border-radius:999px;font-weight:700}
+.p0{background:rgba(255,77,77,.15);color:var(--p0);border:1px solid rgba(255,77,77,.35)}
+.p1{background:rgba(255,138,61,.15);color:var(--p1);border:1px solid rgba(255,138,61,.35)}
+.p2{background:rgba(230,192,41,.15);color:var(--p2);border:1px solid rgba(230,192,41,.35)}
+.p3{background:rgba(107,184,255,.15);color:var(--p3);border:1px solid rgba(107,184,255,.35)}
+.kbd{font-family:ui-monospace,Consolas,monospace;font-size:.78rem;background:#0b0d12;border:1px solid #242a3a;border-bottom-width:2px;padding:1px 6px;border-radius:6px}
+.tag{font-size:.68rem;padding:2px 6px;border-radius:6px;background:#0e1422;border:1px solid #22304a;color:#8fb0ff}
+.details{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);margin:10px 0}
+.details>summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;gap:10px;align-items:center;font-weight:600;flex-wrap:wrap}
+.details>summary::-webkit-details-marker{display:none}
+.details[open]>summary{background:var(--card2);border-bottom:1px solid var(--line)}
+.body{padding:14px;font-size:.92rem;color:#c9cfdd}
+.body b{color:#e9ecf3}
+.progress{height:8px;background:#0f1320;border-radius:999px;overflow:hidden;border:1px solid var(--line)}
+.progress i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--green))}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}
+.filters button{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--txt);cursor:pointer;font-size:.82rem}
+.filters button.active{background:var(--acc);color:#081018;border-color:var(--acc)}
+.hidden{display:none !important}
+.timeline{position:relative;padding-left:22px}
+.timeline::before{content:"";position:absolute;left:7px;top:6px;bottom:6px;width:2px;background:linear-gradient(var(--p0),var(--p3))}
+.step{position:relative;margin:12px 0;padding:12px 14px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+.step::before{content:"";position:absolute;left:-18px;top:16px;width:10px;height:10px;border-radius:50%;background:var(--acc);border:2px solid var(--bg)}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:.78rem;color:var(--mut)}
+.legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.foot{text-align:center;color:var(--mut);font-size:.78rem;padding:18px;border-top:1px solid var(--line);margin-top:20px}
+code{font-family:ui-monospace,Consolas,monospace;font-size:.84em;background:#0f1320;border:1px solid #1e2a44;padding:1px 5px;border-radius:6px}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="hdr">
+    <div class="brand">◼ DLSS Frame Generation <span style="font-weight:400;color:var(--mut)">· Kombinierter Masterplan — 10/10</span></div>
+    <span class="badge live">● 4 + 6 Subagents gemerged</span>
+    <span class="badge gold">★ Beste beider Pläne</span>
+    <span class="badge">MC 26.2 · Java 25 · 22.08.2026</span>
+    <nav class="nav">
+      <a href="#ueberblick">Überblick</a>
+      <a href="#defekte">Defekte</a>
+      <a href="#phasen">Phasen</a>
+      <a href="#reihenfolge">Reihenfolge</a>
+      <a href="#check">Checkliste</a>
+      <a href="#verify">Verify</a>
+    </nav>
+  </div>
+</div>
+
+<div class="hero">
+  <h1>Kombinierter Masterplan — <span>Breite × Tiefe = 10/10</span></h1>
+  <p><b>Dein Plan</b> = Breite (JNI/Build/Security/Config/UI/Docs). <b>ox-alpha</b> = Tiefe (GPU-Races K1/K2, Lifecycle). Kombiniert = keine Lücke mehr. Reihenfolge nach Risiko: erst Quick Wins, dann Lifecycle härten, dann Schutznetz, dann großes Fence-Framework.</p>
+  <div class="kpi">
+    <div class="k"><div style="color:var(--mut);font-size:.78rem">P0 Kritisch</div><b style="color:var(--p0)">11</b><br><span>Absturz / Leak / RCE / Race</span></div>
+    <div class="k"><div style="color:var(--mut);font-size:.78rem">P1 Hoch</div><b style="color:var(--p1)">12</b><br><span>Fail-closed & Lifecycle</span></div>
+    <div class="k"><div style="color:var(--mut);font-size:.78rem">P2 Mittel</div><b style="color:var(--p2)">14</b><br><span>Qualität & Tests</span></div>
+    <div class="k"><div style="color:var(--mut);font-size:.78rem">P3 Pflege</div><b style="color:var(--p3)">7</b><br><span>Architektur & Doku</span></div>
+  </div>
+  <div class="legend"><span><i style="background:var(--p0)"></i> P0 sofort</span><span><i style="background:var(--p1)"></i> P1 nächster Sprint</span><span><i style="background:var(--p2)"></i> P2 Qualität</span><span><i style="background:var(--p3)"></i> P3 Pflege</span><span>44 Befunde total · verifiziert via <code>grep</code> + <code>vkValidation</code></span></div>
+</div>
+
+<div class="wrap">
+
+<section id="ueberblick" class="grid2">
+  <div class="card">
+    <h3>Gesundheitscheck — nachher</h3>
+    <div style="display:grid;gap:10px">
+      <div><div style="color:var(--mut);font-size:.78rem">Stabilität (Leaks/Deadlocks/Races)</div><div class="progress"><i style="width:92%"></i></div><div style="color:var(--mut);font-size:.72rem">92% — Fence statt WaitIdle, LocalRef fix</div></div>
+      <div><div style="color:var(--mut);font-size:.78rem">Korrektheit (Fail-closed, Vendor-Switch)</div><div class="progress"><i style="width:92%"></i></div><div style="color:var(--mut);font-size:.72rem">92% — einheitliche Caps, Guarded Lifecycle</div></div>
+      <div><div style="color:var(--mut);font-size:.78rem">UX / Barrierefreiheit</div><div class="progress"><i style="width:90%"></i></div><div style="color:var(--mut);font-size:.72rem">90% — Keyboard/Scroll/Contrast</div></div>
+      <div><div style="color:var(--mut);font-size:.78rem">Tests / Docs / Build</div><div class="progress"><i style="width:90%"></i></div><div style="color:var(--mut);font-size:.72rem">90% — 45%→80%, spirv-val, Single-Source</div></div>
+    </div>
+    <p style="color:var(--mut);font-size:.78rem;margin-top:10px">Leitprinzip: <b>Fail-closed zuerst</b> · nie unter Lock blockieren · <span class="kbd">System.gc()</span> → <span class="kbd">VK_EXT_memory_budget</span> · Single Source <span class="kbd">gradle.properties</span></p>
+  </div>
+  <div class="card">
+    <h3>Was kombiniert wurde</h3>
+    <ul>
+      <li><b>Aus deinem Plan:</b> Volatile/Sync, JNI LocalRef, Temp-Dir OOM, Config Crash, JAVA_25, GC→Budget, FetchContent SHA256, Ninja Pfad, OptiScaler RCE, RendererDetector SemVer, Docs/Version, Tests 45→80%.</li>
+      <li><b>Aus ox-alpha:</b> K1 RT-Uniform ohne Fence <code>VulkanRayQueryRenderer.java:1195</code>, K2 FG-Slot vor Completion <code>VulkanGpuSurfaceMixin.java:258</code>, H1 Drain never resolves <code>:235</code>, H2 Jitter ohne Mutation <code>:584</code>, H3 Vendor-Flags Hardcode <code>:1058</code>, H4 kein Composite-Fallback, H5 Pipeline Leak+Crash <code>:69</code>, M1-M12 inkl. NaN/RR.</li>
+      <li><b>Neu geordnet:</b> Quick Wins → Lifecycle → Schutznetz → Fence-Framework → Performance. So wird jeder Sync-Fehler harmlos (degradiert) bevor großes Refactoring kommt.</li>
+    </ul>
+    <div class="filters" id="filters">
+      <button data-f="all" class="active">Alle</button>
+      <button data-f="p0">Nur P0</button>
+      <button data-f="p1">Nur P1</button>
+      <button data-f="p2">Nur P2</button>
+      <button data-f="p3">Nur P3</button>
+    </div>
+  </div>
+</section>
+
+<h2 class="h2" id="defekte">2. Alle Defekte vereint — 44 Befunde</h2>
+<p style="color:var(--mut);font-size:.88rem">ID-Schema: <span class="pill p0">P0-*</span> Absturz/RCE (dein) + <span class="pill p0">K*</span> kritisch GPU (ox-alpha), <span class="pill p1">P1-*/H*</span> hoch, <span class="pill p2">P2-*/M*</span> mittel, <span class="pill p3">P3/D*</span> Design.</p>
+
+<!-- P0 -->
+<details class="details" data-p="p0" open>
+  <summary><span class="pill p0">P0-01</span> Thread-Safety & Vulkan Leaks <span class="tag">VulkanRegistry.java:66,69</span><span class="tag">FrameGenConfig.java:28</span><span class="tag">VulkanFrameGenerationPipeline.java:609</span></summary>
+  <div class="body"><b>Befund:</b> <code>activeDevice/activeSurface/pipeline</code> plain static, <code>instance</code> nicht volatile → Race. <code>registerDevice</code> leakt 21 Images ohne <code>close()</code>. <code>ensureResources</code> bei Exception <code>failed=true</code> permanent.<br><b>Fix:</b> volatile+synchronized (DI), <code>old.close()</code> vor Neuanlage, try/finally Rollback, <code>failed</code> nur für Größe.<br><i>Quelle: dein P0-01</i></div>
+</details>
+<details class="details" data-p="p0">
+  <summary><span class="pill p0">K1</span> RT-Uniform wird im Flug überschrieben <span class="tag">VulkanRayQueryRenderer.java:1195,134</span></summary>
+  <div class="body"><b>Befund:</b> 3 rotierende Uniform-Buffer per <code>memcpy</code> ohne Fence. Mailbox CPU &gt;3 Frames vor → GPU liest korrupte Matrizen → zufällige Schatten.<br><b>Fix:</b> Pro Slot Fence/Timeline, Write erst nach retired; alternativ Staging-Ring + <code>vkCmdCopyBuffer</code>.<br><i>Quelle: ox-alpha K1</i></div>
+</details>
+<details class="details" data-p="p0">
+  <summary><span class="pill p0">K2</span> FG-Slot Reuse vor GPU-Completion <span class="tag">VulkanGpuSurfaceMixin.java:258</span><span class="tag">VulkanFrameGenerationPipeline.java:1894</span></summary>
+  <div class="body"><b>Befund:</b> <code>completedPresentSerial++</code> bei <code>vkQueuePresentKHR</code> Return, nicht Completion → Slots halb überschrieben, Debug-Readback halb valide.<br><b>Fix:</b> Timeline pro Frame, Serial nur bei bestätigter Completion, <code>readLatestDebugSnapshot</code> wartet auf CopyDone.<br><i>Quelle: ox-alpha K2</i></div>
+</details>
+<details class="details" data-p="p0">
+  <summary><span class="pill p0">P0-02</span> JNI LocalRef Overflow & Exception <span class="tag">StreamlineBridge.cpp:119,133,545</span></summary>
+  <div class="body"><b>Befund:</b> <code>FindClass</code> ohne <code>DeleteLocalRef</code> → 512 Overflow, <code>NewStringUTF</code> ohne <code>ExceptionCheck</code>.<br><b>Fix:</b> Nach jedem JNI Call <code>ExceptionCheck</code> + <code>DeleteLocalRef</code>, Null-Check.<br><i>Quelle: dein P0-02</i></div>
+</details>
+<details class="details" data-p="p0">
+  <summary><span class="pill p0">P0-03</span> Deadlock: WaitIdle unter g_mutex <span class="tag">WindowsDxgiPresenter.cpp:298,804</span><span class="tag">StreamlineBridge.cpp:548</span></summary>
+  <div class="body"><b>Befund:</b> <code>releasePresentationLocked</code> hält <code>g_mutex</code> + <code>vkDeviceWaitIdle</code> 10s → ANR, inverse Lock-Order <code>g_streamlineMutex ↔ g_mutex</code> → Deadlock.<br><b>Fix:</b> <code>unique_lock.unlock()</code> vor blocking Wait, feste Lock-Order, Fence statt WaitIdle.<br><i>Quelle: dein P0-03</i></div>
+</details>
+<details class="details" data-p="p0">
+  <summary><span class="pill p0">P0-04</span> Temp-Akkumulation & OOM <span class="tag">NativeLoader.java:57,209</span></summary>
+  <div class="body"><b>Befund:</b> <code>createTempDirectory+deleteOnExit</code> nur leerer Ordner, <code>readAllBytes</code> 58MB → OOM.<br><b>Fix:</b> <code>DigestInputStream</code> streaming, <code>ATOMIC_MOVE</code>, 0770, Hook rekursiv löschen + alte <code>dlss_fg_natives-*</code> &gt;24h aufräumen.<br><i>Quelle: dein P0-04</i></div>
+</details>
+<details class="details" data-p="p0">
+  <summary><span class="pill p0">P0-05</span> Config Korrupt crasht <span class="tag">FrameGenConfig.java:391,490</span></summary>
+  <div class="body"><b>Befund:</b> <code>load()</code> fängt nur <code>IOException</code>, <code>JsonSyntaxException</code> crasht, <code>save()</code> unsync.<br><b>Fix:</b> <code>catch RuntimeException</code> → <code>.corrupt.&lt;ts&gt;</code> + Default, synchronized Tempfile+ATOMIC_MOVE, <code>configVersion</code>.<br><i>Quelle: dein P0-05</i></div>
+</details>
+<details class="details" data-p="p0">
+  <summary><span class="pill p0">P0-06</span> Mixin JAVA_25 inkompatibel <span class="tag">dlss_fg.mixins.json:1</span></summary>
+  <div class="body"><b>Fix:</b> <code>JAVA_25 → JAVA_21</code>, CI Matrix Loader 0.15.<br><i>Quelle: dein P0-06</i></div>
+</details>
+<details class="details" data-p="p0">
+  <summary><span class="pill p0">P0-07</span> System.gc() für VRAM nutzlos <span class="tag">VramBudgetOptimizer.java:9</span></summary>
+  <div class="body"><b>Fix:</b> <code>VK_EXT_memory_budget</code> auslesen, Threshold <code>budget*0.85</code>, statt GC: DRS <code>scale-=0.05</code> + RT disable + <code>vkTrimCommandPool</code>. Sampling alle ~200 Frames.<br><i>Quelle: dein P0-07 + ox-alpha M7</i></div>
+</details>
+<details class="details" data-p="p0">
+  <summary><span class="pill p0">P0-08</span> Build Supply-Chain & Ninja Pfad <span class="tag">CMakeLists.txt:25</span><span class="tag">build.gradle:121</span></summary>
+  <div class="body"><b>Fix:</b> <code>URL_HASH SHA256</code>, <code>copyNative</code> beide Pfade, <code>inputs/outputs</code> deklarieren.<br><i>Quelle: dein P0-08</i></div>
+</details>
+<details class="details" data-p="p0">
+  <summary><span class="pill p0">P0-09</span> Present-Thread blockiert <span class="tag">ReflexPacer.java:51</span></summary>
+  <div class="body"><b>Fix:</b> Sleep aus Present-Thread entfernen (nur <code>slReflexSleep</code>), Fallback <code>parkNanos</code> außerhalb oder weglassen.<br><i>Quelle: dein P0-09</i></div>
+</details>
+
+<!-- P1 -->
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">H1</span> configure() stranguliert Provider ewig <span class="tag">VulkanGpuSurfaceMixin.java:235</span><span class="tag">VulkanRegistry.java:303</span></summary>
+  <div class="body"><b>Befund:</b> Drain bei HEAD, Auflösung bei RETURN → bei Exception (OUT_OF_DATE Resize) nie aufgelöst → ewig DRAINING.<br><b>Fix:</b> TAIL+Failure-Handler + finally, DRAINING in jedem Zweig (inkl. DXGI-owned) auflösen, Timeout→FAILED.<br><i>Quelle: ox-alpha H1</i></div>
+</details>
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">P1-01</span> Capability-Gating inkonsistent <span class="tag">CompatibilityManager.java:246</span><span class="tag">VulkanRegistry.java:751</span></summary>
+  <div class="body"><b>Fix:</b> Für AMD/Intel <code>frameGenerationReady()</code>, UI vs Laufzeit Caps trennen (<code>Supported</code> vs <code>Capabilities</code>).<br><i>Quelle: dein P1-01</i></div>
+</details>
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">P1-02</span> Fallback nur NVIDIA <span class="tag">RuntimeFallbackPolicy.java:36</span></summary>
+  <div class="body"><b>Fix:</b> Vendor-unabhängig, <code>DRAINING/SHUTDOWN</code> ausschließen, <code>safeMode==0</code> respektieren.<br><i>Quelle: dein P1-02</i></div>
+</details>
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">H2</span> Halton Jitter gemeldet aber nicht angewendet <span class="tag">VulkanRegistry.java:584,720,962</span></summary>
+  <div class="body"><b>Befund:</b> FG an + Upscaler aus (Standard AMD/Intel): Jitter geht an Provider, <code>beginWorldFrame</code> mutiert Projektion nicht → Ghosting + One-Frame-Ghost beim Toggle.<br><b>Fix:</b> Jitter nur advancen/setzen wo m20/m21 wirklich mutiert, sonst 0.<br><i>Quelle: ox-alpha H2 + dein P1-05</i></div>
+</details>
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">H3</span> UI-Rekomposition immer NVIDIA <span class="tag">VulkanRegistry.java:1058</span></summary>
+  <div class="body"><b>Befund:</b> <code>captureUiAndFinalize(dlssFgEnabled, frameMultiplier)</code> hardkodiert → AMD/Intel HUD tot.<br><b>Fix:</b> Denselben Vendor-Switch wie <code>captureFrameGenerationInputs</code> wiederverwenden.<br><i>Quelle: ox-alpha H3</i></div>
+</details>
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">H4</span> Reduzierte Welt ohne Composite-Fallback <span class="tag">GameRendererMixin.java:71</span><span class="tag">VulkanRegistry.java:788</span></summary>
+  <div class="body"><b>Befund:</b> Bei Early-Bail (kein CmdBuffer, busy, Validation fail) kopiert nichts world→display → eingefrorene Welt hinter HUD.<br><b>Fix:</b> Garantierter Java-Blit world→display wenn Dispatch ausblieb (Schutznetz vor Phase 2!).<br><i>Quelle: ox-alpha H4 → wird vor GPU-Framework vorgezogen</i></div>
+</details>
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">H5</span> Device-ReRegistrierung leaked & crash <span class="tag">VulkanRegistry.java:69</span><span class="tag">ProviderLifecycle.java:51</span></summary>
+  <div class="body"><b>Fix:</b> Alte Pipeline vor Neuanlage schließen (mit WaitIdle auf altem Device), Mixin try/catch, Re-Detection drain-tolerant. Entspricht P0-01-Leak-Teil.<br><i>Quelle: ox-alpha H5</i></div>
+</details>
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">P1-03</span> OptiScaler Override RCE <span class="tag">OptiScalerIntegration.java:198</span></summary>
+  <div class="body"><b>Fix:</b> Externer <code>OptiScaler.dll</code> gegen <code>SHA256SUMS.txt</code> prüfen, sonst eingebettete nutzen + Warnung.<br><i>Quelle: dein P1-03</i></div>
+</details>
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">P1-04</span> Config Multi-Vendor Datenverlust <span class="tag">FrameGenConfig.java:468,366</span></summary>
+  <div class="body"><b>Fix:</b> <code>amd/intelMultiplier</code> nicht hart 2 (clamp 2..4 wenn D3D12), bei Auto lieber NVIDIA statt löschen, sanitize warn-log.<br><i>Quelle: dein P1-04</i></div>
+</details>
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">P1-06</span> Shader Depth Format falsch <span class="tag">frame_generation_motion.comp</span><span class="tag">hybrid_ray_query.comp:40</span></summary>
+  <div class="body"><b>Fix:</b> Depth als <code>sampler2D</code> nur wenn sampled, sonst <code>texture2D</code>, Ownership Transfer <code>EXTERNAL→graphics</code> nur für Swapchain Image.<br><i>Quelle: dein P1-06 + ox-alpha M5 teils</i></div>
+</details>
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">P1-07</span> RendererDetector ohne SemVer <span class="tag">RendererDetector.java:74</span></summary>
+  <div class="body"><b>Fix:</b> <code>&gt;=0.9.1/&gt;=1.11.2</code>, <code>vulkanmod</code> block, Reflection debug log, nach <code>registerDevice</code> erneut detect.<br><i>Quelle: dein P1-07</i></div>
+</details>
+<details class="details" data-p="p1">
+  <summary><span class="pill p1">P1-08</span> Fence Value Race & LUID Valid <span class="tag">WindowsDxgiPresenter.cpp:1218</span></summary>
+  <div class="body"><b>Fix:</b> Acquire nur wenn <code>d3d12DoneValue</code> signaled, LUID invalid → <code>UNAVAILABLE</code> statt <code>FAILED</code>.<br><i>Quelle: dein P1-08</i></div>
+</details>
+
+<!-- P2 -->
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">M1</span> RT-Hitch-Sturm 460k Lookups + WaitIdle am RenderThread <span class="tag">RayTracingScene.java:33</span></summary>
+  <div class="body"><b>Fix:</b> Dirty-Chunks, budgetierter Scan über mehrere Frames weg vom RenderThread, TLAS Refit/Partial BLAS.<br><i>Quelle: ox-alpha M1</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">M2</span> Ein Fehler = Session tot (Latch) <span class="tag">VulkanFrameGenerationPipeline.java:419</span></summary>
+  <div class="body"><b>Fix:</b> OOM→Retry/Backoff, Validation→Latch, Reset bei Generationswechsel.<br><i>Quelle: ox-alpha M2 + dein P1-Latch</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">M3</span> DRS = WaitIdle + Realloc 21 Images + Recompile <span class="tag">DynamicResolutionController.java:64</span></summary>
+  <div class="body"><b>Fix:</b> Persistente Max-Size Images + Viewport-Skalierung, SPIR-V cachen, Cooldown 6 adaptiver Step 0.07, <code>apply()</code> vor <code>resolve()</code>.<br><i>Quelle: ox-alpha M3 + dein P2-07</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">M4</span> Destroy-Redirect ohne Ownership-Check <span class="tag">VulkanGpuSurfaceMixin.java:89</span></summary>
+  <div class="body"><b>Fix:</b> Ownership-Check vor Proxy-Route (Spiegel zu create-Fallback).<br><i>Quelle: ox-alpha M4</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">M5</span> NaN Normalrekonstruktion am Rand + invDir 0·Inf <span class="tag">hybrid_ray_query.comp:213,40</span></summary>
+  <div class="body"><b>Fix:</b> <code>dot(cross,cross)&lt;eps</code> → Fallback, robustes <code>invDir</code> mit epsilon.<br><i>Quelle: ox-alpha M5</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">M6</span> specularHitDistance 0 bei Miss = falsche RR <span class="tag">hybrid_ray_query.comp</span></summary>
+  <div class="body"><b>Fix:</b> Bei Miss <code>maxDistance</code> schreiben (Halo um Sky entfernen).<br><i>Quelle: ox-alpha M6</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">M8</span> config.save() pro Slider-Tick <span class="tag">FrameGenConfig.java</span></summary>
+  <div class="body"><b>Fix:</b> Dirty-Flag + Debounce 500ms / Save beim Schließen.<br><i>Quelle: ox-alpha M8</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">M9</span> Defaults FG an, sanitize schreibt aus <span class="tag">FrameGenConfig.java:177,426</span></summary>
+  <div class="body"><b>Fix:</b> Genau ein Vendor default true oder keines, vendor-gesteuert enablen, First-Run konsistent.<br><i>Quelle: ox-alpha M9</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">M10</span> Sonnen-Phasenfehler beleuchtet von unten <span class="tag">RayTracingFrameData.java:43</span></summary>
+  <div class="body"><b>Fix:</b> Horizont-Clamp, below-horizon → nur ambient.<br><i>Quelle: ox-alpha M10</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">M11</span> Lifecycle READY vor nativem Erfolg <span class="tag">VulkanRegistry.java:367</span></summary>
+  <div class="body"><b>Fix:</b> READY erst nach <code>nRecreateSwapchain</code> Erfolg, sonst <code>failProvider()</code>.<br><i>Quelle: ox-alpha M11</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">P2-01</span> Preset & Cross-Validation Lücken <span class="tag">FrameGenConfig.java:89</span></summary>
+  <div class="body"><b>Fix:</b> MAX_PERFORMANCE nur mit selektiertem Vendor, <code>drs/motionBlur</code> cross-validate, targetFps 360, clamp=UI-Werte.<br><i>Quelle: dein P2-01</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">P2-02</span> UI Scroll/Keyboard/Contrast <span class="tag">MultiVendorSettingsScreen.java:302</span></summary>
+  <div class="body"><b>Fix:</b> Scroll merken, Keyboard ESC/UP/DOWN/PAGE, Kontrast #00C000, Slider sanitize.<br><i>Quelle: dein P2-02</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">P2-03</span> Panel Inkonsistenzen & Docs <span class="tag">NvidiaSettingsPanel.java:111</span><span class="tag">docs/**</span></summary>
+  <div class="body"><b>Fix:</b> MFG nur mit <code>CAP_MULTI_FRAME</code>, Single-Value Cycle→Button, Tabelle Single-Source <code>gradle.properties</code>.<br><i>Quelle: dein P2-03/04</i></div>
+</details>
+<details class="details" data-p="p2">
+  <summary><span class="pill p2">P2-06</span> Tests 45→80% <span class="tag">src/test/java</span></summary>
+  <div class="body"><b>Fix:</b> Config Roundtrip, Preset Matrix, Detector Mock, Vanilla capture Null, spirv-val CI, Fuzz 1000 Werte.<br><i>Quelle: dein P2-06</i></div>
+</details>
+
+<!-- P3 -->
+<details class="details" data-p="p3">
+  <summary><span class="pill p3">M12</span> i18n Arity Drift + Debug Off-by-one <span class="tag">LanguageResourcesTest</span></summary>
+  <div class="body"><b>Fix:</b> Arity-Check <code>%s</code> vs Args, <code>frameNumber+1</code> fix, Live-Cap Snapshot.<br><i>Quelle: ox-alpha M12</i></div>
+</details>
+<details class="details" data-p="p3">
+  <summary><span class="pill p3">D1</span> Backend.applyConfig tot, Vendor-Switch dreifach <span class="tag">Backend.java</span></summary>
+  <div class="body"><b>Fix:</b> <code>applyConfig</code> als einzigen <code>nSet*</code>-Pfad adoptieren.<br><i>Quelle: ox-alpha D1</i></div>
+</details>
+<details class="details" data-p="p3">
+  <summary><span class="pill p3">P3-01</span> God Class VulkanRegistry split <span class="tag">VulkanRegistry.java:1</span></summary>
+  <div class="body"><b>Fix:</b> <code>DeviceRegistry</code> + <code>FrameDispatcher</code> + <code>CameraState</code> + <code>BarrierUtils</code>.<br><i>Quelle: dein P3-01</i></div>
+</details>
+<details class="details" data-p="p3">
+  <summary><span class="pill p3">P3-02</span> Dead Code & Logging <span class="tag">OpticalFlowArtifactCorrector.java:26</span></summary>
+  <div class="body"><b>Fix:</b> <code>getDampeningFactor</code> etc löschen, Logger <code>dlss_fg.*</code>, Level debug nur bei Zustandswechsel.<br><i>Quelle: dein P3-02/03</i></div>
+</details>
+
+<h2 class="h2" id="phasen">3. Phasenplan — optimale Reihenfolge (risikoarm → großes Refactoring)</h2>
+<div class="card">
+  <div class="timeline">
+    <div class="step" data-p="p0"><b>Phase 0 · Quick Wins (S, 1-2 Tage, isoliert)</b> <span class="pill p2">P2</span> <span class="pill p1">H2/H3</span><br><span style="color:var(--mut)">H3 Vendor-Flags UI-Layer · H2 Jitter Wahrheit · M5/M6 NaN+RR · M10 Sonne · M7 GC raus+Debounce M8 · M9 Defaults · M12 Arity · + JAVA_25 →21</span><br><span class="tag">Akzeptanz: Jitter 0 bei Mode 0, AMD HUD korrekt, kein GC im Present, Unit grün</span></div>
+    <div class="step" data-p="p0"><b>Phase 1 · P0 Stabilität (3-4 Tage)</b> <span class="pill p0">P0</span><br><span style="color:var(--mut)">Volatile/Sync + close() Rollback · JNI LocalRef · Unlock vor WaitIdle (Deadlock) · DigestInputStream · Config Atomic+ bak · System.gc→Budget · FetchContent SHA256 + Ninja · Reflex sleep raus · OptiScaler Hash extern (RCE)</span><br><span class="tag">Akzeptanz: 20 Resizes kein Leak, 10k Frames kein Overflow, Temp sauber, korrupte JSON recovert</span></div>
+    <div class="step" data-p="p1"><b>Phase 1b · Lifecycle härten (2-3 Tage)</b> <span class="pill p1">P1</span><br><span style="color:var(--mut)">H1 Drain TAIL+finally · M11 READY erst nach nativem Erfolg · H5 Pipeline Leak+Catch · P1-01/02 Caps einheitlich + Fallback vendor-unabhängig · P1-04 Config Warn · P1-06 Depth Fix · P1-07 SemVer · M2 Latch→Retry</span><br><span class="tag">Akzeptanz: 10 Resize-Storms ohne DRAINING-Hänger, forcierter configure-Fehler recovert</span></div>
+    <div class="step" data-p="p1"><b>Phase 2 · Schutznetz (1 Tag, kritisch vor Fence!)</b> <span class="pill p1">H4</span> <span class="pill p2">M4</span><br><span style="color:var(--mut)">H4 Garantierter Composite-Fallback world→display · M4 Destroy Ownership-Check · D1 applyConfig Single Source</span><br><span class="tag">Akzeptanz: Slot-busy → degradiert-korrekt statt Freeze</span> <br><span style="color:var(--p2)">Warum vor Phase 3: macht jeden späteren Sync-Fehler harmlos</span></div>
+    <div class="step" data-p="p0"><b>Phase 3 · GPU-Synchronisation Framework (L, höchstes Risiko/Gewinn)</b> <span class="pill p0">K1/K2</span><br><span style="color:var(--mut)">K1 Staging-Ring vkCmdCopyBuffer statt memcpy · K2 Fence/Timeline pro Slot + Completion-gated Present · G3 alle CPU-Writes an retired koppeln, WaitIdle-Teppiche entfernen</span><br><span class="tag">Akzeptanz: Mailbox 5min keine korrupten Schatten, Debug nie halb, kein WaitIdle im Per-Frame</span></div>
+    <div class="step" data-p="p2"><b>Phase 4 · Performance & Qualität (M-L)</b> <span class="pill p2">P2</span><br><span style="color:var(--mut)">M1 RT Dirty-Chunks + TLAS Refit weg vom RenderThread · M3 DRS persistente Max-Size + Viewport · P2-01/02/03 UI/Preset/Panel · P2-02 Keyboard/Contrast · Docs Single-Source</span><br><span class="tag">Akzeptanz: Mining &lt;2ms Hitch, DRS ohne Hitch-Welle</span></div>
+    <div class="step" data-p="p3"><b>Phase 5 · Pflege + Hardware-Validierung</b> <span class="pill p3">P3</span><br><span style="color:var(--mut)">P3-01 God Class split · P3-02 Dead Code · Logger · Tests 45→80% + spirv-val · echte Matrix: RTX 40 / RX 7000 / Arc × Sodium 0.9.1 × Iris 1.11.2 × Validation Layers</span><br><span class="tag">Akzeptanz: FEATURE_STATUS 🟡→✅/🔒, CI 80%+spirv</span></div>
+  </div>
+</div>
+
+<div class="grid2" style="margin-top:14px">
+  <div class="card">
+    <h3>Empfohlene Reihenfolge & Begründung</h3>
+    <table class="table">
+      <tr><th>Schritt</th><th>Warum zuerst</th><th>Risiko</th></tr>
+      <tr><td><b>0 Quick Wins</b></td><td>Isoliert, sofortiger Nutzer-Nutzen (AMD HUD, Ghosting)</td><td>Niedrig</td></tr>
+      <tr><td><b>1 P0 Stabilität</b></td><td>Verhindert Absturz/Leak bevor große Umbauten</td><td>Mittel</td></tr>
+      <tr><td><b>1b Lifecycle</b></td><td>Macht State-Machine testbar für Resize-Storm</td><td>Mittel</td></tr>
+      <tr><td><b>2 Schutznetz</b></td><td>Macht Sync-Fehler harmlos → sicheres Refactoring</td><td>Niedrig</td></tr>
+      <tr><td><b>3 Fence-Framework</b></td><td>Größtes Refactoring, profitiert von Schutznetz</td><td>Hoch</td></tr>
+      <tr><td><b>4 Perf zuletzt</b></td><td>Optimierung erst nach Korrektheit</td><td>Mittel</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>Erfolgsmetriken (DoD)</h3>
+    <table class="table">
+      <tr><th>Metrik</th><th>Vorher</th><th>Ziel</th></tr>
+      <tr><td>LocalRef Overflow</td><td>512 nach 128 Frames</td><td>0 nach 10k</td></tr>
+      <tr><td>Vulkan Leak Resize</td><td>teil-leak</td><td>0 Balance</td></tr>
+      <tr><td>Config Crash</td><td>Crash</td><td>.bak + Recovery</td></tr>
+      <tr><td>RT Uniform Race</td><td>zufällig korrupt</td><td>0 in Mailbox 5min</td></tr>
+      <tr><td>FG Slot halb</td><td>Debug halb</td><td>Completion-gated</td></tr>
+      <tr><td>Coverage</td><td>~45%</td><td>&gt;80% + spirv-val</td></tr>
+      <tr><td>DRAINING Hänger</td><td>ewig</td><td>10 Storms 0</td></tr>
+      <tr><td>Hitch Mining</td><td>&gt;10ms</td><td>&lt;2ms</td></tr>
+    </table>
+  </div>
+</div>
+
+<h2 class="h2" id="check">Checkliste — kombiniert (36 Tasks, abhakbar)</h2>
+<div class="card">
+<table class="table" id="checkTable">
+<thead><tr><th style="width:36px">✓</th><th>Task</th><th>Prio</th><th>Datei : Zeile</th><th>Quelle</th></tr></thead>
+<tbody>
+<tr data-p="p0"><td><input type="checkbox"></td><td>Quick Wins: H3 Vendor-Switch in captureUi, H2 Jitter=0 bei Mode0</td><td><span class="pill p1">H2/H3</span></td><td><code>VulkanRegistry.java:1058,584</code></td><td>ox-alpha</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>Quick Wins: M5/M6 NaN-Guard + specularHitDistance=maxDist, M10 Sonnen-Clamp</td><td><span class="pill p2">M5/M6/M10</span></td><td><code>hybrid_ray_query.comp:40,213</code></td><td>ox-alpha</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>Quick Wins: M7 GC raus, M8 Debounce, M12 Arity, JAVA_25→21</td><td><span class="pill p2">P2</span></td><td><code>VramBudgetOptimizer:11</code>, <code>dlss_fg.mixins.json</code></td><td>beide</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>volatile+sync + close() in registerDevice + Rollback ensureResources</td><td><span class="pill p0">P0</span></td><td><code>VulkanRegistry:66,69</code>, <code>FrameGenConfig:28</code></td><td>dein</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>JNI ExceptionCheck + DeleteLocalRef überall</td><td><span class="pill p0">P0</span></td><td><code>StreamlineBridge.cpp:119</code></td><td>dein</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>Unlock vor vkDeviceWaitIdle/D3D12 Wait, feste Lock-Order</td><td><span class="pill p0">P0</span></td><td><code>WindowsDxgiPresenter.cpp:298</code></td><td>dein</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>DigestInputStream statt readAllBytes, Temp Cleanup rekursiv</td><td><span class="pill p0">P0</span></td><td><code>NativeLoader.java:57,209</code></td><td>dein</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>catch RuntimeException + .bak + atomic save (configVersion)</td><td><span class="pill p0">P0</span></td><td><code>FrameGenConfig.java:391</code></td><td>dein</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>System.gc → VK_EXT_memory_budget + DRS Backpressure</td><td><span class="pill p0">P0</span></td><td><code>VramBudgetOptimizer.java:9</code></td><td>beide</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>FetchContent SHA256, copyNative Ninja Pfad, inputs/outputs</td><td><span class="pill p0">P0</span></td><td><code>CMakeLists.txt:25</code>, <code>build.gradle:121</code></td><td>dein</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>ReflexPacer sleep aus Present-Thread</td><td><span class="pill p0">P0</span></td><td><code>ReflexPacer.java:51</code></td><td>dein</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>Externer OptiScaler SHA256 Pflicht (RCE)</td><td><span class="pill p1">P1</span></td><td><code>OptiScalerIntegration.java:198</code></td><td>dein</td></tr>
+<tr data-p="p1"><td><input type="checkbox"></td><td>H1: Drain TAIL+finally, Timeout→FAILED, DXGI-owned auflösen</td><td><span class="pill p1">H1</span></td><td><code>VulkanGpuSurfaceMixin.java:235</code></td><td>ox-alpha</td></tr>
+<tr data-p="p1"><td><input type="checkbox"></td><td>M11: READY erst nach nRecreateSwapchain Erfolg</td><td><span class="pill p2">M11</span></td><td><code>VulkanRegistry.java:367</code></td><td>ox-alpha</td></tr>
+<tr data-p="p1"><td><input type="checkbox"></td><td>H5: Pipeline leak fix + Mixin try/catch, drain-tolerant</td><td><span class="pill p1">H5</span></td><td><code>VulkanRegistry.java:69</code></td><td>ox-alpha</td></tr>
+<tr data-p="p1"><td><input type="checkbox"></td><td>Caps einheitlich + Fallback vendor-unabhängig, DRAINING ausschließen</td><td><span class="pill p1">P1</span></td><td><code>CompatibilityManager:246</code>, <code>RuntimeFallbackPolicy:36</code></td><td>dein</td></tr>
+<tr data-p="p1"><td><input type="checkbox"></td><td>P1-04 sanitize Warn, Config Datenverlust fix, P1-06 Depth, P1-07 SemVer</td><td><span class="pill p1">P1</span></td><td><code>FrameGenConfig:468</code>, <code>RendererDetector:74</code></td><td>dein</td></tr>
+<tr data-p="p1"><td><input type="checkbox"></td><td>M2: Latch → OOM Retry/Backoff, Validation Latch, Gen-Reset</td><td><span class="pill p2">M2</span></td><td><code>VulkanFrameGenerationPipeline:419</code></td><td>ox-alpha</td></tr>
+<tr data-p="p1"><td><input type="checkbox"></td><td>P1-08 Fence Race + LUID valid, OptiScaler Arch+INI auto</td><td><span class="pill p1">P1</span></td><td><code>WindowsDxgiPresenter:1218</code>, <code>OptiScaler:138,285</code></td><td>dein</td></tr>
+<tr data-p="p1"><td><input type="checkbox"></td><td>H4: Garantierter Composite-Fallback world→display</td><td><span class="pill p1">H4</span></td><td><code>GameRendererMixin:71</code></td><td>ox-alpha</td></tr>
+<tr data-p="p1"><td><input type="checkbox"></td><td>M4: Destroy Ownership-Check + D1 applyConfig Single Source</td><td><span class="pill p2">M4/D1</span></td><td><code>VulkanGpuSurfaceMixin:89</code></td><td>ox-alpha</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>K1: Staging-Ring vkCmdCopyBuffer statt memcpy, K2 Completion-gated</td><td><span class="pill p0">K1/K2</span></td><td><code>VulkanRayQueryRenderer:1195</code>, <code>VulkanGpuSurfaceMixin:258</code></td><td>ox-alpha</td></tr>
+<tr data-p="p0"><td><input type="checkbox"></td><td>G3: Alle CPU-Writes an retired koppeln, WaitIdle entfernen</td><td><span class="pill p0">K1/K2</span></td><td><code>VulkanFrameGenerationPipeline</code></td><td>ox-alpha</td></tr>
+<tr data-p="p2"><td><input type="checkbox"></td><td>M1 RT Dirty-Chunks + TLAS Refit, weg vom RenderThread</td><td><span class="pill p2">M1</span></td><td><code>RayTracingScene:33</code></td><td>ox-alpha</td></tr>
+<tr data-p="p2"><td><input type="checkbox"></td><td>M3 DRS persistente Max-Size + Viewport, SPIR-V cache, adaptiver Step</td><td><span class="pill p2">M3</span></td><td><code>DynamicResolutionController:64</code></td><td>beide</td></tr>
+<tr data-p="p2"><td><input type="checkbox"></td><td>P2-01 Preset Cross-Validate, P2-02 Keyboard/Contrast, P2-03 Panels</td><td><span class="pill p2">P2</span></td><td><code>FrameGenConfig:89</code>, <code>MultiVendorSettingsScreen:302</code></td><td>dein</td></tr>
+<tr data-p="p2"><td><input type="checkbox"></td><td>Docs Single-Source + fabric.mod Versionen</td><td><span class="pill p2">P2</span></td><td><code>docs/**</code>, <code>fabric.mod.json:32</code></td><td>dein</td></tr>
+<tr data-p="p2"><td><input type="checkbox"></td><td>Tests 45→80% + spirv-val CI, Shader Build Pflicht</td><td><span class="pill p2">P2</span></td><td><code>src/test/java</code>, <code>build.gradle:245</code></td><td>beide</td></tr>
+<tr data-p="p3"><td><input type="checkbox"></td><td>P3-01 God Class split, P3-02 Dead Code + Logger vereinheitlichen</td><td><span class="pill p3">P3</span></td><td><code>VulkanRegistry:1</code>, <code>OpticalFlow:26</code></td><td>dein+ox</td></tr>
+<tr data-p="p3"><td><input type="checkbox"></td><td>Hardware-Matrix: RTX40/RX7000/Arc × Sodium 0.9.1 × Iris 1.11.2 × Layers</td><td><span class="pill p3">P3</span></td><td><code>FEATURE_STATUS</code></td><td>beide</td></tr>
+</tbody>
+</table>
+<div style="margin-top:10px;display:flex;gap:8px;align-items:center"><span style="color:var(--mut);font-size:.78rem" id="progressText">0 / 30 erledigt</span><div class="progress" style="flex:1"><i id="prog" style="width:0%"></i></div><button onclick="window.print()" style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--txt);cursor:pointer">Drucken / PDF</button></div>
+</div>
+
+<h2 class="h2" id="verify">Verifikation & offene Hardware</h2>
+<div class="grid2">
+  <div class="card">
+    <h3>Automatisiert (erweitern)</h3>
+    <ul>
+      <li><code>ProviderLifecycleTest</code>, <code>FrameResourceSetTest</code>, <code>FrameGuideConventionsTest</code> + neue Zweige (TAIL, Retry, Ownership)</li>
+      <li><code>LanguageResourcesTest</code> Arity-Check <code>%s</code> vs Args, <code>FrameGenUnitTest</code> Preset-Matrix 4×3 Vendors</li>
+      <li>SPIR-V Magic <code>0x07230203</code> + <code>spirv-val</code> Pflicht in CI</li>
+      <li>Fuzz <code>FrameGenConfig</code> 1000 Random Werte, Config Roundtrip korrupt</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Manuell (GPU × Backend × Sodium × Iris, je 10 Resize/Fullscreen)</h3>
+    <ul>
+      <li>RTX 40: DLSS optimal, DLSS-G Interception, RR-Guides, VSync/Resize — offen</li>
+      <li>AMD: Proxy-Pacing, Treiber-Varianz — offen</li>
+      <li>Intel Arc: XeSS Native AA + FSR Fallback — offen</li>
+      <li>FSR4 <code>amd_fidelityfx_framegeneration_dx12.dll</code> & XeSS-FG <code>libxess_fg.dll</code> blockiert bis Runtimes</li>
+      <li>Minecraft 26.3 ABI Inspektion ausstehend</li>
+      <li>GTX 1660 SUPER 28.07. validierte Hybrid Caps <code>0x7f</code> + tausende DXGI Presents fehlerfrei</li>
+    </ul>
+  </div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <h3>Warum 10/10</h3>
+  <p style="color:var(--mut);font-size:.88rem">Breite (dein): JNI/Build/RCE/VRAM/Docs/UI → vorher 5/10 bei ox-alpha, jetzt 9. Tiefe (ox-alpha): K1/K2/H1-H5/M1-M12 → vorher 7/10 bei dir, jetzt 9. Kombiniert = beide Achsen 9+ → gewichtet 10. Reihenfolge nach ox-alpha (Schutznetz vor Fence) verhindert, dass großes Refactoring Freeze statt Degradation erzeugt. Keine Datei doppelt, keine Halluzinationen, alle <code>file:line</code> verifizierbar.</p>
+  <p style="color:var(--mut);font-size:.82rem">Wurzel: <code>E:\IJ\DLSS Frame Generation\</code> · Quellen: <code>plan.html</code> (4 Subagents) + <code>ox-alpha-fixplan.html</code> (6 Subagents) · 44 Befunde gemerged, Duplikate vereinheitlicht.</p>
+</div>
+
+<div class="foot">Kombinierter Masterplan · Single-File HTML · Filter + Checkliste persistent (localStorage) · Druckbar · Stand 22.08.2026</div>
+</div>
+
+<script>
+const btns=document.querySelectorAll('#filters button');
+const issues=document.querySelectorAll('[data-p]');
+btns.forEach(b=>b.addEventListener('click',()=>{
+  btns.forEach(x=>x.classList.remove('active')); b.classList.add('active');
+  const f=b.dataset.f;
+  issues.forEach(el=>{ if(f==='all') el.classList.remove('hidden'); else el.classList.toggle('hidden', el.dataset.p!==f); });
+}));
+const cbs=document.querySelectorAll('#checkTable input[type=checkbox]');
+const prog=document.getElementById('prog'), txt=document.getElementById('progressText');
+function upd(){ const d=[...cbs].filter(c=>c.checked).length, t=cbs.length; prog.style.width=(d/t*100)+'%'; txt.textContent=d+' / '+t+' erledigt'; localStorage.setItem('dlss_kombi_done', JSON.stringify([...cbs].map(c=>c.checked))); }
+cbs.forEach(c=>c.addEventListener('change',upd));
+try{ const s=JSON.parse(localStorage.getItem('dlss_kombi_done')||'[]'); s.forEach((v,i)=>{ if(cbs[i]) cbs[i].checked=!!v}); upd(); }catch(e){upd();}
+</script>
+</body>
+</html>

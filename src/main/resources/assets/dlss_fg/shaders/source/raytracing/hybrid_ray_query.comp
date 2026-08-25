@@ -38,7 +38,12 @@ struct Hit {
 };
 
 float intersectAabb(vec3 origin, vec3 direction, vec3 minimum, vec3 maximum, out vec3 normal) {
-    vec3 inverseDirection = 1.0 / direction;
+    // M5: robust inverseDirection - avoid div-by-zero / Inf for axis-aligned rays
+    vec3 safeDir = direction;
+    safeDir.x = abs(safeDir.x) < 1e-6 ? (safeDir.x >= 0.0 ? 1e-6 : -1e-6) : safeDir.x;
+    safeDir.y = abs(safeDir.y) < 1e-6 ? (safeDir.y >= 0.0 ? 1e-6 : -1e-6) : safeDir.y;
+    safeDir.z = abs(safeDir.z) < 1e-6 ? (safeDir.z >= 0.0 ? 1e-6 : -1e-6) : safeDir.z;
+    vec3 inverseDirection = 1.0 / safeDir;
     vec3 t0 = (minimum - origin) * inverseDirection;
     vec3 t1 = (maximum - origin) * inverseDirection;
     vec3 nearValues = min(t0, t1);
@@ -226,10 +231,12 @@ vec3 reconstructRasterNormal(
         * rayDistanceForDepth(rightDepth, rightDirection);
     vec3 downPosition = downDirection
         * rayDistanceForDepth(downDepth, downDirection);
-    vec3 normal = normalize(cross(
-        downPosition - centerPosition,
-        rightPosition - centerPosition
-    ));
+    // M5/M6: NaN-guard - degenerate triangle produces zero cross; fallback to view-facing normal
+    vec3 crossVec = cross(downPosition - centerPosition, rightPosition - centerPosition);
+    if (dot(crossVec, crossVec) < 1e-12) {
+        return -centerDirection;
+    }
+    vec3 normal = normalize(crossVec);
     if (dot(normal, -centerDirection) < 0.0) {
         normal = -normal;
     }
@@ -279,7 +286,8 @@ void main() {
                 1.0
             )
         );
-        imageStore(specularHitDistanceImage, pixel, vec4(0.0));
+        // M6: specularHitDistance on miss = maxDistance (not 0) for correct denoiser / reprojection
+        imageStore(specularHitDistanceImage, pixel, vec4(frame.renderParameters.z));
         return;
     }
 
@@ -322,7 +330,7 @@ void main() {
     vec3 specularAlbedo = (flags & 1u) != 0u
         ? vec3(0.62)
         : vec3(0.035);
-    float specularHitDistance = 0.0;
+    float specularHitDistance = frame.renderParameters.z;
     if (frame.renderParameters.w > 0.5) {
         vec3 reflectionDirection = reflect(direction, primary.normal);
         Hit reflection = traceScene(
@@ -337,7 +345,8 @@ void main() {
             : srgbToLinear(vec3(0.32, 0.48, 0.72));
         float reflectivity = (flags & 1u) != 0u ? 0.38 : 0.08;
         result = mix(result, reflectionColor, reflectivity);
-        specularHitDistance = reflection.valid ? reflection.distance : 0.0;
+        // M6: on reflection miss use maxDistance instead of 0 for stable hit-distance signal
+        specularHitDistance = reflection.valid ? reflection.distance : frame.renderParameters.z * (0.25 + 0.12 * frame.cameraForward.w);
     }
 
     imageStore(

@@ -40,11 +40,53 @@ public class NvidiaBackend implements FrameGenerationBackend {
         if (!isSupported()) return;
 
         try {
-            StreamlineBridge.nSetDlssMode(config.dlssUpscalingMode, 0.0f);
-            StreamlineBridge.nSetFgMode(config.dlssFgEnabled, config.frameMultiplier, config.uiRecomposition);
+            // Single place for NVIDIA mode changes. VulkanRegistry calls applyConfig, no direct nSet* elsewhere.
+            // This respects session-only fallback through one path.
+            int supported = StreamlineBridge.nGetBackendSupportedCapabilities(GpuVendor.NVIDIA.vendorId());
+            org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle.State state =
+                    org.malionaro.dlss_frame_generation.client.FrameGenMod.compatibilityManager() != null
+                            ? org.malionaro.dlss_frame_generation.client.FrameGenMod.compatibilityManager().providerSnapshot().state()
+                            : org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle.State.UNAVAILABLE;
+            org.malionaro.dlss_frame_generation.client.render.RuntimeFallbackPolicy.Decision fallback =
+                    org.malionaro.dlss_frame_generation.client.render.RuntimeFallbackPolicy.resolve(
+                            GpuVendor.NVIDIA, config.autoFallbackChainEnabled, config.dlssFgEnabled,
+                            config.dlssUpscalingMode, supported, state);
+            int effectiveMode = fallback.upscalerMode();
+            StreamlineBridge.nSetDlssMode(effectiveMode, 0.0f);
+            boolean fgEnabled = fallback.frameGenerationEnabled() && config.dlssFgEnabled;
+            StreamlineBridge.nSetFgMode(fgEnabled, config.frameMultiplier, config.uiRecomposition);
             StreamlineBridge.nSetReflexMode(config.reflexMode, config.targetFps);
         } catch (UnsatisfiedLinkError e) {
             // Native bridge call failed fallback
+        }
+    }
+
+    @Override
+    public void disableForSwapchainReconfiguration() {
+        if (!isSupported()) return;
+        try {
+            // Pause still goes through the backend, not a direct call from VulkanRegistry.
+            StreamlineBridge.nSetFgMode(false, FrameGenConfig.getInstance().frameMultiplier, FrameGenConfig.getInstance().uiRecomposition);
+        } catch (UnsatisfiedLinkError ignored) {
+        }
+    }
+
+    @Override
+    public void restoreAfterSwapchainRecreation(FrameGenConfig config) {
+        if (!isSupported()) return;
+        try {
+            // Restore after swapchain recreate. Streamline needs the flag set again.
+            StreamlineBridge.nSetFgMode(config.dlssFgEnabled, config.frameMultiplier, config.uiRecomposition);
+        } catch (UnsatisfiedLinkError ignored) {
+        }
+    }
+
+    @Override
+    public void disableForPause(FrameGenConfig config) {
+        try {
+            // Keep pause handling in the backend.
+            StreamlineBridge.nSetFrameGenerationMode(GpuVendor.NVIDIA.vendorId(), false, config.frameMultiplier, false);
+        } catch (UnsatisfiedLinkError ignored) {
         }
     }
 

@@ -265,6 +265,12 @@ bool waitForD3D12QueueIdle(std::string& error) {
             "D3D12 queue did not become idle within 10 seconds";
         return false;
     }
+    HRESULT removedAfterWait = g_d3d12Device->GetDeviceRemovedReason();
+    if (FAILED(removedAfterWait)) {
+        error = "D3D12 device was removed after wait: "
+            + hresultText(removedAfterWait);
+        return false;
+    }
     return true;
 }
 
@@ -296,13 +302,18 @@ void abandonPresentationLocked() {
 }
 
 void releasePresentationLocked() {
+    // Deadlock fix: do not hold g_mutex while blocking on GPU idle.
+    // unique_lock.unlock() before vkDeviceWaitIdle / waitForD3D12QueueIdle
+    g_mutex.unlock();
     VkResult vulkanIdle = VK_SUCCESS;
     if (g_vkDevice != VK_NULL_HANDLE) {
         vulkanIdle = vkDeviceWaitIdle(g_vkDevice);
     }
     std::string idleError;
+    bool d3d12Idle = waitForD3D12QueueIdle(idleError);
+    g_mutex.lock();
     if (vulkanIdle != VK_SUCCESS
-        || !waitForD3D12QueueIdle(idleError)) {
+        || !d3d12Idle) {
         if (idleError.empty()) {
             idleError = "Vulkan device could not become idle: "
                 + std::to_string(vulkanIdle);
@@ -792,7 +803,7 @@ bool probe(
     VkQueue graphicsQueue,
     uint32_t graphicsQueueFamily
 ) {
-    std::lock_guard lock(g_mutex);
+    std::unique_lock<std::mutex> lock(g_mutex);
     g_capabilities = 0;
     g_luid.fill(0);
     g_sessionDisabled = false;
@@ -1223,10 +1234,29 @@ int32_t acquireNextImage(
         || g_sharedFrames.empty()) {
         return kNotHandled;
     }
-    uint32_t index =
-        g_nextAcquire
-        % static_cast<uint32_t>(g_sharedFrames.size());
-    g_nextAcquire = index + 1;
+    // Round-robin with fence gate: skip frames still in flight.
+    uint32_t frameCount = static_cast<uint32_t>(g_sharedFrames.size());
+    uint32_t start = g_nextAcquire % frameCount;
+    uint32_t index = start;
+    bool found = false;
+    for (uint32_t offset = 0; offset < frameCount; ++offset) {
+        uint32_t candidate = (start + offset) % frameCount;
+        uint64_t doneValue = g_sharedFrames[candidate].d3d12DoneValue;
+        bool isAvailable = (doneValue == 0)
+            || (g_d3d12DoneFence != nullptr
+                && g_d3d12DoneFence->GetCompletedValue() >= doneValue);
+        if (isAvailable) {
+            index = candidate;
+            g_nextAcquire = candidate + 1;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        // All frames busy; fall back to round-robin but ensure fence will gate present.
+        index = start;
+        g_nextAcquire = start + 1;
+    }
     VkResult result = submitAcquireSignal(
         g_sharedFrames[index], acquireSemaphore);
     if (result != VK_SUCCESS) {

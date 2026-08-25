@@ -1,5 +1,6 @@
 package org.malionaro.dlss_frame_generation.client.interop;
 
+import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -7,11 +8,14 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Stream;
 
 public final class NativeLoader {
     private static final String LIBRARY_BASE_NAME = "dlss_fg_native";
@@ -54,6 +58,7 @@ public final class NativeLoader {
         }
 
         try {
+            cleanupOldTempDirs(logger);
             // Create extraction directory early
             extractedDir = Files.createTempDirectory("dlss_fg_natives-");
             extractedDir.toFile().deleteOnExit();
@@ -156,6 +161,7 @@ public final class NativeLoader {
         try {
             // Ensure extraction directory exists
             if (extractedDir == null) {
+                cleanupOldTempDirs(logger);
                 extractedDir = Files.createTempDirectory("dlss_fg_natives-");
                 extractedDir.toFile().deleteOnExit();
             }
@@ -195,6 +201,28 @@ public final class NativeLoader {
             System.load(nativeBridgePath.toAbsolutePath().toString());
             logger.info("[DLSS FG] Loaded JNI bridge from {}", nativeBridgePath);
 
+            // ABI handshake: a stale DLL may lack symbols Java declares, which
+            // previously crashed the JVM with NULL JNI function pointers. Probe
+            // a version export first and fail closed on any mismatch.
+            try {
+                int abi = StreamlineBridge.nGetNativeAbiVersion();
+                if (abi != StreamlineBridge.NATIVE_ABI_VERSION) {
+                    String message = "Native bridge ABI mismatch: DLL reports " + abi
+                            + ", mod expects " + StreamlineBridge.NATIVE_ABI_VERSION
+                            + ". Delete old dlss_fg_native.dll / reinstall the mod JAR.";
+                    logger.error("[DLSS FG] {}", message);
+                    return NativeLoadResult.failure(message);
+                }
+                logger.info("[DLSS FG] Native bridge ABI version {} verified", abi);
+            } catch (UnsatisfiedLinkError | RuntimeException exception) {
+                String message = "Native bridge does not report an ABI version"
+                        + " (stale dlss_fg_native.dll?). Delete old dlss_fg_native.dll"
+                        + " / reinstall the mod JAR. Cause: "
+                        + exception.getClass().getSimpleName() + ": " + exception.getMessage();
+                logger.error("[DLSS FG] {}", message);
+                return NativeLoadResult.failure(message);
+            }
+
             return NativeLoadResult.success();
         } catch (IOException | UnsatisfiedLinkError | SecurityException exception) {
             logger.warn("[DLSS FG] Native bridge unavailable: {}", exception.toString());
@@ -214,9 +242,15 @@ public final class NativeLoader {
                     "No trusted SHA-256 recorded for " + fileName);
         }
         try {
-            String actual = HexFormat.of().formatHex(
-                    MessageDigest.getInstance("SHA-256")
-                            .digest(Files.readAllBytes(file)));
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream is = Files.newInputStream(file);
+                 DigestInputStream dis = new DigestInputStream(is, digest)) {
+                byte[] buffer = new byte[8192];
+                while (dis.read(buffer) != -1) {
+                    // streaming through DigestInputStream updates digest incrementally
+                }
+            }
+            String actual = HexFormat.of().formatHex(digest.digest());
             if (!expected.equals(actual)) {
                 throw new IOException(
                         "SHA-256 mismatch for bundled native runtime "
@@ -224,6 +258,38 @@ public final class NativeLoader {
             }
         } catch (NoSuchAlgorithmException impossible) {
             throw new IOException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private static void cleanupOldTempDirs(Logger logger) {
+        try {
+            Path tmp = Path.of(System.getProperty("java.io.tmpdir", "."));
+            long cutoffMillis = System.currentTimeMillis() - 24L * 60L * 60L * 1000L;
+            if (!Files.isDirectory(tmp)) return;
+            try (Stream<Path> stream = Files.list(tmp)) {
+                stream.filter(p -> p.getFileName().toString().startsWith("dlss_fg_natives-"))
+                        .forEach(p -> {
+                            try {
+                                long lastMod = Files.getLastModifiedTime(p).toMillis();
+                                if (lastMod < cutoffMillis) {
+                                    try (Stream<Path> walk = Files.walk(p)) {
+                                        walk.sorted(Comparator.reverseOrder())
+                                                .forEach(path -> {
+                                                    try {
+                                                        Files.deleteIfExists(path);
+                                                    } catch (IOException ignored) {
+                                                    }
+                                                });
+                                    }
+                                    if (logger != null) {
+                                        logger.info("[DLSS FG] Cleaned old temp dir {}", p);
+                                    }
+                                }
+                            } catch (IOException ignored) {
+                            }
+                        });
+            }
+        } catch (Exception ignored) {
         }
     }
 

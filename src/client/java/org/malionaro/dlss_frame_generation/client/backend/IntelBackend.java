@@ -32,10 +32,19 @@ public class IntelBackend implements FrameGenerationBackend {
         if (!isSupported()) return;
 
         try {
+            // Single entry point for Intel. All mode changes go through here.
             StreamlineBridge.nSetUpscalingMode(GpuVendor.INTEL.vendorId(), config.intelXessMode, config.intelXessSharpness);
             StreamlineBridge.nSetFrameGenerationMode(GpuVendor.INTEL.vendorId(), config.intelXessFgEnabled, config.intelXessMfgMultiplier, config.uiRecomposition);
         } catch (UnsatisfiedLinkError e) {
             // Fallback
+        }
+    }
+
+    @Override
+    public void disableForPause(FrameGenConfig config) {
+        try {
+            StreamlineBridge.nSetFrameGenerationMode(GpuVendor.INTEL.vendorId(), false, 2, false);
+        } catch (UnsatisfiedLinkError ignored) {
         }
     }
 

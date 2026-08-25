@@ -111,6 +111,8 @@
   "dlss_fg.tooltip.intel.upscaling": "Selects the Intel-compatible reconstruction path through OptiScaler. Native AA and reduced-resolution Quality through Ultra Performance modes use the renderer-owned world target.",
   "dlss_fg.option.fsr.fg_factor": "FSR FG Factor",
   "dlss_fg.tooltip.fsr.fg_factor": "FSR 3.1 inserts exactly one generated frame and therefore supports a 2x presented-frame factor only.",
+  "dlss_fg.option.frame_multiplier_fixed": "Frame Multiplier: %sx (fixed)",
+  "dlss_fg.tooltip.frame_multiplier_fixed": "2x is fixed on this vendor: FSR 3.1 inserts exactly one generated frame.",
   "dlss_fg.option.aa_sharpness": "AA Sharpness: %s%%",
   "dlss_fg.tooltip.aa_sharpness": "Controls reconstruction sharpening. High values produce a crisper image but can emphasize shimmering and halos.",
   "dlss_fg.option.ui_recomposition": "UI Recomposition",

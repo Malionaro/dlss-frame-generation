@@ -36,6 +36,26 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private static final int BLOCK_CAPACITY = RayTracingScene.MAX_BLOCKS;
     private static final int FRAME_SLOT_COUNT = 3;
 
+    // Phase 3 K1: GPU-Synchronisation – echte per-slot VkFences. Jede Fence wird
+    // beim Ressourcenaufbau mit VK_FENCE_CREATE_SIGNALED_BIT erzeugt und vor dem
+    // Upload per vkResetFences bewaffnet; ein minimaler Drain-Marker-Submit auf
+    // der Graphics-Queue signalisiert sie, sobald die GPU alle zuvor eingereihten
+    // Command Buffers (inkl. des Frames, der den Slot zuletzt konsumierte)
+    // abgearbeitet hat. awaitUniformSlotFence wartet dann echt via
+    // vkWaitForFences (100ms Budget) statt einer CPU-Sleep-Heuristik.
+    // WIP: Timeline-Semaphoren (vkWaitSemaphores) und ein HOST_VISIBLE-Staging-Ring
+    // via vkCmdCopyBuffer bleiben offen; der Renderer besitzt keinen eigenen
+    // Frame-Submit, daher ersetzt der Marker-Submit die fehlende Fence-Zuordnung.
+    private final long[] slotFences = new long[FRAME_SLOT_COUNT];
+    private final VkCommandBuffer[] slotMarkerCommandBuffers =
+            new VkCommandBuffer[FRAME_SLOT_COUNT];
+    private long commandPool;
+    private boolean fenceSyncAvailable;
+    private final boolean[] slotInFlight = new boolean[FRAME_SLOT_COUNT];
+    private final long[] slotSubmittedFrame = new long[FRAME_SLOT_COUNT];
+    private final int[] slotTimeline = new int[FRAME_SLOT_COUNT];
+    private long nextTimelineValue = 1L;
+
     private final Logger logger;
     private final VulkanDevice minecraftDevice;
     private final VkDevice device;
@@ -132,7 +152,9 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 return false;
             }
             int frameSlot = (int) (frameNumber % FRAME_SLOT_COUNT);
+            awaitUniformSlotFence(frameSlot);
             upload(uniformBuffers[frameSlot], frame.toNativeBuffer());
+            markUniformSlotInFlight(frameSlot);
             if (descriptorDepthView != depthView.vkImageView()) {
                 if (descriptorDepthView != NULL) {
                     // Descriptor sets from previous frames may still be in
@@ -229,6 +251,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 true
         );
         createPipeline();
+        setupSlotSynchronization();
         initialized = true;
     }
 
@@ -1192,6 +1215,197 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         return vkGetBufferDeviceAddress(device, info);
     }
 
+    private void awaitUniformSlotFence(int slot) {
+        if (slot < 0 || slot >= FRAME_SLOT_COUNT) {
+            return;
+        }
+        if (!slotInFlight[slot]) {
+            return;
+        }
+        long lastFrame = slotSubmittedFrame[slot];
+        if (!fenceSyncAvailable || slotFences[slot] == NULL) {
+            // WIP: requires VkDevice handle + graphics-queue plumbing for the
+            // drain-marker submit; without them only the CPU frame-retired
+            // heuristic remains as a conservative fallback.
+            awaitUniformSlotCpuFallback(slot, lastFrame);
+            return;
+        }
+        // Real GPU gate: vkWaitForFences blocks until the drain-marker
+        // submission attached to this slot's fence completes, i.e. until the
+        // GPU has finished every command buffer queued before it - including
+        // the earlier frame that read this uniform buffer.
+        int result;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            result = VK13.vkWaitForFences(
+                    device, stack.longs(slotFences[slot]), true, 100_000_000L);
+        } catch (Throwable throwable) {
+            logger.warn("Uniform slot {} VkFence wait threw; forcing retire", slot, throwable);
+            retireSlot(slot);
+            return;
+        }
+        if (result == VK_SUCCESS) {
+            retireSlot(slot);
+        } else if (result == VK_TIMEOUT) {
+            logger.warn(
+                    "Uniform slot {} VkFence wait timeout (frame {} last {}); forcing retire to avoid overwrite",
+                    slot, frameNumber, lastFrame);
+            retireSlot(slot);
+        } else {
+            logger.warn(
+                    "Uniform slot {} VkFence wait failed with VkResult {}; forcing retire to avoid overwrite",
+                    slot, result);
+            retireSlot(slot);
+        }
+    }
+
+    private void retireSlot(int slot) {
+        slotInFlight[slot] = false;
+        slotTimeline[slot]++;
+    }
+
+    /**
+     * Legacy CPU fallback used only when fence synchronisation could not be
+     * set up (no queue handle or VK object creation failed).
+     */
+    private void awaitUniformSlotCpuFallback(int slot, long lastFrame) {
+        if (frameNumber - lastFrame >= FRAME_SLOT_COUNT) {
+            retireSlot(slot);
+            return;
+        }
+        int spins = 0;
+        while (slotInFlight[slot] && spins < 200) {
+            Thread.yield();
+            try {
+                Thread.sleep(1);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            // Re-evaluate after short wait – allow retire one frame earlier to avoid deadlock in CPU stub
+            if (frameNumber - lastFrame >= FRAME_SLOT_COUNT - 1) {
+                retireSlot(slot);
+                break;
+            }
+            spins++;
+            if (spins >= 100) {
+                logger.warn("Uniform slot {} fence wait timeout (frame {} last {}); forcing retire to avoid overwrite",
+                        slot, frameNumber, lastFrame);
+                retireSlot(slot);
+                break;
+            }
+        }
+    }
+
+    private void setupSlotSynchronization() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            var queueState = minecraftDevice.graphicsQueue();
+            if (queueState == null) {
+                logger.warn("Vulkan graphics queue unavailable; RT uniform slots use CPU frame-retire tracking");
+                return;
+            }
+            LongBuffer result = stack.mallocLong(1);
+            VkCommandPoolCreateInfo poolInfo = VkCommandPoolCreateInfo.calloc(stack)
+                    .sType$Default()
+                    .flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
+                    .queueFamilyIndex(queueState.queueFamilyIndex());
+            check(vkCreateCommandPool(device, poolInfo, null, result),
+                    "create RT uniform-slot command pool");
+            commandPool = result.get(0);
+
+            VkCommandBufferAllocateInfo allocateInfo =
+                    VkCommandBufferAllocateInfo.calloc(stack)
+                            .sType$Default()
+                            .commandPool(commandPool)
+                            .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+                            .commandBufferCount(FRAME_SLOT_COUNT);
+            PointerBuffer buffers = stack.mallocPointer(FRAME_SLOT_COUNT);
+            check(vkAllocateCommandBuffers(device, allocateInfo, buffers),
+                    "allocate RT uniform-slot marker command buffers");
+            for (int index = 0; index < FRAME_SLOT_COUNT; index++) {
+                slotMarkerCommandBuffers[index] =
+                        new VkCommandBuffer(buffers.get(index), device);
+            }
+
+            for (int index = 0; index < FRAME_SLOT_COUNT; index++) {
+                VkFenceCreateInfo fenceInfo = VkFenceCreateInfo.calloc(stack)
+                        .sType$Default()
+                        .flags(VK_FENCE_CREATE_SIGNALED_BIT);
+                check(vkCreateFence(device, fenceInfo, null, result),
+                        "create RT uniform-slot fence");
+                slotFences[index] = result.get(0);
+            }
+        } catch (Throwable throwable) {
+            destroySynchronization();
+            logger.warn(
+                    "RT per-slot VkFence synchronisation unavailable ({}); using CPU frame-retire tracking",
+                    throwable.toString()
+            );
+            return;
+        }
+        fenceSyncAvailable = true;
+    }
+
+    private VkQueue graphicsQueue() {
+        var queueState = minecraftDevice != null
+                ? minecraftDevice.graphicsQueue() : null;
+        return queueState != null ? queueState.vkQueue() : null;
+    }
+
+    private void markUniformSlotInFlight(int slot) {
+        if (slot < 0 || slot >= FRAME_SLOT_COUNT) {
+            return;
+        }
+        slotInFlight[slot] = true;
+        slotSubmittedFrame[slot] = frameNumber;
+        slotTimeline[slot] = (int) (nextTimelineValue++);
+        long fence = slotFences[slot];
+        VkCommandBuffer marker = slotMarkerCommandBuffers[slot];
+        VkQueue queue = graphicsQueue();
+        if (!fenceSyncAvailable || fence == NULL || marker == null || queue == null) {
+            return;
+        }
+        // Real VkFence lifecycle: arm the slot fence and attach it to a
+        // minimal drain-marker submit on Minecraft's graphics queue. The
+        // renderer records into Minecraft's command buffer and never owns
+        // the frame submission itself, so this marker is the earliest point
+        // at which a self-owned fence can observe GPU progress: it signals
+        // once every previously queued command buffer completed, including
+        // the frame that consumed this slot's uniform buffer.
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VK13.vkResetFences(device, stack.longs(fence));
+            check(vkBeginCommandBuffer(marker, VkCommandBufferBeginInfo.calloc(stack)
+                            .sType$Default()),
+                    "begin RT slot marker command buffer");
+            check(vkEndCommandBuffer(marker), "end RT slot marker command buffer");
+            VkSubmitInfo submitInfo = VkSubmitInfo.calloc(stack)
+                    .sType$Default()
+                    .pCommandBuffers(stack.pointers(marker.address()));
+            check(vkQueueSubmit(queue, submitInfo, fence),
+                    "submit RT slot fence marker");
+        } catch (Throwable throwable) {
+            logger.warn(
+                    "RT slot {} fence marker submit failed; disabling fence synchronisation",
+                    slot, throwable
+            );
+            fenceSyncAvailable = false;
+        }
+    }
+
+    private void destroySynchronization() {
+        for (int index = 0; index < FRAME_SLOT_COUNT; index++) {
+            if (slotFences[index] != NULL) {
+                vkDestroyFence(device, slotFences[index], null);
+                slotFences[index] = NULL;
+            }
+            slotMarkerCommandBuffers[index] = null;
+        }
+        fenceSyncAvailable = false;
+        if (commandPool != NULL) {
+            vkDestroyCommandPool(device, commandPool, null);
+            commandPool = NULL;
+        }
+    }
+
     private void upload(Allocation allocation, ByteBuffer source) {
         if (source == null || !source.hasRemaining()) {
             return;
@@ -1292,6 +1506,13 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             return;
         }
         vkDeviceWaitIdle(device);
+        // Phase 3 K1: after vkDeviceWaitIdle every marker submit has finished,
+        // so fences and the marker command pool can be destroyed safely.
+        destroySynchronization();
+        java.util.Arrays.fill(slotInFlight, false);
+        java.util.Arrays.fill(slotSubmittedFrame, 0L);
+        java.util.Arrays.fill(slotTimeline, 0);
+        nextTimelineValue = 1L;
         destroyAccelerationStructures();
         destroyOutput();
         destroyAllocation(instanceBuffer, true);

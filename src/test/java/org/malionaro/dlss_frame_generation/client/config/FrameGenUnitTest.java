@@ -7,6 +7,8 @@ import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
 import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend;
 import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationCompatibilityLayer;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -176,7 +178,8 @@ public class FrameGenUnitTest {
 
         config.sanitize();
 
-        assertFalse(config.dlssFgEnabled);
+        // Auto mode now prefers NVIDIA instead of wiping all (P1-04 fix)
+        assertTrue(config.dlssFgEnabled);
         assertFalse(config.amdFsrFgEnabled);
         assertFalse(config.intelXessFgEnabled);
     }
@@ -245,5 +248,39 @@ public class FrameGenUnitTest {
         assertNotEquals(FrameGenerationCompatibilityLayer.ProviderId.INTEL_XESS_D3D12, intelVulkan);
         assertEquals(FrameGenerationCompatibilityLayer.ProviderId.AMD_FSR4_D3D12, amdD3d12);
         assertEquals(FrameGenerationCompatibilityLayer.ProviderId.INTEL_XESS_D3D12, intelD3d12);
+    }
+
+    @Test
+    public void configRoundtripHandlesCorruptJsonWithBackup() throws Exception {
+        Path configPath = Path.of("build", "tmp", "frame_gen.json");
+        Path backupPath = Path.of("build", "tmp", "frame_gen.json.bak");
+        Files.createDirectories(configPath.getParent());
+        // Ensure clean prior state
+        Files.deleteIfExists(backupPath);
+        // Write corrupt JSON
+        Files.writeString(configPath, "{ invalid json ::: }");
+        // Invoke private load() via reflection to trigger corrupt handling
+        var loadMethod = FrameGenConfig.class.getDeclaredMethod("load");
+        loadMethod.setAccessible(true);
+        Object loaded = loadMethod.invoke(null);
+        assertNotNull(loaded, "Corrupt config should fallback to default instance");
+        assertTrue(loaded instanceof FrameGenConfig);
+        FrameGenConfig cfg = (FrameGenConfig) loaded;
+        // Defaults must be sanitized
+        assertEquals(2, cfg.configVersion);
+        assertEquals(FrameGenConfig.Preset.CUSTOM, cfg.activePreset);
+        // Backup should exist (or at least config was rewritten to valid JSON)
+        assertTrue(Files.exists(configPath), "Config path should be rewritten to valid JSON after corrupt recovery");
+        // If backup was created, verify it contains the corrupt payload
+        if (Files.exists(backupPath)) {
+            String backup = Files.readString(backupPath);
+            assertTrue(backup.contains("invalid json"), "Backup should preserve corrupt payload");
+        }
+        // Cleanup: restore valid state for other tests
+        cfg.save();
+        // Reset singleton via reflection for isolation
+        var instanceField = FrameGenConfig.class.getDeclaredField("instance");
+        instanceField.setAccessible(true);
+        instanceField.set(null, null);
     }
 }

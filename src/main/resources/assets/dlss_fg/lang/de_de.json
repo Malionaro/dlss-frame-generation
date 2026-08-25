@@ -111,6 +111,8 @@
   "dlss_fg.tooltip.intel.upscaling": "Wählt über OptiScaler den Intel-kompatiblen Rekonstruktionspfad. Native AA und reduzierte Modi von Qualität bis Ultra-Leistung verwenden das renderer-eigene Weltziel.",
   "dlss_fg.option.fsr.fg_factor": "FSR-FG-Faktor",
   "dlss_fg.tooltip.fsr.fg_factor": "FSR 3.1 fügt genau einen generierten Frame ein und unterstützt deshalb ausschließlich den Darstellungsfaktor 2x.",
+  "dlss_fg.option.frame_multiplier_fixed": "FG-Multiplikator: %sx (fixiert)",
+  "dlss_fg.tooltip.frame_multiplier_fixed": "Auf diesem Anbieter ist 2x fixiert: FSR 3.1 fügt genau einen generierten Frame ein.",
   "dlss_fg.option.aa_sharpness": "AA-Schärfe: %s%%",
   "dlss_fg.tooltip.aa_sharpness": "Steuert die Rekonstruktionsschärfe. Hohe Werte wirken schärfer, können aber Flimmern und Halos verstärken.",
   "dlss_fg.option.ui_recomposition": "UI-Rekomposition",

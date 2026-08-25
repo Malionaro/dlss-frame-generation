@@ -23,6 +23,8 @@ message(STATUS "Found JNI: ${JNI_INCLUDE_DIRS}")
 # resolved through sl.interposer at runtime. Fetching the Khronos headers keeps
 # the native build reproducible without requiring a machine-wide Vulkan SDK.
 include(FetchContent)
+# Supply-chain note: pinned by tag; switch to URL download + URL_HASH SHA256=<hash>
+# for reproducible builds once a hash for v1.4.313 is recorded.
 FetchContent_Declare(
     VulkanHeaders
     GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
@@ -31,13 +33,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(VulkanHeaders)
 
-# Native library
-add_library(dlss_fg_native SHARED
+# Native library sources
+set(NATIVE_SOURCES
     bridge/fidelityfx/FidelityFxBridge.cpp
-    bridge/presentation/WindowsDxgiPresenter.cpp
     bridge/routing/FrameGenCompatibilityLayer.cpp
     bridge/streamline/StreamlineBridge.cpp
 )
+if(WIN32)
+    list(APPEND NATIVE_SOURCES bridge/presentation/WindowsDxgiPresenter.cpp)
+endif()
+
+add_library(dlss_fg_native SHARED ${NATIVE_SOURCES})
 
 # Header includes
 target_include_directories(dlss_fg_native PRIVATE

@@ -46,7 +46,35 @@ public interface FrameGenerationBackend {
 
     boolean isFrameGenerationActive();
 
+    /**
+     * D1: sole nSet* entry point. All StreamlineBridge.nSet* calls for this backend
+     * must funnel through applyConfig internally – VulkanRegistry and UI panels
+     * must not call nSetDlssMode/nSetUpscalingMode/nSetFgMode directly.
+     */
     void applyConfig(FrameGenConfig config);
+
+    /**
+     * D1 lifecycle helper – disables frame generation before swapchain reconfiguration.
+     * This is a lifecycle-driven native toggle, not a persistent config change; it
+     * still funnels through the backend so VulkanRegistry has no direct nSet* path.
+     */
+    default void disableForSwapchainReconfiguration() {
+    }
+
+    /**
+     * D1 lifecycle helper – restores configured FG mode after swapchain recreation.
+     * Default delegates to applyConfig; vendor backends may override for precise native handling.
+     */
+    default void restoreAfterSwapchainRecreation(FrameGenConfig config) {
+        applyConfig(config);
+    }
+
+    /**
+     * D1 lifecycle helper – temporarily disables FG when game is paused.
+     * Must funnel through backend, not direct VulkanRegistry nSetFrameGenerationMode.
+     */
+    default void disableForPause(FrameGenConfig config) {
+    }
 
     long estimatedVramUsageBytes();
 

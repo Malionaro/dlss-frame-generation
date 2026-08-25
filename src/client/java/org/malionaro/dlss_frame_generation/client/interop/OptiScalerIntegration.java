@@ -6,8 +6,10 @@ import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -197,13 +199,23 @@ public final class OptiScalerIntegration {
     private static Path prepareRuntimeDirectory(Logger logger)
             throws IOException {
         Path externalDirectory = installDirectory();
-        if (Files.isRegularFile(
-                externalDirectory.resolve("OptiScaler.dll"))) {
-            logger.info(
-                    "[OptiScaler] Using external override from {}",
-                    externalDirectory
-            );
-            return externalDirectory;
+        Path externalDll = externalDirectory.resolve("OptiScaler.dll").normalize();
+        if (Files.isRegularFile(externalDll) && externalDll.startsWith(externalDirectory)) {
+            try {
+                verifyEmbeddedHash(externalDll, "OptiScaler.dll");
+                logger.info(
+                        "[OptiScaler] Using verified external override from {}",
+                        externalDirectory
+                );
+                return externalDirectory;
+            } catch (IOException e) {
+                logger.warn(
+                        "[OptiScaler] External OptiScaler.dll at {} failed SHA256 verification ({}), falling back to embedded bundle",
+                        externalDll, e.getMessage()
+                );
+            }
+        } else if (Files.isRegularFile(externalDirectory.resolve("OptiScaler.dll"))) {
+            logger.warn("[OptiScaler] External override path unsafe, falling back to embedded bundle");
         }
 
         String extractedNatives = NativeLoader.getExtractedNativesDir();
@@ -262,8 +274,14 @@ public final class OptiScalerIntegration {
         }
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            String actual = HexFormat.of().formatHex(
-                    digest.digest(Files.readAllBytes(target)));
+            try (InputStream is = Files.newInputStream(target);
+                 DigestInputStream dis = new DigestInputStream(is, digest)) {
+                byte[] buffer = new byte[8192];
+                while (dis.read(buffer) != -1) {
+                    // streaming updates digest
+                }
+            }
+            String actual = HexFormat.of().formatHex(digest.digest());
             if (!expected.equals(actual)) {
                 throw new IOException(
                         "SHA-256 mismatch for embedded OptiScaler file "

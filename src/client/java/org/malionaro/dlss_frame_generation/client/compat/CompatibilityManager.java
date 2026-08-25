@@ -79,6 +79,13 @@ public final class CompatibilityManager {
                 rendererDetection.shaderPipelineState()
         );
         logger.info("DLSS FG active adapter resolved to: {}, vendor backend: {}", adapter.getClass().getSimpleName(), activeBackend.vendor().displayName());
+        if (rendererDetection.backend() == RendererBackend.OPENGL
+                || rendererDetection.backend() == RendererBackend.IRIS_OPENGL) {
+            logger.warn(
+                    "Minecraft is running on the OpenGL renderer, so DLSS/FSR/XeSS frame generation and Reflex stay "
+                            + "disabled. Switch the graphics API to Vulkan in Options -> Video Settings (preferredGraphicsBackend), "
+                            + "then restart the game. All mod features require Mojang's VulkanDevice.");
+        }
         return manager;
     }
 

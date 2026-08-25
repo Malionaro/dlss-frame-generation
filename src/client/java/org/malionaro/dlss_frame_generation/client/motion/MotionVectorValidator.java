@@ -9,7 +9,7 @@ import org.slf4j.LoggerFactory;
  */
 public class MotionVectorValidator {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger("MotionVectorValidator");
+    private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.motion");
 
     public static class ValidationResult {
         public boolean valid;

@@ -33,7 +33,7 @@ import static org.lwjgl.vulkan.VK13.VK_API_VERSION_1_3;
  */
 public final class StreamlineVulkanRequirements {
     private static final Logger LOGGER =
-            LoggerFactory.getLogger("DLSS_FG_StreamlineVulkan");
+            LoggerFactory.getLogger("dlss_fg.streamline");
     private static final ThreadLocal<Set<String>> SELECTED_DEVICE_EXTENSIONS =
             new ThreadLocal<>();
     private static final VulkanPNextStruct VK13_FEATURES_STRUCT =

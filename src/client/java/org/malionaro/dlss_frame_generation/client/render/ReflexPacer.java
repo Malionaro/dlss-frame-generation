@@ -6,8 +6,8 @@ import org.malionaro.dlss_frame_generation.client.FrameGenMod;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 
 public class ReflexPacer {
-    private static long lastFrameTimeNano = System.nanoTime();
-    private static long smoothedFrameDurationNano = 16_666_666L; // 60 FPS default (16.6ms)
+    private static volatile long lastFrameTimeNano = System.nanoTime();
+    private static volatile long smoothedFrameDurationNano = 16_666_666L; // 60 FPS default (16.6ms)
     private static int configuredNvidiaTargetFps = -1;
 
     public static void paceFrame() {
@@ -43,17 +43,16 @@ public class ReflexPacer {
         }
 
         // Provider-neutral fallback for hardware without Reflex.
+        // P0 Fix: Present path must not block via Thread.sleep.
+        // Keep duration tracking for metrics but do NOT sleep on present thread.
+        // If pacing is required, it should be driven by a scheduler outside the
+        // present path (e.g. LockSupport.parkNanos in a dedicated thread).
         long targetPaceNano = 1_000_000_000L / targetFps;
-        if (smoothedFrameDurationNano < targetPaceNano) {
-            long sleepDurationNano = targetPaceNano - smoothedFrameDurationNano;
-            if (sleepDurationNano > 500_000L) { // Only sleep if > 0.5ms to avoid thread starvation
-                try {
-                    Thread.sleep(sleepDurationNano / 1_000_000L, (int) (sleepDurationNano % 1_000_000L));
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
+        // no-op: pacing intentionally disabled on present thread to avoid jank/starvation
+        // long sleepDurationNano = targetPaceNano - smoothedFrameDurationNano;
+        // if (sleepDurationNano > 500_000L) {
+        //     java.util.concurrent.locks.LockSupport.parkNanos(sleepDurationNano);
+        // }
     }
 
     public static double getAverageFrameTimeMs() {

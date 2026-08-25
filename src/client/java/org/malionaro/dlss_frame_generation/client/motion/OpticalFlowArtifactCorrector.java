@@ -22,8 +22,4 @@ public class OpticalFlowArtifactCorrector {
             dampeningFactor = Math.min(1.0f, dampeningFactor + 0.1f);
         }
     }
-
-    public static float getDampeningFactor() {
-        return dampeningFactor;
-    }
 }

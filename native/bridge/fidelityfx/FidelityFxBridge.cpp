@@ -677,6 +677,11 @@ int32_t createSwapchain(
         return VK_SUCCESS;
     }
 
+    if (g_createSwapchain == nullptr) {
+        g_status = "FidelityFX proxy swapchain creation function pointer is null";
+        return kNotHandled;
+    }
+
     const VkResult result = g_createSwapchain(
         g_device,
         createInfo,

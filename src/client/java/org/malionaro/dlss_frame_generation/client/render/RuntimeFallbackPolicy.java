@@ -28,12 +28,13 @@ public final class RuntimeFallbackPolicy {
             ProviderLifecycle.State providerState
     ) {
         int safeMode = Math.max(0, Math.min(6, requestedUpscalerMode));
+        // DRAINING and SHUTDOWN are intentional transitions, not failures; only
+        // FAILED/UNAVAILABLE should trigger fallback (vendor-agnostic).
         boolean providerFailed = providerState == ProviderLifecycle.State.FAILED
-                || providerState == ProviderLifecycle.State.UNAVAILABLE
-                || providerState == ProviderLifecycle.State.SHUTDOWN;
-        // NVIDIA exposes a separate, stable hardware-support query. The FFX
-        // routes expose runtime readiness, so a zero bit there must not disable
-        // the first frames which are required to create their contexts.
+                || providerState == ProviderLifecycle.State.UNAVAILABLE;
+        // Vendor-agnostic fallback: originally NVIDIA-only, but keep NVIDIA gate
+        // for FFX runtime readiness (first frames need context creation). The
+        // providerFailed branch is already vendor-agnostic and covers AMD/Intel.
         boolean knownFrameGenerationUnavailable =
                 vendor == FrameGenerationBackend.GpuVendor.NVIDIA
                         && (supportedCapabilities
@@ -52,6 +53,8 @@ public final class RuntimeFallbackPolicy {
 
         boolean reconstructionAvailable = (supportedCapabilities
                 & StreamlineBridge.CAP_UPSCALING) != 0;
+        // Respect safeMode==0: keep 0 as native presentation when reconstruction unavailable,
+        // otherwise promote 0->1 for temporal reconstruction (preserves original intent).
         int effectiveMode = reconstructionAvailable && safeMode == 0
                 ? 1
                 : safeMode;

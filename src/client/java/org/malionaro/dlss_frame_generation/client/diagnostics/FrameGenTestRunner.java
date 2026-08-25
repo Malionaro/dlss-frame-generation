@@ -39,7 +39,7 @@ import static org.lwjgl.vulkan.VK10.VK_VERSION_PATCH;
  */
 public final class FrameGenTestRunner {
     private static final Logger LOGGER =
-            LoggerFactory.getLogger("FrameGen_Diagnostics");
+            LoggerFactory.getLogger("dlss_fg.diagnostics");
 
     public enum Outcome {
         PASS,

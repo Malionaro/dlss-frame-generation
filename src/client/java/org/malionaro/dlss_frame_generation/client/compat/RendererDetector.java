@@ -8,7 +8,12 @@ import org.malionaro.dlss_frame_generation.client.mixin.GpuDeviceAccessor;
 
 import java.lang.reflect.Method;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public final class RendererDetector {
+    private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.detector");
+
     private RendererDetector() {
     }
 
@@ -103,6 +108,19 @@ public final class RendererDetector {
             boolean aperturePresent,
             String apertureVersion
     ) {
+        // SemVer gating and vulkanmod incompatibility
+        boolean vulkanModPresent = FabricLoader.getInstance().isModLoaded("vulkanmod");
+        boolean sodiumVersionOk = !sodiumPresent || isVersionAtLeast(sodiumVersion, "0.9.1");
+        boolean irisVersionOk = !irisPresent || isVersionAtLeast(irisVersion, "1.11.2");
+        if (vulkanModPresent) {
+            LOGGER.warn("Renderer detection: vulkanmod is present and incompatible with DLSS FG bridge - Vulkan features blocked");
+        }
+        if (sodiumPresent && !sodiumVersionOk) {
+            LOGGER.warn("Renderer detection: Sodium version {} is below required 0.9.1", sodiumVersion);
+        }
+        if (irisPresent && !irisVersionOk) {
+            LOGGER.warn("Renderer detection: Iris version {} is below required 1.11.2", irisVersion);
+        }
         RendererBackend backend;
         if ("unavailable".equals(deviceClass)) {
             backend = RendererBackend.UNKNOWN;
@@ -169,7 +187,8 @@ public final class RendererDetector {
                     true,
                     Boolean.TRUE.equals(isShaderPackInUse.invoke(api))
             );
-        } catch (ReflectiveOperationException | LinkageError ignored) {
+        } catch (ReflectiveOperationException | LinkageError e) {
+            LOGGER.debug("Failed to query IrisApi via reflection", e);
             return new IrisQuery(false, false);
         }
     }
@@ -179,6 +198,37 @@ public final class RendererDetector {
                 .map(container -> container.getMetadata()
                         .getVersion().getFriendlyString())
                 .orElse("not installed");
+    }
+
+    static boolean isVersionAtLeast(String version, String required) {
+        if (version == null || version.equals("not installed") || version.isBlank()) return false;
+        if ("test".equals(version)) return true;
+        try {
+            String v = version.split("\\+")[0].split("-")[0];
+            String r = required.split("\\+")[0].split("-")[0];
+            String[] vParts = v.split("\\.");
+            String[] rParts = r.split("\\.");
+            int len = Math.max(vParts.length, rParts.length);
+            for (int i = 0; i < len; i++) {
+                int vNum = i < vParts.length ? parseVersionPart(vParts[i]) : 0;
+                int rNum = i < rParts.length ? parseVersionPart(rParts[i]) : 0;
+                if (vNum > rNum) return true;
+                if (vNum < rNum) return false;
+            }
+            return true;
+        } catch (Exception e) {
+            LOGGER.debug("Failed to compare versions: {} vs {}", version, required, e);
+            return version.compareTo(required) >= 0;
+        }
+    }
+
+    private static int parseVersionPart(String part) {
+        try {
+            String numeric = part.replaceAll("[^0-9]", "");
+            return numeric.isEmpty() ? 0 : Integer.parseInt(numeric);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     private static String readBackendDescription() {

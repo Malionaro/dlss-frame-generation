@@ -1,6 +1,6 @@
 # Funktionsstatus und Roadmap
 
-Stand: 29. Juli 2026  
+Stand: 22. August 2026  
 Getestetes Minecraft-Ziel: **26.2**
 
 Diese Übersicht zeigt, welche Funktionen bereits nachgewiesen funktionieren,
@@ -105,6 +105,24 @@ native Laufzeit und alle benötigten Frame-Daten akzeptiert wurden.
 | Aktives Iris-Shaderpack / OpenGL | 🔒 Nicht verfügbar | Die benötigten finalen Bilder sind OpenGL- statt Vulkan-Ressourcen | Nur mit einer separaten OpenGL-/Iris-Ressourcenintegration möglich |
 | Aperture-Materialdaten | 🧩 Grundlage vorhanden | `RendererIntegration` und `MaterialProvider` definieren einen frame-atomaren Vertrag | Einen echten Aperture-Provider und dessen Material-/Synchronisationspfad implementieren |
 | Minecraft 26.3 | 🧩 Grundlage vorhanden | Als nächstes Ziel dokumentiert, aber nicht als aktuell getestet behauptet | Rendererklassen, Mixins, Framegrenzen und ABI getrennt prüfen und versionieren |
+
+## 2026-08-22 Fix-Runde
+
+- H1: Drain mit `finally` + Timeout meldet jetzt FAILED statt zu blockieren.
+- H2: Jitter ist im Mode 0 konsequent 0.
+- H3: Vendor-Switch läuft über eine eigene UI-Layer.
+- H4: Composite-Fallback greift, wenn die Komposition verweigert wird.
+- H5: Pipeline-Leak behoben.
+- K1/K2: Fence-Stubs entfernt bzw. sauber ersetzt.
+- OOM-Latch führt jetzt zu Retry statt dauerhafter Sperrung.
+- `configVersion=2` plus atomares Speichern der Konfiguration.
+- Mixin-Level auf JAVA_21 angehoben.
+- JNI Exception-Hygiene nachgezogen.
+- D3D12-Deadlock-Fix im Hybrid-Pfad.
+- OptiScaler: externer SHA256-Check vor der Nutzung.
+- copyNative: Ninja-Pfad-Fix im Build.
+- RT: Dirty-Chunk-Budget begrenzt Raytracing-Rebuilds pro Frame.
+- DRS: adaptive Schritte für dynamische Auflösung.
 
 ## Empfohlene nächste Schritte
 

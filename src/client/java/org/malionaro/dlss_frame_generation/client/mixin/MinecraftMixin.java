@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(Minecraft.class)
 public class MinecraftMixin {
     @Inject(method = "runTick", at = @At("HEAD"))
-    private void onTickStart(CallbackInfo ci) {
+    private void onTickStart(boolean renderLevel, CallbackInfo ci) {
         try {
             StreamlineBridge.nReflexMarker(0); // SIMULATION_START
         } catch (UnsatisfiedLinkError e) {
@@ -21,7 +21,7 @@ public class MinecraftMixin {
     }
 
     @Inject(method = "runTick", at = @At("RETURN"))
-    private void onTickEnd(CallbackInfo ci) {
+    private void onTickEnd(boolean renderLevel, CallbackInfo ci) {
         try {
             StreamlineBridge.nReflexMarker(1); // SIMULATION_END
         } catch (UnsatisfiedLinkError e) {
@@ -30,7 +30,7 @@ public class MinecraftMixin {
     }
 
     @Inject(method = "setLevel", at = @At("HEAD"))
-    private void onSetLevel(CallbackInfo ci) {
+    private void onSetLevel(net.minecraft.client.multiplayer.ClientLevel level, CallbackInfo ci) {
         try {
             org.malionaro.dlss_frame_generation.client.render.VulkanRegistry.setWorldReset();
         } catch (Throwable t) {

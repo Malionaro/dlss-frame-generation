@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <iostream>
 #include <iterator>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,9 @@
 #include "sl_helpers.h"
 #include "sl_helpers_vk.h"
 
+#define DLSS_FG_NATIVE_ABI_VERSION 2
+
+static std::mutex g_streamlineMutex;
 static bool g_coreInitialized = false;
 static bool g_initialized = false;
 static bool g_dlssgSupported = false;
@@ -42,9 +46,12 @@ static sl::Result g_dlssRrSupportResult = sl::Result::eErrorNotInitialized;
 static sl::Result g_reflexSupportResult = sl::Result::eErrorNotInitialized;
 static uint32_t g_maxFrameMultiplier = 1;
 static std::string g_nvidiaStatus = "NVIDIA Streamline has not been initialized";
+static VkInstance g_vkInstance = VK_NULL_HANDLE;
+static VkPhysicalDevice g_vkPhysicalDevice = VK_NULL_HANDLE;
 static VkDevice g_streamlineDevice = VK_NULL_HANDLE;
 static sl::ViewportHandle g_viewport(0);
 static sl::FrameToken* g_currentFrameToken = nullptr;
+static bool g_frameTokenRefreshedForCurrentFrame = false;
 static uint32_t g_frameIndex = 0;
 static int g_dlssMode = 0;
 static std::vector<std::string> g_requiredInstanceExtensions;
@@ -115,20 +122,39 @@ static jobjectArray toJavaStringArray(
 ) {
     jclass stringClass = env->FindClass("java/lang/String");
     if (stringClass == nullptr) return nullptr;
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return nullptr;
+    }
     jobjectArray result = env->NewObjectArray(
         static_cast<jsize>(values.size()),
         stringClass,
         nullptr
     );
-    if (result == nullptr) return nullptr;
+    if (result == nullptr || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(stringClass);
+        return nullptr;
+    }
     for (jsize index = 0;
          index < static_cast<jsize>(values.size());
          ++index) {
         jstring value = env->NewStringUTF(values[static_cast<size_t>(index)].c_str());
-        if (value == nullptr) return result;
+        if (value == nullptr || env->ExceptionCheck()) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            env->DeleteLocalRef(stringClass);
+            return result;
+        }
         env->SetObjectArrayElement(result, index, value);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            env->DeleteLocalRef(value);
+            env->DeleteLocalRef(stringClass);
+            return result;
+        }
         env->DeleteLocalRef(value);
     }
+    env->DeleteLocalRef(stringClass);
     return result;
 }
 
@@ -243,6 +269,7 @@ static bool finalizeDlssgFrame(
     } else {
         framegen::markProviderReady(g_nvidiaStatus);
     }
+    g_frameTokenRefreshedForCurrentFrame = false;
     return true;
 }
 
@@ -285,14 +312,25 @@ static void describeVulkanTexture(
 static std::wstring toWideString(JNIEnv* env, jstring value) {
     if (value == nullptr) return {};
     const jchar* chars = env->GetStringChars(value, nullptr);
-    if (chars == nullptr) return {};
+    if (chars == nullptr || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return {};
+    }
     const jsize length = env->GetStringLength(value);
-    std::wstring result(reinterpret_cast<const wchar_t*>(chars), static_cast<size_t>(length));
+    std::wstring result;
+    result.reserve(static_cast<size_t>(length));
+    for (jsize i = 0; i < length; ++i) {
+        result.push_back(static_cast<wchar_t>(chars[i]));
+    }
     env->ReleaseStringChars(value, chars);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
     return result;
 }
 
 static bool initializeCore(JNIEnv* env, jstring pluginsPath) {
+    std::lock_guard<std::mutex> lock(g_streamlineMutex);
     if (g_coreInitialized) return true;
 
     std::wstring path = toWideString(env, pluginsPath);
@@ -344,21 +382,31 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
 
 extern "C" JNIEXPORT jobjectArray JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetVulkanRequirements
   (JNIEnv* env, jclass, jint kind) {
-    if (!g_coreInitialized) {
-        return toJavaStringArray(env, {});
-    }
-    switch (kind) {
-        case 0:
-            return toJavaStringArray(env, g_requiredInstanceExtensions);
-        case 1:
-            return toJavaStringArray(env, g_requiredDeviceExtensions);
-        case 2:
-            return toJavaStringArray(env, g_requiredFeatures12);
-        case 3:
-            return toJavaStringArray(env, g_requiredFeatures13);
-        default:
+    std::vector<std::string> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(g_streamlineMutex);
+        if (!g_coreInitialized) {
             return toJavaStringArray(env, {});
+        }
+        switch (kind) {
+            case 0:
+                snapshot = g_requiredInstanceExtensions;
+                break;
+            case 1:
+                snapshot = g_requiredDeviceExtensions;
+                break;
+            case 2:
+                snapshot = g_requiredFeatures12;
+                break;
+            case 3:
+                snapshot = g_requiredFeatures13;
+                break;
+            default:
+                snapshot.clear();
+                break;
+        }
     }
+    return toJavaStringArray(env, snapshot);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nInit
@@ -369,6 +417,12 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         framegen::markProviderFailed(g_nvidiaStatus);
         return JNI_FALSE;
     }
+
+    // Retained for VK_EXT_memory_budget queries (nQueryMemoryBudget). Both
+    // vendor paths store them so budget sampling works for NVIDIA, AMD and
+    // Intel adapters alike.
+    g_vkInstance = reinterpret_cast<VkInstance>(instance);
+    g_vkPhysicalDevice = reinterpret_cast<VkPhysicalDevice>(physicalDevice);
 
     // The Java Vulkan object already owns a valid properties snapshot. Passing
     // the vendor ID avoids calling a Vulkan loader export through an
@@ -467,6 +521,11 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
     return anyFeature ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetNativeAbiVersion(JNIEnv*, jclass) {
+    return DLSS_FG_NATIVE_ABI_VERSION;
+}
+
 extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetBackendCapabilities
   (JNIEnv*, jclass, jint vendorId) {
     if (vendorId == 0x1002 || vendorId == 0x8086) {
@@ -524,24 +583,34 @@ extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
 extern "C" JNIEXPORT jstring JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetBackendStatus
   (JNIEnv* env, jclass, jint vendorId) {
     std::string status;
-    if (vendorId == 0x10DE) {
-        status = g_nvidiaStatus;
-    } else if (vendorId == 0x1002 || vendorId == 0x8086) {
-        status = framegen::statusForVendor(static_cast<uint32_t>(vendorId));
-    } else {
-        status = "Unknown GPU vendor";
+    {
+        std::lock_guard lock(g_streamlineMutex);
+        if (vendorId == 0x10DE) {
+            status = g_nvidiaStatus;
+        } else if (vendorId == 0x1002 || vendorId == 0x8086) {
+            status = framegen::statusForVendor(static_cast<uint32_t>(vendorId));
+        } else {
+            status = "Unknown GPU vendor";
+        }
     }
-    return env->NewStringUTF(status.c_str());
+    jstring result = env->NewStringUTF(status.c_str());
+    if (result == nullptr || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    return result;
 }
 
 extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nShutdown
   (JNIEnv* env, jclass clazz) {
+    std::lock_guard lock(g_streamlineMutex);
     dxgipresenter::shutdown();
     framegen::shutdown();
     if (!g_coreInitialized) return;
 
     slShutdown();
     g_currentFrameToken = nullptr;
+    g_frameTokenRefreshedForCurrentFrame = false;
     g_dlssgSupported = false;
     g_dlssgInputsReady = false;
     g_dlssgEnabled = false;
@@ -651,6 +720,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
     if (vendorId != 0x10DE || !g_initialized || !g_dlssgSupported) {
         return JNI_FALSE;
     }
+    std::lock_guard lock(g_streamlineMutex);
     g_dlssgEnabled = enabled == JNI_TRUE;
     g_dlssgRuntimeReady = false;
     if (commandBuffer == 0 || backbufferImage == 0 || colorImage == 0 ||
@@ -728,7 +798,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         ? sl::Boolean::eTrue
         : sl::Boolean::eFalse;
 
-    if (g_currentFrameToken == nullptr) {
+    if (!g_frameTokenRefreshedForCurrentFrame || g_currentFrameToken == nullptr) {
         if (slGetNewFrameToken(g_currentFrameToken, &g_frameIndex) !=
                 sl::Result::eOk ||
             g_currentFrameToken == nullptr) {
@@ -737,6 +807,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
             return JNI_FALSE;
         }
         ++g_frameIndex;
+        g_frameTokenRefreshedForCurrentFrame = true;
     }
 
     const sl::Result constantsResult =
@@ -833,7 +904,9 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
    jlong uiImage, jlong uiMemory, jlong uiView, jint uiFormat,
    jint width, jint height, jboolean enabled, jint multiplier,
    jboolean uiRecomposition) {
-    if (vendorId != 0x10DE || !g_initialized || !g_dlssgSupported ||
+    if (vendorId != 0x10DE) return JNI_FALSE;
+    std::lock_guard lock(g_streamlineMutex);
+    if (!g_initialized || !g_dlssgSupported ||
         !g_dlssgInputsReady || commandBuffer == 0 || uiImage == 0 ||
         uiMemory == 0 || uiView == 0 || uiFormat == 0 ||
         width <= 0 || height <= 0 || g_currentFrameToken == nullptr) {
@@ -887,6 +960,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
 
 extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nIsActive
   (JNIEnv* env, jclass clazz) {
+    std::lock_guard lock(g_streamlineMutex);
     return (g_initialized && g_dlssgSupported && g_dlssgInputsReady &&
             g_dlssgEnabled && g_dlssgRuntimeReady) ? JNI_TRUE : JNI_FALSE;
 }
@@ -909,14 +983,17 @@ extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
 
 extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nReflexMarker
   (JNIEnv* env, jclass clazz, jint markerType) {
+    std::lock_guard lock(g_streamlineMutex);
     if (!g_initialized || !g_reflexSupported || markerType < 0 || markerType > 5) return;
 
     if (markerType == 0 || g_currentFrameToken == nullptr) {
         if (slGetNewFrameToken(g_currentFrameToken, &g_frameIndex) != sl::Result::eOk) {
             g_currentFrameToken = nullptr;
+            g_frameTokenRefreshedForCurrentFrame = false;
             return;
         }
         ++g_frameIndex;
+        g_frameTokenRefreshedForCurrentFrame = true;
         // The Reflex sleep call replaces host-side Thread.sleep pacing. It
         // uses NVIDIA's render-queue timing and belongs immediately before
         // the simulation-start marker for the same frame token.
@@ -956,9 +1033,14 @@ extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
 
 extern "C" JNIEXPORT jintArray JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetOptimalRenderSize
   (JNIEnv* env, jclass, jint mode, jint outputWidth, jint outputHeight,
-   jboolean rayReconstruction) {
+    jboolean rayReconstruction) {
     if (!g_initialized || outputWidth <= 0 || outputHeight <= 0) {
-        return env->NewIntArray(0);
+        jintArray empty = env->NewIntArray(0);
+        if (empty == nullptr || env->ExceptionCheck()) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return nullptr;
+        }
+        return empty;
     }
 
     const int selectedMode = std::clamp(static_cast<int>(mode), 0, 6);
@@ -968,7 +1050,12 @@ extern "C" JNIEXPORT jintArray JNICALL Java_org_malionaro_dlss_1frame_1generatio
 
     if (rayReconstruction == JNI_TRUE) {
         if (!g_dlssRrSupported || selectedMode < 2) {
-            return env->NewIntArray(0);
+            jintArray empty = env->NewIntArray(0);
+            if (empty == nullptr || env->ExceptionCheck()) {
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                return nullptr;
+            }
+            return empty;
         }
         sl::DLSSDOptions options{};
         options.mode = dlssModeFromIndex(selectedMode);
@@ -981,7 +1068,12 @@ extern "C" JNIEXPORT jintArray JNICALL Java_org_malionaro_dlss_1frame_1generatio
         renderHeight = settings.optimalRenderHeight;
     } else {
         if (!g_dlssSupported || selectedMode == 0) {
-            return env->NewIntArray(0);
+            jintArray empty = env->NewIntArray(0);
+            if (empty == nullptr || env->ExceptionCheck()) {
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                return nullptr;
+            }
+            return empty;
         }
         sl::DLSSOptions options{};
         options.mode = dlssModeFromIndex(selectedMode);
@@ -996,15 +1088,26 @@ extern "C" JNIEXPORT jintArray JNICALL Java_org_malionaro_dlss_1frame_1generatio
     }
 
     if (result != sl::Result::eOk || renderWidth == 0 || renderHeight == 0) {
-        return env->NewIntArray(0);
+        jintArray empty = env->NewIntArray(0);
+        if (empty == nullptr || env->ExceptionCheck()) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return nullptr;
+        }
+        return empty;
     }
     const jint values[] = {
         static_cast<jint>(renderWidth),
         static_cast<jint>(renderHeight)
     };
     jintArray dimensions = env->NewIntArray(2);
-    if (dimensions != nullptr) {
-        env->SetIntArrayRegion(dimensions, 0, 2, values);
+    if (dimensions == nullptr || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    env->SetIntArrayRegion(dimensions, 0, 2, values);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return nullptr;
     }
     return dimensions;
 }
@@ -1049,6 +1152,90 @@ extern "C" JNIEXPORT jlong JNICALL Java_org_malionaro_dlss_1frame_1generation_cl
     return 0;
 }
 
+// VK_EXT_memory_budget (promoted into the Khronos headers long ago; the local
+// fallback only guards against very old fetched Vulkan-Headers revisions).
+#ifndef VK_EXT_memory_budget
+#define VK_EXT_memory_budget 1
+#define VK_EXT_MEMORY_BUDGET_SPEC_VERSION 1
+#define VK_EXT_MEMORY_BUDGET_EXTENSION_NAME "VK_EXT_memory_budget"
+typedef struct VkPhysicalDeviceMemoryBudgetPropertiesEXT {
+    VkStructureType    sType;
+    void*              pNext;
+    VkDeviceSize       heapBudget[VK_MAX_MEMORY_HEAPS];
+    VkDeviceSize       heapUsage[VK_MAX_MEMORY_HEAPS];
+} VkPhysicalDeviceMemoryBudgetPropertiesEXT;
+#endif
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nQueryMemoryBudget(
+        JNIEnv* env, jclass, jlong vkPhysicalDeviceHandle,
+        jlongArray outBudgetBytes, jlongArray outUsageBytes) {
+    if (!outBudgetBytes || !outUsageBytes) return JNI_FALSE;
+    if (env->GetArrayLength(outBudgetBytes) < 1 ||
+            env->GetArrayLength(outUsageBytes) < 1) {
+        return JNI_FALSE;
+    }
+
+    // Caller-supplied handle wins; fall back to the handles retained by nInit.
+    VkPhysicalDevice physicalDevice =
+        reinterpret_cast<VkPhysicalDevice>(vkPhysicalDeviceHandle);
+    if (physicalDevice == VK_NULL_HANDLE) {
+        physicalDevice = g_vkPhysicalDevice;
+    }
+    if (physicalDevice == VK_NULL_HANDLE) {
+        return JNI_FALSE;
+    }
+
+    // VK_EXT_memory_budget: vkGetPhysicalDeviceMemoryProperties2 mit
+    // VkPhysicalDeviceMemoryBudgetPropertiesEXT im pNext.
+    auto pfnGetPhysicalDeviceMemoryProperties2 = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties2>(
+        vkGetInstanceProcAddr(
+            g_vkInstance != VK_NULL_HANDLE ? g_vkInstance : VkInstance(nullptr),
+            "vkGetPhysicalDeviceMemoryProperties2"));
+    if (!pfnGetPhysicalDeviceMemoryProperties2) {
+        return JNI_FALSE;
+    }
+
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budgetProperties{};
+    budgetProperties.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    VkPhysicalDeviceMemoryProperties2 memoryProperties2{};
+    memoryProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+    memoryProperties2.pNext = &budgetProperties;
+    pfnGetPhysicalDeviceMemoryProperties2(physicalDevice, &memoryProperties2);
+
+    // Report the largest DEVICE_LOCAL heap; fall back to the largest heap
+    // overall when the driver marks none as device-local.
+    uint32_t selectedHeap = 0;
+    VkDeviceSize largestSize = 0;
+    bool foundDeviceLocal = false;
+    const VkPhysicalDeviceMemoryProperties& properties =
+        memoryProperties2.memoryProperties;
+    for (uint32_t index = 0; index < properties.memoryHeapCount; ++index) {
+        const VkMemoryHeap& heap = properties.memoryHeaps[index];
+        const bool deviceLocal =
+            (heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+        if (foundDeviceLocal && !deviceLocal) continue;
+        if (!foundDeviceLocal || heap.size > largestSize) {
+            largestSize = heap.size;
+            selectedHeap = index;
+        }
+        foundDeviceLocal = foundDeviceLocal || deviceLocal;
+    }
+
+    const jlong budgetBytes =
+        static_cast<jlong>(budgetProperties.heapBudget[selectedHeap]);
+    const jlong usageBytes =
+        static_cast<jlong>(budgetProperties.heapUsage[selectedHeap]);
+    env->SetLongArrayRegion(outBudgetBytes, 0, 1, &budgetBytes);
+    env->SetLongArrayRegion(outUsageBytes, 0, 1, &usageBytes);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return JNI_FALSE;
+    }
+    return budgetBytes > 0 ? JNI_TRUE : JNI_FALSE;
+}
+
 // ============================================================
 // Vendor-generic entry points stay ABI-compatible with older Java builds.
 // They must never route AMD or Intel requests into NVIDIA Streamline.
@@ -1088,6 +1275,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         if (!g_initialized || !g_dlssSupported) {
             return JNI_FALSE;
         }
+        std::lock_guard lock(g_streamlineMutex);
         if (commandBuffer == 0 || colorImage == 0 || colorMemory == 0 ||
             colorView == 0 || depthImage == 0 || depthMemory == 0 ||
             depthView == 0 || motionImage == 0 || motionMemory == 0 ||
@@ -1120,7 +1308,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
             return JNI_FALSE;
         }
 
-        if (g_currentFrameToken == nullptr) {
+        if (!g_frameTokenRefreshedForCurrentFrame || g_currentFrameToken == nullptr) {
             if (slGetNewFrameToken(g_currentFrameToken, &g_frameIndex) !=
                     sl::Result::eOk ||
                 g_currentFrameToken == nullptr) {
@@ -1130,6 +1318,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
                 return JNI_FALSE;
             }
             ++g_frameIndex;
+            g_frameTokenRefreshedForCurrentFrame = true;
         }
 
         sl::Constants constants{};
@@ -1390,6 +1579,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         env->GetArrayLength(previousClipToClip) >= 16 &&
         env->GetArrayLength(worldToView) >= 16 &&
         env->GetArrayLength(viewToWorld) >= 16;
+    std::lock_guard lock(g_streamlineMutex);
     if (!g_initialized || !g_dlssRrSupported || !handlesValid ||
         !formatsValid || !arraysValid || renderWidth <= 0 ||
         renderHeight <= 0 || outputWidth <= renderWidth ||
@@ -1412,7 +1602,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         return JNI_FALSE;
     }
 
-    if (g_currentFrameToken == nullptr) {
+    if (!g_frameTokenRefreshedForCurrentFrame || g_currentFrameToken == nullptr) {
         if (slGetNewFrameToken(g_currentFrameToken, &g_frameIndex) !=
                 sl::Result::eOk ||
             g_currentFrameToken == nullptr) {
@@ -1422,6 +1612,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
             return JNI_FALSE;
         }
         ++g_frameIndex;
+        g_frameTokenRefreshedForCurrentFrame = true;
     }
 
     sl::Constants constants{};
@@ -1642,7 +1833,12 @@ extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
 
 extern "C" JNIEXPORT jstring JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetActiveProviderName
   (JNIEnv* env, jclass) {
-    return env->NewStringUTF(framegen::providerName(framegen::activeProvider()));
+    jstring result = env->NewStringUTF(framegen::providerName(framegen::activeProvider()));
+    if (result == nullptr || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    return result;
 }
 
 extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetProviderLifecycleState
@@ -1653,7 +1849,12 @@ extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
 extern "C" JNIEXPORT jstring JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetProviderLifecycleDetail
   (JNIEnv* env, jclass) {
     const std::string detail = framegen::providerStateDetail();
-    return env->NewStringUTF(detail.c_str());
+    jstring result = env->NewStringUTF(detail.c_str());
+    if (result == nullptr || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    return result;
 }
 
 extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nBeginProviderDrain
@@ -1698,13 +1899,23 @@ extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
 extern "C" JNIEXPORT jstring JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetD3D12PresentationStatus
   (JNIEnv* env, jclass) {
     const std::string value = dxgipresenter::status();
-    return env->NewStringUTF(value.c_str());
+    jstring result = env->NewStringUTF(value.c_str());
+    if (result == nullptr || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    return result;
 }
 
 extern "C" JNIEXPORT jstring JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nGetD3D12AdapterLuid
   (JNIEnv* env, jclass) {
     const std::string value = dxgipresenter::adapterLuid();
-    return env->NewStringUTF(value.c_str());
+    jstring result = env->NewStringUTF(value.c_str());
+    if (result == nullptr || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    return result;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nCanCreateD3D12PresentationSwapchain
