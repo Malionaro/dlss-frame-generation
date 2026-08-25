@@ -21,8 +21,6 @@ jobs:
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
-          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, CC0-1.0, OFL-1.1
-          deny-licenses: GPL-2.0, GPL-3.0
-          # OptiScaler is GPL-3.0 but bundled as documented separate work in META-INF/optiscaler;
-          # the action flags it - we allowlist via comment. If you bundle more GPL, add here.
+          # OptiScaler is GPL-3.0 but bundled as documented separate work in META-INF/optiscaler
+          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, CC0-1.0, OFL-1.1, GPL-3.0
           fail-on-scopes: runtime

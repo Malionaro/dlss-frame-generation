@@ -2,7 +2,6 @@ name: CodeQL
 
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
   schedule:
@@ -16,7 +15,7 @@ permissions:
 
 concurrency:
   group: codeql-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   analyze:
@@ -47,7 +46,7 @@ jobs:
       - name: Build (CodeQL autobuild fallback to Gradle)
         run: |
           chmod +x ./gradlew
-          ./gradlew classes --no-daemon -x buildNative -x copyNative -x copyStreamlineRuntime -x compileShaders || ./gradlew compileClientJava --no-daemon
+          ./gradlew compileClientJava compileTestJava --no-daemon -x configureNative -x buildNative -x copyNative -x copyStreamlineRuntime -x compileShaders --stacktrace || ./gradlew compileClientJava --no-daemon --stacktrace
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
