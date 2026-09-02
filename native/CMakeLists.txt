@@ -23,13 +23,10 @@ message(STATUS "Found JNI: ${JNI_INCLUDE_DIRS}")
 # resolved through sl.interposer at runtime. Fetching the Khronos headers keeps
 # the native build reproducible without requiring a machine-wide Vulkan SDK.
 include(FetchContent)
-# Supply-chain note: pinned by tag; switch to URL download + URL_HASH SHA256=<hash>
-# for reproducible builds once a hash for v1.4.313 is recorded.
 FetchContent_Declare(
     VulkanHeaders
-    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
-    GIT_TAG v1.4.313
-    GIT_SHALLOW TRUE
+    URL https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.313.zip
+    URL_HASH SHA256=debf13bfeba3b365f9d95d50c7cc7f1e21d93d241e7980ed1d16d67f065e73d5
 )
 FetchContent_MakeAvailable(VulkanHeaders)
 

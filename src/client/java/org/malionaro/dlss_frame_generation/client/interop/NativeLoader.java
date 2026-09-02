@@ -141,7 +141,7 @@ public final class NativeLoader {
             earlyLoadDone = true;
         } catch (IOException | UnsatisfiedLinkError | SecurityException e) {
             logger.warn("[DLSS FG] Early interposer load failed: {}", e.toString());
-            // Leave earlyLoadDone false so a later initialization phase can retry.
+            earlyLoadDone = true;
         }
     }
 

@@ -301,17 +301,17 @@ void abandonPresentationLocked() {
     g_d3d12DoneSemaphore = VK_NULL_HANDLE;
 }
 
-void releasePresentationLocked() {
+void releasePresentationLocked(std::unique_lock<std::mutex>& lock) {
     // Deadlock fix: do not hold g_mutex while blocking on GPU idle.
-    // unique_lock.unlock() before vkDeviceWaitIdle / waitForD3D12QueueIdle
-    g_mutex.unlock();
+    g_stage = Stage::Unavailable;
+    lock.unlock();
     VkResult vulkanIdle = VK_SUCCESS;
     if (g_vkDevice != VK_NULL_HANDLE) {
         vulkanIdle = vkDeviceWaitIdle(g_vkDevice);
     }
     std::string idleError;
     bool d3d12Idle = waitForD3D12QueueIdle(idleError);
-    g_mutex.lock();
+    lock.lock();
     if (vulkanIdle != VK_SUCCESS
         || !d3d12Idle) {
         if (idleError.empty()) {
@@ -465,6 +465,7 @@ bool createSharedTimeline(
         &sharedHandle
     );
     if (FAILED(result)) {
+        d3d12Fence.Reset();
         error = "D3D12 fence handle creation failed: "
             + hresultText(result);
         return false;
@@ -482,6 +483,9 @@ bool createSharedTimeline(
     VkResult vkResult = vkCreateSemaphore(
         g_vkDevice, &createInfo, nullptr, &vulkanSemaphore);
     if (vkResult != VK_SUCCESS) {
+        CloseHandle(sharedHandle);
+        sharedHandle = nullptr;
+        d3d12Fence.Reset();
         error = "Vulkan timeline semaphore creation failed: "
             + std::to_string(vkResult);
         return false;
@@ -498,6 +502,11 @@ bool createSharedTimeline(
     vkResult = g_importSemaphoreWin32Handle(
         g_vkDevice, &importInfo);
     if (vkResult != VK_SUCCESS) {
+        vkDestroySemaphore(g_vkDevice, vulkanSemaphore, nullptr);
+        vulkanSemaphore = VK_NULL_HANDLE;
+        CloseHandle(sharedHandle);
+        sharedHandle = nullptr;
+        d3d12Fence.Reset();
         error = "D3D12 fence import into Vulkan failed: "
             + std::to_string(vkResult);
         return false;
@@ -556,6 +565,7 @@ bool createSharedFrame(
         &resourceHandle
     );
     if (FAILED(result)) {
+        frame.d3d12Resource.Reset();
         error = "D3D12 shared texture handle creation failed: "
             + hresultText(result);
         return false;
@@ -586,6 +596,7 @@ bool createSharedFrame(
         g_vkDevice, &imageInfo, nullptr, &frame.vulkanImage);
     if (vkResult != VK_SUCCESS) {
         CloseHandle(resourceHandle);
+        frame.d3d12Resource.Reset();
         error = "Vulkan shared image creation failed: "
             + std::to_string(vkResult);
         return false;
@@ -605,6 +616,9 @@ bool createSharedFrame(
     );
     if (vkResult != VK_SUCCESS) {
         CloseHandle(resourceHandle);
+        vkDestroyImage(g_vkDevice, frame.vulkanImage, nullptr);
+        frame.vulkanImage = VK_NULL_HANDLE;
+        frame.d3d12Resource.Reset();
         error = "Vulkan could not inspect the D3D12 resource handle: "
             + std::to_string(vkResult);
         return false;
@@ -616,6 +630,9 @@ bool createSharedFrame(
     );
     if (memoryType == UINT32_MAX) {
         CloseHandle(resourceHandle);
+        vkDestroyImage(g_vkDevice, frame.vulkanImage, nullptr);
+        frame.vulkanImage = VK_NULL_HANDLE;
+        frame.d3d12Resource.Reset();
         error =
             "No Vulkan memory type accepts the D3D12 resource";
         return false;
@@ -642,6 +659,9 @@ bool createSharedFrame(
         g_vkDevice, &allocation, nullptr, &frame.vulkanMemory);
     CloseHandle(resourceHandle);
     if (vkResult != VK_SUCCESS) {
+        vkDestroyImage(g_vkDevice, frame.vulkanImage, nullptr);
+        frame.vulkanImage = VK_NULL_HANDLE;
+        frame.d3d12Resource.Reset();
         error = "Vulkan import of D3D12 texture memory failed: "
             + std::to_string(vkResult);
         return false;
@@ -653,6 +673,11 @@ bool createSharedFrame(
         0
     );
     if (vkResult != VK_SUCCESS) {
+        vkFreeMemory(g_vkDevice, frame.vulkanMemory, nullptr);
+        frame.vulkanMemory = VK_NULL_HANDLE;
+        vkDestroyImage(g_vkDevice, frame.vulkanImage, nullptr);
+        frame.vulkanImage = VK_NULL_HANDLE;
+        frame.d3d12Resource.Reset();
         error = "Vulkan shared image binding failed: "
             + std::to_string(vkResult);
         return false;
@@ -812,7 +837,7 @@ bool probe(
     fail("Hybrid Vulkan/D3D12 presentation is Windows-only");
     return false;
 #else
-    releasePresentationLocked();
+    releasePresentationLocked(lock);
     g_d3d12Queue.Reset();
     g_d3d12Device.Reset();
     g_infoQueue.Reset();
@@ -1020,7 +1045,7 @@ int32_t createSwapchain(
     const VkSwapchainCreateInfoKHR* createInfo,
     VkSwapchainKHR* swapchain
 ) {
-    std::lock_guard lock(g_mutex);
+    std::unique_lock<std::mutex> lock(g_mutex);
 #if !defined(_WIN32)
     return kNotHandled;
 #else
@@ -1031,7 +1056,7 @@ int32_t createSwapchain(
         || swapchain == nullptr) {
         return kNotHandled;
     }
-    releasePresentationLocked();
+    releasePresentationLocked(lock);
 
     if (createInfo->imageColorSpace
             != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
@@ -1094,7 +1119,7 @@ int32_t createSwapchain(
         fail("DXGI flip-model swapchain creation failed: "
             + hresultText(result));
         g_sessionDisabled = true;
-        releasePresentationLocked();
+        releasePresentationLocked(lock);
         return kNotHandled;
     }
     g_factory->MakeWindowAssociation(
@@ -1110,7 +1135,7 @@ int32_t createSwapchain(
             fail("DXGI backbuffer acquisition failed: "
                 + hresultText(result));
             g_sessionDisabled = true;
-            releasePresentationLocked();
+            releasePresentationLocked(lock);
             return kNotHandled;
         }
     }
@@ -1128,7 +1153,7 @@ int32_t createSwapchain(
             error)) {
         fail(error);
         g_sessionDisabled = true;
-        releasePresentationLocked();
+        releasePresentationLocked(lock);
         return kNotHandled;
     }
 
@@ -1138,14 +1163,14 @@ int32_t createSwapchain(
                 createInfo->imageFormat, frame, error)) {
             fail(error);
             g_sessionDisabled = true;
-            releasePresentationLocked();
+            releasePresentationLocked(lock);
             return kNotHandled;
         }
     }
     if (!createCopyCommands(error)) {
         fail(error);
         g_sessionDisabled = true;
-        releasePresentationLocked();
+        releasePresentationLocked(lock);
         return kNotHandled;
     }
     std::string debugDetail;
@@ -1153,7 +1178,7 @@ int32_t createSwapchain(
         fail("D3D12 debug layer rejected swapchain setup: "
             + debugDetail);
         g_sessionDisabled = true;
-        releasePresentationLocked();
+        releasePresentationLocked(lock);
         return kNotHandled;
     }
 
@@ -1171,12 +1196,12 @@ int32_t createSwapchain(
 }
 
 void destroySwapchain(VkSwapchainKHR swapchain) {
-    std::lock_guard lock(g_mutex);
+    std::unique_lock<std::mutex> lock(g_mutex);
 #if defined(_WIN32)
     if (g_swapchainToken != nullptr
         && swapchain == reinterpret_cast<VkSwapchainKHR>(
             g_swapchainToken.get())) {
-        releasePresentationLocked();
+        releasePresentationLocked(lock);
     } else if (swapchain == g_retiredSwapchain) {
         g_retiredSwapchain = VK_NULL_HANDLE;
     }
@@ -1275,7 +1300,7 @@ int32_t queuePresent(
     VkQueue queue,
     const VkPresentInfoKHR* presentInfo
 ) {
-    std::lock_guard lock(g_mutex);
+    std::unique_lock<std::mutex> lock(g_mutex);
 #if !defined(_WIN32)
     return kNotHandled;
 #else
@@ -1342,9 +1367,18 @@ int32_t queuePresent(
         readyValue;
     g_lastSubmittedDone = readyValue;
 
-    result = g_dxgiSwapchain->Present(
-        g_syncInterval, g_presentFlags);
+    Microsoft::WRL::ComPtr<IDXGISwapChain4> swapchain = g_dxgiSwapchain;
+    const UINT syncInterval = g_syncInterval;
+    const UINT presentFlags = g_presentFlags;
     g_currentImageIndex = -1;
+
+    lock.unlock();
+    result = swapchain->Present(syncInterval, presentFlags);
+    lock.lock();
+
+    if (g_sessionDisabled || g_dxgiSwapchain == nullptr) {
+        return VK_SUCCESS;
+    }
     if (result == DXGI_STATUS_OCCLUDED) {
         g_status =
             "DXGI presentation is active but the window is occluded";
@@ -1384,9 +1418,9 @@ int32_t queuePresent(
 }
 
 void shutdown() {
-    std::lock_guard lock(g_mutex);
+    std::unique_lock<std::mutex> lock(g_mutex);
 #if defined(_WIN32)
-    releasePresentationLocked();
+    releasePresentationLocked(lock);
     g_d3d12Queue.Reset();
     g_d3d12Device.Reset();
     g_infoQueue.Reset();

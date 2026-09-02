@@ -613,17 +613,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         // full vkDeviceWaitIdle via VulkanRegistry (correct but expensive);
         // otherwise we only spin briefly and accept that the serial can run
         // ahead of actual GPU completion.
-        boolean gpuIdleConfirmed = false;
-        try {
-            if (VulkanRegistry.isStrictSyncEnabled()) {
-                gpuIdleConfirmed = VulkanRegistry.waitUntilGpuIdleBrief(2L);
-            }
-        } catch (Throwable ignored) {
-        }
-        if (!gpuIdleConfirmed) {
-            long spinDeadline = System.nanoTime() + 1_000_000L;
-            while (System.nanoTime() < spinDeadline) {
-                Thread.onSpinWait();
+        if (VulkanRegistry.isStrictSyncEnabled()) {
+            try {
+                VulkanRegistry.waitUntilGpuIdleBrief(2L);
+            } catch (Throwable ignored) {
             }
         }
         completedPresentSerial++;

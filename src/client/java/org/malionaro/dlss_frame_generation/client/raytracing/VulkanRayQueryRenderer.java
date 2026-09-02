@@ -152,9 +152,30 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 return false;
             }
             int frameSlot = (int) (frameNumber % FRAME_SLOT_COUNT);
-            awaitUniformSlotFence(frameSlot);
-            upload(uniformBuffers[frameSlot], frame.toNativeBuffer());
-            markUniformSlotInFlight(frameSlot);
+            ByteBuffer nativeData = frame.toNativeBuffer();
+            vkCmdUpdateBuffer(commandBuffer, uniformBuffers[frameSlot].buffer, 0L, nativeData);
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkBufferMemoryBarrier.Buffer barrier = VkBufferMemoryBarrier.calloc(1, stack)
+                        .sType$Default()
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_UNIFORM_READ_BIT)
+                        .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                        .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                        .buffer(uniformBuffers[frameSlot].buffer)
+                        .offset(0L)
+                        .size(RayTracingFrameData.BYTE_SIZE);
+                vkCmdPipelineBarrier(
+                        commandBuffer,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        0,
+                        null,
+                        barrier,
+                        null
+                );
+            }
+            slotInFlight[frameSlot] = true;
+            slotSubmittedFrame[frameSlot] = frameNumber;
             if (descriptorDepthView != depthView.vkImageView()) {
                 if (descriptorDepthView != NULL) {
                     // Descriptor sets from previous frames may still be in
@@ -237,7 +258,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         for (int index = 0; index < FRAME_SLOT_COUNT; index++) {
             uniformBuffers[index] = createBuffer(
                     RayTracingFrameData.BYTE_SIZE,
-                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
                             | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                     false
@@ -519,7 +540,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
 
     private void rebuildScene(VkCommandBuffer commandBuffer) {
         vkDeviceWaitIdle(device);
-        destroyAccelerationStructures();
+        destroyAccelerationStructureHandles();
         upload(sceneBuffer, scene.blocks());
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -544,25 +565,37 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     stack.ints(count),
                     blasSizes
             );
-            blasStorage = createBuffer(
-                    blasSizes.accelerationStructureSize(),
-                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
-                            | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                    true
-            );
+            long requiredBlasStorage = blasSizes.accelerationStructureSize();
+            if (blasStorage == null || blasStorage.size < requiredBlasStorage) {
+                if (blasStorage != null) {
+                    destroyAllocation(blasStorage, true);
+                }
+                blasStorage = createBuffer(
+                        requiredBlasStorage,
+                        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+                                | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        true
+                );
+            }
             blas = createAccelerationStructure(
                     blasStorage.buffer,
-                    blasSizes.accelerationStructureSize(),
+                    requiredBlasStorage,
                     VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
                     stack
             );
-            blasScratch = createBuffer(
-                    blasSizes.buildScratchSize(),
-                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                    true
-            );
+            long requiredBlasScratch = blasSizes.buildScratchSize();
+            if (blasScratch == null || blasScratch.size < requiredBlasScratch) {
+                if (blasScratch != null) {
+                    destroyAllocation(blasScratch, true);
+                }
+                blasScratch = createBuffer(
+                        requiredBlasScratch,
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        true
+                );
+            }
             blasBuild
                     .dstAccelerationStructure(blas)
                     .scratchData(address -> address.deviceAddress(
@@ -603,25 +636,37 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     stack.ints(1),
                     tlasSizes
             );
-            tlasStorage = createBuffer(
-                    tlasSizes.accelerationStructureSize(),
-                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
-                            | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                    true
-            );
+            long requiredTlasStorage = tlasSizes.accelerationStructureSize();
+            if (tlasStorage == null || tlasStorage.size < requiredTlasStorage) {
+                if (tlasStorage != null) {
+                    destroyAllocation(tlasStorage, true);
+                }
+                tlasStorage = createBuffer(
+                        requiredTlasStorage,
+                        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+                                | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        true
+                );
+            }
             tlas = createAccelerationStructure(
                     tlasStorage.buffer,
-                    tlasSizes.accelerationStructureSize(),
+                    requiredTlasStorage,
                     VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
                     stack
             );
-            tlasScratch = createBuffer(
-                    tlasSizes.buildScratchSize(),
-                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                    true
-            );
+            long requiredTlasScratch = tlasSizes.buildScratchSize();
+            if (tlasScratch == null || tlasScratch.size < requiredTlasScratch) {
+                if (tlasScratch != null) {
+                    destroyAllocation(tlasScratch, true);
+                }
+                tlasScratch = createBuffer(
+                        requiredTlasScratch,
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        true
+                );
+            }
             tlasBuild
                     .dstAccelerationStructure(tlas)
                     .scratchData(address -> address.deviceAddress(
@@ -1268,31 +1313,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
      * set up (no queue handle or VK object creation failed).
      */
     private void awaitUniformSlotCpuFallback(int slot, long lastFrame) {
-        if (frameNumber - lastFrame >= FRAME_SLOT_COUNT) {
+        if (frameNumber - lastFrame >= FRAME_SLOT_COUNT - 1) {
             retireSlot(slot);
-            return;
-        }
-        int spins = 0;
-        while (slotInFlight[slot] && spins < 200) {
-            Thread.yield();
-            try {
-                Thread.sleep(1);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-            // Re-evaluate after short wait – allow retire one frame earlier to avoid deadlock in CPU stub
-            if (frameNumber - lastFrame >= FRAME_SLOT_COUNT - 1) {
-                retireSlot(slot);
-                break;
-            }
-            spins++;
-            if (spins >= 100) {
-                logger.warn("Uniform slot {} fence wait timeout (frame {} last {}); forcing retire to avoid overwrite",
-                        slot, frameNumber, lastFrame);
-                retireSlot(slot);
-                break;
-            }
         }
     }
 
@@ -1469,7 +1491,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         destroyAllocation(image.memory, false);
     }
 
-    private void destroyAccelerationStructures() {
+    private void destroyAccelerationStructureHandles() {
         if (tlas != NULL) {
             vkDestroyAccelerationStructureKHR(device, tlas, null);
             tlas = NULL;
@@ -1478,6 +1500,10 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             vkDestroyAccelerationStructureKHR(device, blas, null);
             blas = NULL;
         }
+    }
+
+    private void destroyAccelerationStructures() {
+        destroyAccelerationStructureHandles();
         destroyAllocation(tlasStorage, true);
         destroyAllocation(blasStorage, true);
         destroyAllocation(tlasScratch, true);

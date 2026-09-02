@@ -395,15 +395,10 @@ public class VulkanGpuSurfaceMixin {
         // exposed by Minecraft's VulkanGpuSurface. Delegate to the registry:
         // real vkDeviceWaitIdle under -Ddlss_fg.strictSync=true, otherwise a
         // bounded ~2ms spin so slot-reuse bookkeeping stays conservative.
-        boolean gpuIdleConfirmed = false;
-        try {
-            gpuIdleConfirmed = VulkanRegistry.waitUntilGpuIdleBrief(2L);
-        } catch (Throwable ignored) {
-        }
-        if (!gpuIdleConfirmed) {
-            long spinDeadline = System.nanoTime() + 2_000_000L;
-            while (System.nanoTime() < spinDeadline) {
-                Thread.onSpinWait();
+        if (VulkanRegistry.isStrictSyncEnabled()) {
+            try {
+                VulkanRegistry.waitUntilGpuIdleBrief(2L);
+            } catch (Throwable ignored) {
             }
         }
         VulkanRegistry.onPresentCompleted();
