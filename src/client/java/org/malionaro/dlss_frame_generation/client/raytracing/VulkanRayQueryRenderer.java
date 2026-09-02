@@ -63,6 +63,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private final RayTracingScene scene = new RayTracingScene();
 
     private Allocation sceneBuffer;
+    private Allocation lightBuffer;
     private final Allocation[] uniformBuffers =
             new Allocation[FRAME_SLOT_COUNT];
     private Allocation instanceBuffer;
@@ -255,6 +256,12 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                 true
         );
+        lightBuffer = createBuffer(
+                RayTracingScene.LIGHT_BUFFER_BYTES,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                false
+        );
         for (int index = 0; index < FRAME_SLOT_COUNT; index++) {
             uniformBuffers[index] = createBuffer(
                     RayTracingFrameData.BYTE_SIZE,
@@ -288,7 +295,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             shaderModule = result.get(0);
 
             VkDescriptorSetLayoutBinding.Buffer bindings =
-                    VkDescriptorSetLayoutBinding.calloc(10, stack);
+                    VkDescriptorSetLayoutBinding.calloc(11, stack);
             bindings.get(0)
                     .binding(0)
                     .descriptorType(VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR)
@@ -319,6 +326,11 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             bindings.get(9)
                     .binding(9)
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            bindings.get(10)
+                    .binding(10)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                     .descriptorCount(1)
                     .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
 
@@ -377,7 +389,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     .descriptorCount(6 * FRAME_SLOT_COUNT);
             poolSizes.get(2)
                     .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                    .descriptorCount(FRAME_SLOT_COUNT);
+                    .descriptorCount(2 * FRAME_SLOT_COUNT);
             poolSizes.get(3)
                     .type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                     .descriptorCount(FRAME_SLOT_COUNT);
@@ -542,6 +554,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         vkDeviceWaitIdle(device);
         destroyAccelerationStructureHandles();
         upload(sceneBuffer, scene.blocks());
+        upload(lightBuffer, scene.lightBuffer());
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             int count = scene.blockCount();
@@ -793,6 +806,11 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     .buffer(sceneBuffer.buffer)
                     .offset(0)
                     .range(VK_WHOLE_SIZE);
+            VkDescriptorBufferInfo.Buffer lightInfo = VkDescriptorBufferInfo.calloc(1, stack);
+            lightInfo.get(0)
+                    .buffer(lightBuffer.buffer)
+                    .offset(0)
+                    .range(RayTracingScene.LIGHT_BUFFER_BYTES);
             for (int slot = 0; slot < FRAME_SLOT_COUNT; slot++) {
                 VkDescriptorBufferInfo.Buffer frameInfo =
                         VkDescriptorBufferInfo.calloc(1, stack);
@@ -801,7 +819,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                         .offset(0)
                         .range(RayTracingFrameData.BYTE_SIZE);
                 VkWriteDescriptorSet.Buffer writes =
-                        VkWriteDescriptorSet.calloc(10, stack);
+                        VkWriteDescriptorSet.calloc(11, stack);
                 long targetSet = descriptorSets[slot];
                 writes.get(0)
                         .sType$Default()
@@ -848,6 +866,12 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                         .descriptorType(
                                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                         .pImageInfo(depthInfo);
+                writes.get(10)
+                        .sType$Default()
+                        .dstSet(targetSet)
+                        .dstBinding(10)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                        .pBufferInfo(lightInfo);
                 imageInfo.position(0).limit(6);
                 vkUpdateDescriptorSets(device, writes, null);
             }
@@ -1547,6 +1571,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             uniformBuffers[index] = null;
         }
         destroyAllocation(sceneBuffer, true);
+        destroyAllocation(lightBuffer, true);
         if (depthSampler != NULL) vkDestroySampler(device, depthSampler, null);
         if (descriptorPool != NULL) vkDestroyDescriptorPool(device, descriptorPool, null);
         if (pipeline != NULL) vkDestroyPipeline(device, pipeline, null);

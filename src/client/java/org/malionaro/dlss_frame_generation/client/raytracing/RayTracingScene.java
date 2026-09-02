@@ -23,6 +23,11 @@ public final class RayTracingScene {
     public static final int BYTES_PER_BLOCK = 32;
     public static final int MAX_BLOCKS = 65_536;
 
+    public static final int MAX_LIGHTS = 32;
+    public static final int BYTES_PER_LIGHT = 32;
+    public static final int LIGHT_HEADER_BYTES = 16;
+    public static final int LIGHT_BUFFER_BYTES = LIGHT_HEADER_BYTES + MAX_LIGHTS * BYTES_PER_LIGHT;
+
     private ByteBuffer blocks = ByteBuffer.allocateDirect(BYTES_PER_BLOCK)
             .order(ByteOrder.nativeOrder());
     private int blockCount;
@@ -33,6 +38,16 @@ public final class RayTracingScene {
     private boolean dirty;
     private boolean invalidated;
     private int framesSinceRebuild;
+
+    private final ByteBuffer lightBuffer = ByteBuffer.allocateDirect(LIGHT_BUFFER_BYTES)
+            .order(ByteOrder.nativeOrder());
+    private int lightCount;
+
+    public RayTracingScene() {
+        blocks.limit(0);
+        resetLights();
+        finalizeLights();
+    }
 
     // M1: Dirty-Chunk Tracking - statt 460k Lookup jeden Frame nur veränderte Chunks
     private final Set<ChunkPos> dirtyChunks = new HashSet<>();
@@ -95,6 +110,7 @@ public final class RayTracingScene {
         ensureCapacity(MAX_BLOCKS);
         blocks.clear();
         blockCount = 0;
+        resetLights();
 
         // M1 Fallback: budgetierter Full-Scan - statt 460k Lookup in einem Frame
         // wird der Scan mit VOXELS_PER_FRAME_BUDGET (1000) pro Frame budgetiert.
@@ -140,6 +156,7 @@ public final class RayTracingScene {
         }
 
         blocks.flip();
+        finalizeLights();
         centerX = x;
         centerY = y;
         centerZ = z;
@@ -372,7 +389,12 @@ public final class RayTracingScene {
 
         MapColor mapColor = state.getMapColor(minecraft.level, position);
         int color = mapColor != null ? mapColor.col : 0x808080;
-        int flags = isReflective(mapColor) ? 1 : 0;
+        int emission = state.getLightEmission();
+        int flags = computeFlags(mapColor, fluidBlock, state, emission);
+
+        if (emission > 0) {
+            tryAddPointLight(x + 0.5f, y + 0.5f, z + 0.5f, emission, mapColor, color);
+        }
 
         VoxelShape blockShape = state.getShape(minecraft.level, position);
         if (appendShape(blockShape, x, y, z, color, flags)) {
@@ -396,7 +418,7 @@ public final class RayTracingScene {
                     y,
                     z,
                     packedFluidColor,
-                    isReflective(fluidColor) ? 1 : 0
+                    computeFlags(fluidColor, true, state, 0)
             );
         }
         return false;
@@ -439,6 +461,87 @@ public final class RayTracingScene {
                 || color == MapColor.DIAMOND;
     }
 
+    private static int computeFlags(
+            MapColor mapColor,
+            boolean fluidBlock,
+            BlockState state,
+            int emission
+    ) {
+        int flags = 0;
+        if (isReflective(mapColor)) {
+            flags |= 1; // FLAG_REFLECTIVE
+        }
+        if (fluidBlock) {
+            flags |= 2; // FLAG_WATER
+        }
+        if (!fluidBlock && !state.isSolidRender() && (mapColor == MapColor.NONE || state.getLightDampening() <= 1)) {
+            flags |= 4; // FLAG_GLASS
+        }
+        if (emission > 0 || mapColor == MapColor.FIRE) {
+            flags |= 8; // FLAG_EMISSIVE
+        }
+        if (mapColor == MapColor.METAL || mapColor == MapColor.GOLD || mapColor == MapColor.DIAMOND) {
+            flags |= 16; // FLAG_METALLIC
+        }
+        return flags;
+    }
+
+    private void resetLights() {
+        lightCount = 0;
+        lightBuffer.clear();
+        lightBuffer.position(LIGHT_HEADER_BYTES);
+    }
+
+    private void finalizeLights() {
+        int currentPos = lightBuffer.position();
+        lightBuffer.position(0);
+        lightBuffer.putInt(lightCount);
+        lightBuffer.putInt(0);
+        lightBuffer.putInt(0);
+        lightBuffer.putInt(0);
+        lightBuffer.position(currentPos);
+        lightBuffer.flip();
+    }
+
+    private void tryAddPointLight(
+            float x, float y, float z,
+            int emission,
+            MapColor mapColor,
+            int color
+    ) {
+        if (emission <= 0 || lightCount >= MAX_LIGHTS) {
+            return;
+        }
+        float radius = Math.max(5.0f, emission * 1.0f);
+        float intensity = Math.min(2.5f, 0.4f + emission * 0.12f);
+        float r, g, b;
+        if (mapColor == MapColor.FIRE) {
+            r = 1.0f; g = 0.65f; b = 0.25f;
+        } else if (mapColor == MapColor.COLOR_LIGHT_BLUE || mapColor == MapColor.DIAMOND) {
+            r = 0.25f; g = 0.70f; b = 1.0f;
+        } else if (mapColor == MapColor.COLOR_RED) {
+            r = 1.0f; g = 0.15f; b = 0.1f;
+        } else if (mapColor == MapColor.WATER) {
+            r = 0.75f; g = 0.95f; b = 1.0f;
+        } else if (mapColor == MapColor.GOLD) {
+            r = 1.0f; g = 0.82f; b = 0.45f;
+        } else {
+            r = Math.max(0.2f, ((color >> 16) & 0xFF) / 255.0f);
+            g = Math.max(0.2f, ((color >> 8) & 0xFF) / 255.0f);
+            b = Math.max(0.2f, (color & 0xFF) / 255.0f);
+        }
+        // struct PointLight: vec4 positionAndRadius, vec4 colorAndIntensity
+        lightBuffer.putFloat(x);
+        lightBuffer.putFloat(y);
+        lightBuffer.putFloat(z);
+        lightBuffer.putFloat(radius);
+        lightBuffer.putFloat(r);
+        lightBuffer.putFloat(g);
+        lightBuffer.putFloat(b);
+        lightBuffer.putFloat(intensity);
+        lightCount++;
+    }
+
     private void putBlock(
             float minX, float minY, float minZ,
             float maxX, float maxY, float maxZ,
@@ -473,6 +576,8 @@ public final class RayTracingScene {
         framesSinceRebuild = 0;
         dirtyChunks.clear();
         budgetedScanVoxelsThisFrame = 0;
+        resetLights();
+        finalizeLights();
     }
 
     public ByteBuffer blocks() {
@@ -481,6 +586,14 @@ public final class RayTracingScene {
 
     public int blockCount() {
         return blockCount;
+    }
+
+    public ByteBuffer lightBuffer() {
+        return lightBuffer.asReadOnlyBuffer().order(ByteOrder.nativeOrder());
+    }
+
+    public int lightCount() {
+        return lightCount;
     }
 
     public boolean consumeDirty() {

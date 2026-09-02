@@ -11,6 +11,11 @@ struct BlockAabb {
     vec4 maximumYZColorFlags;
 };
 
+struct PointLight {
+    vec4 positionAndRadius;
+    vec4 colorAndIntensity;
+};
+
 layout(std430, set = 0, binding = 2) readonly buffer BlockBuffer {
     BlockAabb blocks[];
 };
@@ -29,6 +34,14 @@ layout(set = 0, binding = 6, rgba16f) uniform writeonly image2D specularAlbedoIm
 layout(set = 0, binding = 7, rgba16f) uniform writeonly image2D normalRoughnessImage;
 layout(set = 0, binding = 8, r16f) uniform writeonly image2D specularHitDistanceImage;
 layout(set = 0, binding = 9) uniform sampler2D rasterDepth;
+
+layout(std430, set = 0, binding = 10) readonly buffer LightBuffer {
+    uint lightCount;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+    PointLight lights[];
+};
 
 struct Hit {
     float distance;
@@ -315,21 +328,114 @@ void main() {
             0.03,
             frame.renderParameters.z
         );
-        visibility += shadow.valid ? 0.0 : 1.0;
+        if (shadow.valid) {
+            uint shadowFlags = floatBitsToUint(blocks[shadow.primitive].maximumYZColorFlags.w);
+            if ((shadowFlags & 4u) != 0u) {
+                visibility += 0.65; // Colored glass transparency attenuation
+            }
+        } else {
+            visibility += 1.0;
+        }
     }
     visibility /= float(sampleCount);
 
-    float directLight = mix(0.42, 1.0, visibility);
+    // Ray-Traced Ambient Occlusion (RT-AO) for contact shadows in corners
+    float rtAo = 1.0;
+    vec3 aoDirections[2] = vec3[2](
+        normalize(primary.normal + vec3(0.577, 0.577, 0.577)),
+        normalize(primary.normal + vec3(-0.577, 0.577, -0.577))
+    );
+    for (int aoIdx = 0; aoIdx < 2; aoIdx++) {
+        Hit aoHit = traceScene(
+            point + primary.normal * 0.02,
+            aoDirections[aoIdx],
+            0.02,
+            1.2
+        );
+        if (aoHit.valid) {
+            rtAo -= 0.3 * (1.0 - clamp(aoHit.distance / 1.2, 0.0, 1.0));
+        }
+    }
+    rtAo = clamp(rtAo, 0.25, 1.0);
+
+    float ambient = 0.38 * rtAo;
+    float directLight = ambient + (1.0 - ambient) * visibility;
     directLight *= 0.55 + 0.45 * max(dot(primary.normal, sunDirection), 0.0);
     vec3 result = linearRaster * directLight;
 
+    // Material properties and flags
     uint flags = floatBitsToUint(
         blocks[primary.primitive].maximumYZColorFlags.w
     );
-    float roughness = (flags & 1u) != 0u ? 0.16 : 0.82;
-    vec3 specularAlbedo = (flags & 1u) != 0u
-        ? vec3(0.62)
-        : vec3(0.035);
+    bool isReflective = (flags & 1u) != 0u;
+    bool isWater = (flags & 2u) != 0u;
+    bool isGlass = (flags & 4u) != 0u;
+    bool isEmissive = (flags & 8u) != 0u;
+    bool isMetallic = (flags & 16u) != 0u;
+
+    float roughness = 0.82;
+    vec3 specularAlbedo = vec3(0.04);
+    if (isWater) {
+        roughness = 0.04;
+        specularAlbedo = vec3(0.02);
+    } else if (isMetallic) {
+        roughness = 0.15;
+        specularAlbedo = linearRaster;
+    } else if (isReflective) {
+        roughness = 0.22;
+        specularAlbedo = vec3(0.55);
+    }
+
+    // Dynamic Point Light Illumination (torches, lanterns, lava)
+    vec3 pointLightDiffuse = vec3(0.0);
+    vec3 pointLightSpecular = vec3(0.0);
+    uint numLights = min(lightCount, 32u);
+    for (uint i = 0u; i < numLights; i++) {
+        vec3 lightPos = lights[i].positionAndRadius.xyz;
+        float lightRadius = lights[i].positionAndRadius.w;
+        vec3 toLight = lightPos - point;
+        float dist = length(toLight);
+        if (dist < lightRadius && dist > 0.02) {
+            vec3 lightDir = toLight / dist;
+            float nDotL = max(dot(primary.normal, lightDir), 0.0);
+            if (nDotL > 0.001) {
+                Hit lightShadow = traceScene(
+                    point + primary.normal * 0.03,
+                    lightDir,
+                    0.03,
+                    dist - 0.04
+                );
+                float lightVis = 1.0;
+                if (lightShadow.valid) {
+                    uint shadowFlags = floatBitsToUint(blocks[lightShadow.primitive].maximumYZColorFlags.w);
+                    if ((shadowFlags & 4u) != 0u) {
+                        lightVis = 0.65;
+                    } else {
+                        lightVis = 0.0;
+                    }
+                }
+                if (lightVis > 0.0) {
+                    float normalizedDist = dist / lightRadius;
+                    float atten = clamp(1.0 - normalizedDist * normalizedDist, 0.0, 1.0);
+                    atten = (atten * atten) / (1.0 + 0.35 * dist * dist);
+                    vec3 lightColor = lights[i].colorAndIntensity.rgb * lights[i].colorAndIntensity.w;
+                    pointLightDiffuse += lightColor * (nDotL * atten * lightVis);
+
+                    vec3 halfVector = normalize(lightDir - direction);
+                    float nDotH = max(dot(primary.normal, halfVector), 0.0);
+                    float specTerm = pow(nDotH, mix(64.0, 8.0, roughness));
+                    pointLightSpecular += lightColor * (specTerm * atten * lightVis);
+                }
+            }
+        }
+    }
+    result += pointLightDiffuse * (linearRaster * 0.95 + vec3(0.05));
+
+    // Emissive block self-illumination (torches, lava, glowstone)
+    if (isEmissive) {
+        result += linearRaster * 1.5;
+    }
+
     float specularHitDistance = frame.renderParameters.z;
     if (frame.renderParameters.w > 0.5) {
         vec3 reflectionDirection = reflect(direction, primary.normal);
@@ -343,8 +449,19 @@ void main() {
             ? srgbToLinear(unpackColor(
                     blocks[reflection.primitive].maximumYZColorFlags.z))
             : srgbToLinear(vec3(0.32, 0.48, 0.72));
-        float reflectivity = (flags & 1u) != 0u ? 0.38 : 0.08;
-        result = mix(result, reflectionColor, reflectivity);
+        
+        float reflectivity = 0.08;
+        if (isWater) {
+            float nDotV = max(dot(primary.normal, -direction), 0.0);
+            float fresnel = 0.02 + 0.98 * pow(1.0 - nDotV, 5.0);
+            reflectivity = mix(0.12, 0.88, fresnel);
+        } else if (isMetallic) {
+            reflectivity = 0.65;
+            reflectionColor *= linearRaster;
+        } else if (isReflective) {
+            reflectivity = 0.38;
+        }
+        result = mix(result, reflectionColor, reflectivity) + pointLightSpecular * specularAlbedo;
         // M6: on reflection miss use maxDistance instead of 0 for stable hit-distance signal
         specularHitDistance = reflection.valid ? reflection.distance : frame.renderParameters.z * (0.25 + 0.12 * frame.cameraForward.w);
     }
