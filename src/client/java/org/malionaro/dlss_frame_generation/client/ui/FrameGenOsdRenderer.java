@@ -25,7 +25,6 @@ public class FrameGenOsdRenderer {
         int osdX = 10;
         int osdY = 10;
         int width = 210;
-        int height = 65;
 
         // Extract metrics
         int baseFps = mc.getFps();
@@ -44,7 +43,15 @@ public class FrameGenOsdRenderer {
         int fgMultiplier = fgActive ? configuredMultiplier(config, backend.vendor()) : 1;
         int estimatedFgFps = baseFps * fgMultiplier;
 
-        // Draw translucent dark background card (ARGB 0xCC000000)
+        boolean showReflex = backend != null && backend.vendor() == FrameGenerationBackend.GpuVendor.NVIDIA;
+        boolean showRt = config.rayTracingMode != FrameGenConfig.RayTracingMode.OFF;
+
+        int lineCount = 3;
+        if (showReflex) lineCount++;
+        if (showRt) lineCount++;
+        int height = 18 + lineCount * 13;
+
+        // Draw translucent dark background card (ARGB 0xCC111111)
         extractor.fill(osdX, osdY, osdX + width, osdY + height, 0xCC111111);
 
         // Header Title
@@ -55,6 +62,8 @@ public class FrameGenOsdRenderer {
                 osdY + 6,
                 0xFF00FF88
         );
+
+        int currentY = osdY + 20;
 
         // Metric Lines
         Component fpsLine = Component.translatable(
@@ -67,13 +76,15 @@ public class FrameGenOsdRenderer {
                         )
                         : Component.translatable("dlss_fg.osd.inactive")
         );
-        extractor.text(mc.font, fpsLine, osdX + 8, osdY + 20, 0xFFFFFFFF);
+        extractor.text(mc.font, fpsLine, osdX + 8, currentY, 0xFFFFFFFF);
+        currentY += 13;
 
         Component latencyLine = Component.translatable(
                 "dlss_fg.osd.latency",
                 String.format(java.util.Locale.ROOT, "%.2f", frameTimeMs)
         );
-        extractor.text(mc.font, latencyLine, osdX + 8, osdY + 33, 0xFFAAAAAA);
+        extractor.text(mc.font, latencyLine, osdX + 8, currentY, 0xFFAAAAAA);
+        currentY += 13;
 
         Component backendLine = Component.translatable(
                 "dlss_fg.osd.backend",
@@ -81,7 +92,20 @@ public class FrameGenOsdRenderer {
                 VulkanRegistry.getProviderAcceptedFrameCount(),
                 VulkanRegistry.getCapturedFrameCount()
         );
-        extractor.text(mc.font, backendLine, osdX + 8, osdY + 46, 0xFF00AAFF);
+        extractor.text(mc.font, backendLine, osdX + 8, currentY, 0xFF00AAFF);
+        currentY += 13;
+
+        if (showReflex) {
+            String reflexText = config.reflexMode == 2 ? "On + Boost" : (config.reflexMode == 1 ? "On" : "Off");
+            Component reflexLine = Component.translatable("dlss_fg.osd.reflex", reflexText);
+            extractor.text(mc.font, reflexLine, osdX + 8, currentY, 0xFFFFAA00);
+            currentY += 13;
+        }
+
+        if (showRt) {
+            Component rtLine = Component.translatable("dlss_fg.osd.rt", config.rayTracingMode.displayName());
+            extractor.text(mc.font, rtLine, osdX + 8, currentY, 0xFFFF55FF);
+        }
     }
 
     private static int configuredMultiplier(

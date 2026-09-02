@@ -175,11 +175,22 @@
   "dlss_fg.value.rt_quality.high": "High",
   "dlss_fg.value.rt_quality.ultra": "Ultra",
 
+  "category.dlss_fg": "DLSS Frame Generation",
+  "key.dlss_fg.toggle_osd": "Toggle Performance OSD",
+  "key.dlss_fg.toggle_fg": "Toggle Frame Generation",
+  "key.dlss_fg.open_settings": "Open Frame Gen Settings",
+  "dlss_fg.message.osd_enabled": "Frame Generation OSD: Enabled",
+  "dlss_fg.message.osd_disabled": "Frame Generation OSD: Disabled",
+  "dlss_fg.message.fg_enabled": "Frame Generation: Enabled",
+  "dlss_fg.message.fg_disabled": "Frame Generation: Disabled",
+
   "dlss_fg.osd.title": "⚡ FRAME GENERATION OSD",
   "dlss_fg.osd.fps": "FPS: %s (Base: %s | FG %s)",
   "dlss_fg.osd.inactive": "INACTIVE",
   "dlss_fg.osd.latency": "Pacing Latency: %s ms",
   "dlss_fg.osd.backend": "Backend: %s | Accepted: %s/%s",
+  "dlss_fg.osd.reflex": "NVIDIA Reflex: %s",
+  "dlss_fg.osd.rt": "Ray Tracing: %s",
 
   "dlss_fg.motion_debug.title": "=== Motion Vector Debug ===",
   "dlss_fg.motion_debug.backend": "Backend: %s",

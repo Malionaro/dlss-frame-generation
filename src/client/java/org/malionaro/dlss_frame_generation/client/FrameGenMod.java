@@ -39,6 +39,7 @@ public class FrameGenMod implements ClientModInitializer {
                 );
             }
         }
+        org.malionaro.dlss_frame_generation.client.ui.KeyBindings.register();
     }
 
     public static CompatibilityManager compatibilityManager() {
