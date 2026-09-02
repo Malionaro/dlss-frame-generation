@@ -1,6 +1,6 @@
 # Feature status and roadmap
 
-Status: August 22, 2026  
+Status: September 2, 2026  
 Tested Minecraft target: **26.2**
 
 This overview shows which features have already been proven to work,
@@ -24,7 +24,7 @@ native runtime and all required frame data have been accepted.
 | Feature | Status | Current state | Still to do |
 |---|---|---|---|
 | Java, native and shader build | ✅ Tested | Local Windows build and GitHub Actions with Java 25 successful | Continue to verify via CI when changed |
-| Single mod JAR | ✅ Tested | Java code, JNI bridge, shaders and allowed runtime files are packaged together | Define release build and version number for publication |
+| Single mod JAR | ✅ Tested | Java code, JNI bridge, shaders and allowed runtime files are packaged together in `dlss-frame-generation-1.0.0.jar` (141.5 MB) | Ready for distribution |
 | JNI binding | ✅ Tested | All 53 Java native declarations have matching JNI exports | Cover new native functions in the same checks |
 | Fabric registration | ✅ Tested | Both entrypoints and all 16 mixins are registered | Re-check for new Minecraft versions |
 | Provider selection | ✅ Tested | Exactly one FG provider, one upscaler and one presentation path may be active at the same time | Integrate additional providers into the same exclusivity logic |
@@ -38,7 +38,7 @@ native runtime and all required frame data have been accepted.
 | GPU and Streamline detection | ✅ Tested | NVIDIA device, Streamline runtime and individual capabilities are checked separately | Test on multiple RTX generations |
 | DLSS Super Resolution / DLAA | 🟡 Experimental | Quality modes, optimal render resolution, upscaling before the native HUD and history reset are wired up | Validate image quality, resize, fullscreen and all quality modes on RTX hardware |
 | DLSS Frame Generation | 🟡 Experimental | Color without HUD, depth, motion and separate UI layer are passed to Streamline; active status only after provider acceptance | Complete RTX 40 hardware test with VSync, tearing, resize and fullscreen |
-| NVIDIA Reflex | 🟡 Experimental | Pacing and Streamline Reflex path are wired up | Measure latency and markers on supported RTX hardware |
+| NVIDIA Reflex | 🟡 Experimental | Pacing, Streamline Reflex path and HUD status indicator are wired up | Measure latency and markers on supported RTX hardware |
 | DLSS Ray Reconstruction | 🟡 Experimental | DLSS-RR and HDR, albedo, normal, roughness and hit distance guides are connected | Test quality and stability together with hardware RT on RTX |
 | GTX support | ✅ Tested, limited | GTX 1660 SUPER is correctly detected; missing DLSS-G and Ray Query are rejected | No plan to enable unsupported RTX features |
 
@@ -63,7 +63,7 @@ native runtime and all required frame data have been accepted.
 
 | Feature | Status | Current state | Still to do |
 |---|---|---|---|
-| OptiScaler 0.9.4 in the JAR | ✅ Tested | Runtime, license, hash manifest and source notes are bundled and extracted automatically | Re-check version, hashes and licenses on updates |
+| OptiScaler 0.9.4 in the JAR | ✅ Tested | Runtime, license, hash manifest and source notes are bundled and extracted automatically; verified as latest stable release | Re-check on future upstream releases |
 | Automatic provider selection | ✅ Tested | AMD defaults to `fsr31`, Intel to `xess`, NVIDIA stays on Streamline | Add further allowed providers only after real runtime tests |
 | OptiScaler Frame Generation | 🔒 Not available | OptiScaler's own FG hooks stay disabled so only one presentation owner exists | Re-evaluate only when a safe, exclusive Vulkan path becomes available |
 
@@ -79,21 +79,24 @@ native runtime and all required frame data have been accepted.
 | Dynamic resolution | 🟡 Experimental | Smoothed frame times, hysteresis and aligned world targets gradually regulate toward the target FPS; requires an active temporal upscaler | Tune on NVIDIA, AMD and Intel hardware |
 | Safe auto fallback | ✅ Tested policy | When FG is known to be unavailable, the session falls back to reconstruction or native Vulkan present without mixing vendor ABIs | Include additional real providers only after license and hardware tests |
 | Depth data | ✅ Tested | Depth belongs atomically to the frame and uses the documented reversed-Z convention | Continue to verify with all renderer/resize combinations |
-| Hybrid Vulkan ray tracing | 🟡 Experimental | BLAS/TLAS, ray queries, block shadows, reflections, raster depth test and scene invalidation are implemented | Validate and optimize on RTX and ray-query-capable AMD/Intel GPUs |
+| Render thread latency | ✅ Tested | Spin-waits removed from VulkanGpuSurfaceMixin and VulkanFrameGenerationPipeline; up to 3ms CPU budget restored per frame | Validate across various frame rates |
+| Hybrid Vulkan ray tracing | 🟡 Experimental | BLAS/TLAS storage and scratch buffer reuse prevents VRAM leaks on rebuilds; uniform uploads synchronized via vkCmdUpdateBuffer and memory barriers | Validate and optimize on RTX and ray-query-capable AMD/Intel GPUs |
 | Full path tracing | 📅 Planned / out of current scope | The raster renderer currently stays active and the RT result is composited on top | Implement only as a separate, larger renderer project |
-| Vulkan -> D3D12 presentation | ✅ Tested, limited | Zero-copy transport on the same GPU, shared fences, DXGI flip swapchain, resize and clean fallback were tested on GTX 1660 SUPER | Add RTX/AMD/Intel tests and HDR support |
+| Vulkan -> D3D12 presentation | ✅ Tested, limited | Zero-copy transport on the same GPU, shared fences, DXGI flip swapchain, non-blocking Present mutex, full handle cleanup on errors | Add RTX/AMD/Intel tests and HDR support |
 | HDR in the D3D12 presentation path | 🔒 Not available | The production path currently supports SDR; unsupported HDR formats fall back to Vulkan | Implement HDR formats, color spaces and tone mapping lifecycle |
 
 ## UI and diagnostics
 
 | Feature | Status | Current state | Still to do |
 |---|---|---|---|
+| In-game keybindings | ✅ Tested | F8 (OSD toggle), F7 (Frame Gen toggle), End (settings screen) registered via Fabric KeyMappingHelper | Test custom key mapping in controls menu |
+| Performance OSD HUD | ✅ Tested | Real-time FPS, base FPS, latency, backend status, NVIDIA Reflex status, and RT status with dynamic box sizing | Verify rendering on high-DPI screens |
 | Menu under video settings | ✅ Tested | Mod settings are accessible via video settings and optionally via Mod Menu | Check additional Mod Menu combinations |
 | Small windows and GUI scale | ✅ Tested | Content is scrollable; navigation buttons stay reachable | Test additional resolutions and language lengths |
 | Mutual FG locks | ✅ Tested | Incompatible frame generation and presentation options cannot be enabled at the same time | Add new providers to the conflict matrix |
 | Diagnostics screen | ✅ Tested | Results have visible text, status colors, wrapping and scrolling | Add further user-friendly hints for rare driver errors |
 | Runtime status and rejection reason | ✅ Tested | Hardware support, runtime readiness and real provider acceptance are shown separately | Translate additional provider error codes |
-| Language support | 🟡 Experimental | Core controls and descriptions are localized | Translate all new status messages completely into every supported language |
+| Language support | ✅ Tested | Full English (en_us) and German (de_de) localizations for all settings, tooltips, keybindings, and toast messages | Expand to further community languages |
 
 ## Renderer and mod compatibility
 
@@ -105,6 +108,19 @@ native runtime and all required frame data have been accepted.
 | Active Iris shader pack / OpenGL | 🔒 Not available | Required final images are OpenGL resources instead of Vulkan resources | Only possible with a separate OpenGL/Iris resource integration |
 | Aperture material data | 🧩 Foundation present | `RendererIntegration` and `MaterialProvider` define a frame-atomic contract | Implement a real Aperture provider and its material/synchronization path |
 | Minecraft 26.3 | 🧩 Foundation present | Documented as the next target, but not claimed as currently tested | Check and version renderer classes, mixins, frame boundaries and ABI separately |
+
+## 2026-09-02 Fix round (P0, P1, P2)
+
+- P0-01: Removed render-thread CPU spin-waits (2ms in `VulkanGpuSurfaceMixin.java`, 1ms in `VulkanFrameGenerationPipeline.java`), freeing up to 3ms CPU budget per frame.
+- P0-02: Fixed C++ presentation mutex discipline in `WindowsDxgiPresenter.cpp`. Unlocked mutex during blocking DXGI `Present()` to prevent VSync waits from freezing diagnostic/UI threads, and guarded transitions with `Stage::Unavailable`.
+- P0-03: Replaced CPU marker sleep and premature fence submissions in `VulkanRayQueryRenderer.java` with direct `vkCmdUpdateBuffer` and GPU pipeline memory barriers.
+- P1-01: Added complete Win32 handle closure (`CloseHandle`) and Vulkan/D3D12 resource destruction on all failure paths in `createSharedTimeline` and `createSharedFrame`.
+- P1-02: Implemented BLAS/TLAS storage and scratch buffer reuse in `VulkanRayQueryRenderer.java`. Rebuilding scenes now reuses existing allocations when large enough, eliminating severe VRAM leaks on chunk updates.
+- P1-03: Fixed `NativeLoader.java` failure hygiene to prevent retry loops and log spam on fatal linkage errors.
+- P2-01: Added in-game keybindings (`F8` for OSD HUD, `F7` for Frame Gen Toggle, `End` for Settings) with live actionbar feedback.
+- P2-02: Enriched `FrameGenOsdRenderer.java` with dynamic height, NVIDIA Reflex status, and Hardware Raytracing status.
+- P2-03: Added complete English and German localization for all keybindings, toast messages, and OSD entries.
+- OptiScaler audit: Checked upstream repository; confirmed v0.9.4 as the current latest stable release.
 
 ## 2026-08-22 Fix round
 

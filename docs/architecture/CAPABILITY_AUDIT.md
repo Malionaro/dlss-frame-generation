@@ -136,7 +136,8 @@ Primary references:
 
 The JAR contains the verified OptiScaler v0.9.4 runtime, exact commit metadata,
 hash manifest, GPLv3 text, corresponding-source directions and dependency
-licenses. Integrity is checked before extraction/loading.
+licenses. An upstream check on 2026-09-02 confirmed that v0.9.4 remains the
+latest official stable release. Integrity is checked before extraction/loading.
 
 The v0.9.4 source was inspected at its exact tag. Its Vulkan proxy hooks the
 standard `amd_fidelityfx_vk.dll` upscaling API while forwarding FidelityFX
@@ -186,12 +187,14 @@ The scene builder prioritizes visible surfaces near the camera, omits enclosed
 opaque blocks and expands exact block/fluid `VoxelShape` sub-boxes. It refreshes
 after movement, nearby client block updates and a low-frequency safety
 interval. This prevents its fixed 65,536-AABB budget from being consumed by
-invisible underground blocks.
+invisible underground blocks. Existing BLAS and TLAS storage and scratch buffers
+are reused when rebuilding the scene, eliminating severe VRAM re-allocation spikes.
 
 The compute pass samples Minecraft's reverse-Z depth buffer and rejects an RT
 hit when rasterized geometry is closer. HDR/material guide images are generated
 for DLSS-RR; raster-only pixels receive depth-derived normals. Per-frame camera
-uniforms use three rotating buffers to avoid CPU/GPU overwrite races.
+uniforms are uploaded directly via `vkCmdUpdateBuffer` and synchronized with an
+explicit `VkBufferMemoryBarrier` (`TRANSFER_WRITE` to `UNIFORM_READ`) without CPU sleeps.
 
 The controls now have distinct effects:
 
@@ -213,16 +216,19 @@ The runtime status remains “waiting” until a world/camera exists and becomes
 - atomic frame identity/resources with layout, queue owner and swapchain
   generation;
 - exclusive provider lifecycle and safe swapchain transitions;
-- Windows Vulkan/D3D12 same-adapter presenter and provider-runtime audit;
+- Windows Vulkan/D3D12 same-adapter presenter with non-blocking Present mutex,
+  full error handle cleanup, and provider-runtime audit;
+- in-game keybindings (F8 for OSD, F7 for FG toggle, End for settings) and
+  enriched HUD with Reflex/RT status;
 - explicit depth/motion conventions and future renderer/material contracts;
 - localized disabled-control reasons and scrollable diagnostics.
 
 ### 2. Automatically tested
 
-Gradle tests compile Java, native C++ and shaders and cover renderer-state
-routing, provider exclusivity/lifecycle, stale frame/swapchain generations,
-missing Vulkan interop extensions, missing provider DLLs, language-key parity,
-reversed-Z/motion conventions and existing capability/config behavior.
+Gradle tests compile Java, native C++ and shaders. All 62 unit tests across 18
+test classes pass, covering renderer-state routing, provider exclusivity/lifecycle,
+stale frame/swapchain generations, missing Vulkan interop extensions, missing
+provider DLLs, language-key parity, reversed-Z/motion conventions and capability behavior.
 
 ### 3. Locally runtime tested
 

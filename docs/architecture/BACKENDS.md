@@ -22,7 +22,9 @@ view, format, layout and queue-owner metadata to the selected native provider.
 `FrameIdentity` and `FrameResourceSet` bind every input to one frame and one
 swapchain generation; incomplete, stale, cross-frame or in-render-pass captures
 are rejected. Three rotating frame slots are not reused before their
-corresponding present has completed. Optional debug readback maps only a slot
+corresponding present has completed. Busy spin-waits on the render thread have
+been eliminated; presentation synchronization relies entirely on GPU timeline
+semaphores and fences without burning CPU budget. Optional debug readback maps only a slot
 whose present has already completed and does not force a device-wide idle.
 
 The validated guide convention is reversed depth (`1` near, `0` far), motion
@@ -85,6 +87,10 @@ only WSI presentation. It:
 - transfers image ownership between the Vulkan graphics queue and
   `VK_QUEUE_FAMILY_EXTERNAL`;
 - performs the final copy and `Present` only on D3D12, without a CPU frame copy;
+- releases the presentation mutex during the blocking DXGI `Present` call so VSync
+  waits do not freeze UI, HUD or diagnostic threads;
+- cleans up Win32 handles immediately with `CloseHandle` and resets D3D12/Vulkan
+  resources on every partial failure path;
 - rebuilds on resize and handles occlusion, tearing/VSync, device removal and
   shutdown with a safe fallback to the normal Vulkan swapchain.
 

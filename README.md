@@ -39,7 +39,7 @@ The repo already contains the Streamline and FidelityFX headers and the runtime 
 .\gradlew.bat build
 ```
 
-You get `build/libs/dlss-frame-generation-1.0-SNAPSHOT.jar`.
+You get `build/libs/dlss-frame-generation-1.0.0.jar` (141.5 MB with all native DLLs bundled).
 
 ### Source layout
 
@@ -51,20 +51,25 @@ The tree is small and grouped by job:
 - `client/render/adapter` holds adapters for vanilla, Sodium and the OpenGL fallback
 - `client/interop` holds native and vendor code
 - `client/motion` and `raytracing` hold the GPU work
-- `client/ui` holds settings and diagnostics
+- `client/ui` holds settings, keybindings, OSD and diagnostics
 - `native/bridge` is split into `fidelityfx`, `presentation`, `routing` and `streamline`
 - shaders live in `motion` and `raytracing`
 - docs live in `user`, `architecture`, `compatibility` and `status`
 
 See [docs/README.md](docs/README.md) for the full map.
 
-Audited on 2026-07-29:
+Audited on 2026-09-02:
 
-- all 78 client files are in the jar
+- all 79 client files are in the jar
 - both entrypoints and all 16 mixins are registered
 - all 53 native methods have a matching JNI export
 - every `.cpp` file is part of the CMake target
 - all four shaders are loaded by real code and by tests
+- all 62 unit tests across 18 test classes pass
+- render-thread busy spin-waits removed (saves up to 3ms CPU time per frame)
+- DXGI Present mutex unlocked during VSync wait, eliminating UI thread deadlocks
+- ray query uniforms use vkCmdUpdateBuffer with memory barriers instead of CPU sleeps
+- BLAS and TLAS storage and scratch buffers are reused across chunk rebuilds, fixing VRAM leaks
 - no duplicate zip entries
 - dead class `UltrawideLensCorrector` removed
 
@@ -72,7 +77,7 @@ Audited on 2026-07-29:
 
 ### OptiScaler that ships inside
 
-You do not need to download OptiScaler separately. The jar contains the verified 0.9.4 runtime, its GPLv3 text, source notes, third party licenses and a SHA-256 manifest. On AMD or Intel the mod extracts it to a temp folder and sets it up. It is on by default. NVIDIA never loads it.
+You do not need to download OptiScaler separately. The jar contains the verified 0.9.4 runtime, its GPLv3 text, source notes, third party licenses and a SHA-256 manifest. Checked on 2026-09-02: v0.9.4 is the latest official stable release. On AMD or Intel the mod extracts it to a temp folder and sets it up. It is on by default. NVIDIA never loads it.
 
 Only for developers who want to override it:
 
@@ -100,11 +105,16 @@ If IntelliJ complains about missing `launch.cfg`, run once:
 
 Then reimport.
 
-### In game
+### In game controls and shortcuts
 
-Open `Options... -> Video Settings... -> Frame Generation...`
+You can configure settings through the menu or use direct in-game shortcuts:
 
-It is at the bottom of the scrollable video list. Mod Menu opens the same screen if you have it.
+- **F8**: Toggles the Performance OSD HUD. Shows real-time FPS, base FPS, frame multiplier, pacing latency, backend status, NVIDIA Reflex mode, and Hardware Raytracing status.
+- **F7**: Toggles Frame Generation on and off immediately with live actionbar feedback.
+- **End**: Opens the Multi-Vendor Settings Screen directly without opening pause menus.
+- All shortcuts can be customized in the Minecraft Controls menu under **"DLSS Frame Generation"**.
+
+Menu access: Open `Options... -> Video Settings... -> Frame Generation...` (or via Mod Menu).
 
 The screen works in small windows. Use the wheel or the arrows next to **Done**.
 
@@ -116,7 +126,8 @@ On hardware that supports it, ray tracing does this:
 
 - turns on acceleration structures, ray queries and buffer device address when the Vulkan device is created
 - turns nearby block and fluid `VoxelShape` boxes into a block-colored AABB scene sorted by camera distance
-- builds BLAS and TLAS on the GPU
+- builds BLAS and TLAS on the GPU, reusing existing storage and scratch buffers across scene rebuilds to prevent VRAM allocation spikes
+- synchronizes uniform frame data via vkCmdUpdateBuffer and pipeline barriers directly in the command stream
 - drops hits that sit behind raster geometry, then traces shadows and optional reflections in a compute shader before DLSS and HUD
 - writes low res HDR guides, albedo, specular, normal and roughness and hit distance for ray reconstruction on NVIDIA
 - keeps the raster renderer running and composites on top

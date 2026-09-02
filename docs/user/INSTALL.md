@@ -22,15 +22,20 @@
 2. Download **Fabric API 0.155.2+** (or newer) and place it into your `.minecraft/mods` directory.
 
 #### Step 2: Download Mod Artifacts
-1. Build or download `dlss-frame-generation-1.0-SNAPSHOT.jar`.
-2. Copy `dlss-frame-generation-1.0-SNAPSHOT.jar` into `.minecraft/mods/`.
-3. **Automated DLL Extraction:** All native Streamline SDK DLLs (`sl.interposer.dll`, `sl.dlss_g.dll`, etc.) are bundled directly inside the `.jar` and extract automatically upon launching the game!
+1. Build or download `dlss-frame-generation-1.0.0.jar`.
+2. Copy `dlss-frame-generation-1.0.0.jar` into `.minecraft/mods/`.
+3. **Automated DLL Extraction:** All native Streamline SDK DLLs (`sl.interposer.dll`, `sl.dlss_g.dll`, etc.) and FidelityFX/OptiScaler runtimes are bundled directly inside the `.jar` and extract automatically upon launching the game!
 
-#### Step 3: In-Game Settings Access
+#### Step 3: In-Game Settings and Controls
 1. Launch Minecraft 26.2.
 2. Open menu: **Options... -> Video Settings... -> Frame Generation...**
-   (or via **ModMenu**).
-3. Check the backend status shown by the settings screen. An unavailable
+   (or via **ModMenu**, or press **End** in game).
+3. Use shortcuts while playing:
+   - **F8**: Toggle the Performance OSD HUD (FPS, latency, Reflex and RT status).
+   - **F7**: Toggle Frame Generation on/off with actionbar notifications.
+   - **End**: Open the Frame Generation settings screen directly.
+   - Keybindings are customizable in Minecraft Controls under **"DLSS Frame Generation"**.
+4. Check the backend status shown by the settings screen. An unavailable
    capability cannot be enabled by selecting a preset.
 
 > **Backend status:** This revision is experimental. NVIDIA Streamline and its
