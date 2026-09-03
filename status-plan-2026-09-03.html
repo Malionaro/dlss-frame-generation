@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DLSS Frame Generation — Status & Plan 03.09.2026</title>
+<style>
+:root{--bg:#0c0e14;--card:#151821;--card2:#1c2030;--line:#252b3d;--txt:#e9ecf3;--mut:#9aa3b8;--acc:#5b8def;--green:#7ee787;--yel:#e6c029;--red:#ff4d4d;--org:#ff8a3d;--blu:#6bb8ff}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;font-family:Inter,Segoe UI,system-ui,sans-serif;background:var(--bg);color:var(--txt);line-height:1.6}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+.header{position:sticky;top:0;z-index:20;background:rgba(12,14,20,.93);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.hdr{max-width:1240px;margin:0 auto;padding:14px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.brand{font-weight:800}.badge{font-size:.72rem;padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
+.badge.live{background:#112a12;border-color:#2a5a2a;color:var(--green)}
+.badge.warn{background:#2a2610;border-color:#5a4a0a;color:var(--yel)}
+.badge.info{background:#10203a;border-color:#244a7a;color:var(--blu)}
+.nav{margin-left:auto;display:flex;gap:7px;flex-wrap:wrap}
+.nav a{font-size:.8rem;padding:6px 11px;border-radius:999px;background:var(--card);border:1px solid var(--line)}
+.hero{max-width:1240px;margin:0 auto;padding:26px 20px 8px}
+.hero h1{margin:0;font-size:1.9rem;letter-spacing:-.02em}.hero h1 span{color:var(--acc)}
+.hero p{color:var(--mut);max-width:900px}
+.kpi{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:18px 0}
+@media(max-width:900px){.kpi{grid-template-columns:repeat(2,1fr)}}
+.kpi .k{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.k b{font-size:1.4rem}.k span{color:var(--mut);font-size:.76rem}
+.wrap{max-width:1240px;margin:0 auto;padding:0 20px 40px}
+.grid2{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}
+@media(max-width:950px){.grid2{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card h3{margin:0 0 8px;font-size:.95rem}
+.h2{margin:30px 0 10px;font-size:1.25rem;border-left:4px solid var(--acc);padding-left:10px}
+.table{width:100%;border-collapse:collapse;font-size:.84rem}
+.table th{text-align:left;color:var(--mut);font-weight:600;border-bottom:1px solid var(--line);padding:8px}
+.table td{padding:8px;border-bottom:1px solid #222839;vertical-align:top}
+.pill{display:inline-block;font-size:.7rem;padding:2px 8px;border-radius:999px;font-weight:700;white-space:nowrap}
+.ok{background:rgba(126,231,135,.13);color:var(--green);border:1px solid rgba(126,231,135,.35)}
+.mid{background:rgba(230,192,41,.13);color:var(--yel);border:1px solid rgba(230,192,41,.35)}
+.no{background:rgba(255,77,77,.13);color:var(--red);border:1px solid rgba(255,77,77,.35)}
+.inf{background:rgba(107,184,255,.13);color:var(--blu);border:1px solid rgba(107,184,255,.35)}
+.merged{background:rgba(91,141,239,.15);color:#9db9ff;border:1px solid rgba(91,141,239,.4)}
+.tag{font-size:.68rem;padding:2px 6px;border-radius:6px;background:#0e1422;border:1px solid #22304a;color:#8fb0ff}
+code{font-family:ui-monospace,Consolas,monospace;font-size:.83em;background:#0f1320;border:1px solid #1e2a44;padding:1px 5px;border-radius:6px}
+.details{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);margin:10px 0}
+.details>summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;gap:10px;align-items:center;font-weight:600;flex-wrap:wrap}
+.details>summary::-webkit-details-marker{display:none}
+.details[open]>summary{background:var(--card2);border-bottom:1px solid var(--line)}
+.body{padding:14px;font-size:.9rem;color:#c9cfdd}.body b{color:#e9ecf3}
+.progress{height:8px;background:#0f1320;border-radius:999px;overflow:hidden;border:1px solid var(--line)}
+.progress i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--green))}
+.foot{text-align:center;color:var(--mut);font-size:.78rem;padding:18px;border-top:1px solid var(--line);margin-top:20px}
+ul.tight li{margin:4px 0}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}
+.filters button{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--txt);cursor:pointer;font-size:.82rem}
+.filters button.active{background:var(--acc);color:#081018;border-color:var(--acc)}
+.hidden{display:none!important}
+.timeline{position:relative;padding-left:22px}
+.timeline::before{content:"";position:absolute;left:7px;top:6px;bottom:6px;width:2px;background:linear-gradient(var(--red),var(--blu))}
+.step{position:relative;margin:12px 0;padding:12px 14px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+.step::before{content:"";position:absolute;left:-18px;top:16px;width:10px;height:10px;border-radius:50%;background:var(--acc);border:2px solid var(--bg)}
+</style>
+</head>
+<body>
+<div class="header"><div class="hdr">
+<div class="brand">◼ DLSS Frame Generation <span style="font-weight:400;color:var(--mut)">· Status &amp; Plan — 03.09.2026</span></div>
+<span class="badge live">● main synchron · clean</span>
+<span class="badge info">4 Subagents · gh CLI verifiziert</span>
+<span class="badge warn">Lint / CodeQL rot seit 25.08.</span>
+<nav class="nav"><a href="#ueberblick">Überblick</a><a href="#github">GitHub</a><a href="#branches">Branches</a><a href="#stand">Stand</a><a href="#tun">Tun / Nicht tun</a><a href="#tipps">Tipps</a></nav>
+</div></div>
+
+<div class="hero">
+<h1>Wie es aussieht: <span>Single-Branch, 0 offene PRs/Issues, RT-Drop live</span></h1>
+<p>Upstream ist <a href="https://github.com/Malionaro/dlss-frame-generation">Malionaro/dlss-frame-generation</a> (origin). Es gibt nur <code>main</code> — lokal und remote synchron auf <code>e502594</code> (02.09.2026). Alle 6 PRs sind gemergte Dependabot-Pflege, 0 Issues offen. Gearbeitet wird direkt auf <code>main</code>: Raytracing-Features, Perf-Fixes (P0/P1), UI-Polish (P2). Bauen geht, Qualität-Gates (Lint/CodeQL) sind rot. Alle 🟡-Features sind verdrahtet, aber ohne RTX40/AMD/Arc-Hardwarematrix unbewiesen. Diese Seite ist der neue Plan — ergänzt <code>plan-kombiniert.html</code> (22.08.) und <code>audit_report.html</code> (02.09.), ersetzt sie nicht.</p>
+<div class="kpi">
+<div class="k"><div style="color:var(--mut);font-size:.76rem">Branches</div><b>1</b><br><span>nur main · e502594</span></div>
+<div class="k"><div style="color:var(--mut);font-size:.76rem">PRs offen / total</div><b>0 / 6</b><br><span>alle 6 gemergt (Dependabot)</span></div>
+<div class="k"><div style="color:var(--mut);font-size:.76rem">Issues offen</div><b>0</b><br><span>kein Tracker aktiv</span></div>
+<div class="k"><div style="color:var(--mut);font-size:.76rem">Letzter Push</div><b style="font-size:1rem">02.09. 22:16</b><br><span>RT: Point Lights + AO</span></div>
+<div class="k"><div style="color:var(--mut);font-size:.76rem">CI Build / Lint</div><b style="color:var(--green)">✓</b> <b style="color:var(--red)">✗</b><br><span>Build ok, Lint+CodeQL fail</span></div>
+</div>
+</div>
+
+<div class="wrap">
+
+<h2 class="h2" id="ueberblick">1. Überblick — was ist das Projekt?</h2>
+<div class="grid2">
+<div class="card"><h3>Zweck in 3 Sätzen</h3>
+<p style="color:var(--mut);font-size:.9rem">Fabric-Client-Mod für <b>Minecraft 26.2 (Vulkan)</b>: hängt Mojangs <code>VulkanDevice</code> in <b>NVIDIA Streamline 2.12</b> und stellt <b>DLSS / FSR / XeSS</b> hinter einem Settings-Screen bereit, der nur freischaltet, was GPU + Treiber + Renderer-Inputs + nativer Provider wirklich hergeben. AMD/Intel laufen bewusst <b>nicht</b> über Streamline, sondern über <b>FidelityFX-Vulkan-Proxy + gebündelte OptiScaler-0.9.4-Bridge</b> (<code>fsr31</code> auf AMD, <code>xess</code> auf Intel). Experimentell, fail-closed: fehlende DLL/Extension → <code>unavailable</code> + Fallback auf normales Vulkan-WSI statt Fake-Rendering.</p>
+<table class="table"><tr><th>Bereich</th><th>Stand (02.09.)</th></tr>
+<tr><td>Build / JAR / JNI / Mixins</td><td><span class="pill ok">läuft</span> 141.5 MB, 53/53 JNI, 16 Mixins, 62/62 Tests</td></tr>
+<tr><td>DLSS-SR / DLSS-G / Reflex / RR</td><td><span class="pill mid">verdrahtet 🟡</span> RTX40-Validierung offen</td></tr>
+<tr><td>FSR 3.1 / OptiScaler / D3D12-Transport</td><td><span class="pill mid">verdrahtet 🟡</span> AMD-Pacing offen</td></tr>
+<tr><td>FSR 4 / XeSS-FG nativ</td><td><span class="pill no">blockiert 🔒</span> DLLs fehlen im Bundle</td></tr>
+<tr><td>Hybrid-RT (48 Blöcke, ray query)</td><td><span class="pill mid">neu: Lichter+AO+Fresnel 🟡</span> unvalidiert</td></tr>
+<tr><td>Sodium 0.9.1 / Iris 1.11.2</td><td><span class="pill mid">Detektor da 🟡</span> kein echter JAR-Run</td></tr></table>
+</div>
+<div class="card"><h3>Struktur (live gezählt)</h3>
+<table class="table"><tr><th>Ordner</th><th>Job</th></tr>
+<tr><td><code>client/backend</code></td><td>Vendor-Router, genau 1 FG-Provider + 1 Present-Owner</td></tr>
+<tr><td><code>client/render</code> + adapter</td><td>Capture pre-HUD, Split World/Display, Reflex/DRS</td></tr>
+<tr><td><code>client/frame</code></td><td>Atomare Frame-Bindung (Color/Depth/Motion/ID)</td></tr>
+<tr><td><code>client/mixin</code> (16)</td><td>Present-Interception, Swapchain-Proxy, UI-Trennung</td></tr>
+<tr><td><code>client/interop</code></td><td>JNI-Load, LUID-Match, OptiScaler-Auto</td></tr>
+<tr><td><code>client/motion</code>, <code>raytracing</code></td><td>RG16F-Motion, Hybrid-RT BLAS/TLAS-Reuse</td></tr>
+<tr><td><code>native/bridge</code> (7 Files)</td><td>Streamline / FidelityFX / DXGI-Present / Routing</td></tr>
+<tr><td><code>vendor/optiscaler/v0.9.4</code></td><td>Verifiziertes Bundle + SHA256SUMS</td></tr>
+<tr><td><code>docs/</code> (6 Files)</td><td>INSTALL, BACKENDS, CAPABILITY_AUDIT, SODIUM/IRIS, FEATURE_STATUS</td></tr></table>
+<p style="color:var(--mut);font-size:.78rem">80 Client-Java (README sagt 79 — Drift durch RT-Commit), 19 Test-Java, 4 Shader <code>.comp</code>, 6 GitHub-Workflows. Loom 1.17.16, MC 26.2, Java 25, Gradle 9.7.1.</p>
+</div>
+</div>
+
+<h2 class="h2" id="github">2. Upstream GitHub — alle PRs &amp; Issues</h2>
+<div class="card">
+<h3>Repo-Metadaten (via <code>gh</code> verifiziert)</h3>
+<p style="color:var(--mut);font-size:.86rem"><code>origin = https://github.com/Malionaro/dlss-frame-generation.git</code> · Default <code>main</code> · letzter Push <code>2026-09-02T20:16:36Z</code> · Stars 0 · Forks 0 · einziger Branch <code>main</code>.</p>
+<h3>Pull Requests — 0 offen, 6 geschlossen (alle MERGED, alle Dependabot)</h3>
+<table class="table"><thead><tr><th>Nr</th><th>Titel</th><th>State</th><th>Datum</th><th>Fazit</th></tr></thead><tbody>
+<tr><td>#6</td><td>build(deps): bump actions/setup-java 5 → 6</td><td><span class="pill merged">MERGED</span></td><td>31.08. erstellt, 01.09. gemergt</td><td>CI-Java-Action aktuell gehalten.</td></tr>
+<tr><td>#5</td><td>build(deps): bump github/codeql-action 3 → 4</td><td><span class="pill merged">MERGED</span></td><td>25.08.</td><td>Security-Scan auf v4.</td></tr>
+<tr><td>#4</td><td>build(deps): bump dependency-review-action 4 → 5</td><td><span class="pill merged">MERGED</span></td><td>25.08.</td><td>PR-Sicherheitschecks aktuell.</td></tr>
+<tr><td>#3</td><td>build(deps): bump gradle-wrapper 9.6.1 → 9.7.1</td><td><span class="pill merged">MERGED</span></td><td>25.08.</td><td>Build-Toolchain aktuell.</td></tr>
+<tr><td>#2</td><td>build(deps): bump actions/checkout 6 → 7</td><td><span class="pill merged">MERGED</span></td><td>25.08.</td><td>CI-Pflege.</td></tr>
+<tr><td>#1</td><td>build(deps): bump softprops/action-gh-release 2 → 3</td><td><span class="pill merged">MERGED</span></td><td>25.08.</td><td>Nightly-Releases.</td></tr>
+</tbody></table>
+<p style="color:var(--mut);font-size:.82rem">Muster: 100 % CI-Hygiene, 0 % Feature-PRs — Features landen per Direkt-Push auf <code>main</code>, nicht per PR. Historische Dependabot-Branches sind gemergt + gelöscht (nur noch als Merge-Commits <code>57af816</code>, <code>bc251c3</code> sichtbar).</p>
+<h3>Issues — 0 (leer, via <code>gh issue list --state all</code> verifiziert)</h3>
+<p style="color:var(--mut);font-size:.86rem">Kein aktiver Tracker. Ersatz-Signale: <b>Actions</b> = <code>Build and test</code> meist <span class="pill ok">success</span>, <code>Lint</code> + <code>CodeQL</code> seit 25.08. bis 02.09. durchgehend <span class="pill no">failure</span> (auch beim letzten Push). <b>Releases</b> = 1× <code>nightly-2026-08-25</code> („Vulkan startet, Reflex läuft auf GTX 1660 SUPER“).</p>
+</div>
+
+<h2 class="h2" id="branches">3. Branches &amp; neueste Pushes</h2>
+<div class="card">
+<h3>Wichtig: nur 1 Branch — „3 neueste Branches“ entfallen, Ersatz = 3 neueste Commits</h3>
+<p style="color:var(--mut);font-size:.86rem"><code>git branch -a -vv</code> + <code>git ls-remote --heads origin</code> + <code>gh api …/branches</code> sind sich einig: es existiert nur <code>main</code> → <code>e502594</code>. Keine Feature-/Release-Branches offen. Die „drei neuesten Branches von mir/von dort“ sind also identisch — hier ersatzweise die drei neuesten Pushes auf <code>main</code> als Branch-Analyse:</p>
+<div class="filters" id="branchFilter"><button data-f="all" class="active">Alle Pushes</button><button data-f="rt">Nur RT</button><button data-f="docs">Nur Docs</button><button data-f="infra">Nur Infra</button></div>
+<table class="table" id="pushTable"><thead><tr><th>#</th><th>Hash · Datum</th><th>Message</th><th>Files</th><th>Stand</th></tr></thead><tbody>
+<tr data-c="rt"><td>1</td><td><code>e502594</code><br>02.09. 22:16</td><td><b>feat(rt): dynamic point lights, RT-AO, water Fresnel, emissive</b><br><span style="color:var(--mut)">LightBuffer-SSBO, Inverse-Square-Falloff in hybrid_ray_query.comp, farbige Glas-Transmission, Torch/Fire/Lava-Emissive. Test 63/63 laut Message.</span></td><td>5 Files +298/−14<br><span class="tag">RayTracingScene +117</span> <span class="tag">hybrid_ray_query +133</span></td><td><span class="pill mid">fertig, unvalidiert</span></td></tr>
+<tr data-c="docs"><td>2</td><td><code>917f890</code><br>02.09. 22:06</td><td><b>docs: align docs with implemented facts, verify OptiScaler v0.9.4</b><br><span style="color:var(--mut)">Shortcuts F8/F7/End dokumentiert, P0/P1/P2-Fixes nachdokumentiert, klar verifiziert vs. WIP vs. unavailable getrennt.</span></td><td>5 MD +75/−31</td><td><span class="pill ok">abgeschlossen</span></td></tr>
+<tr data-c="docs"><td>3</td><td><code>2cce4e9</code><br>02.09. 21:53</td><td><b>docs: interactive project audit report</b><br><span style="color:var(--mut)">Neues Artefakt audit_report.html (840 Zeilen). Kein Code-Risiko.</span></td><td>1 File +840</td><td><span class="pill ok">abgeschlossen</span></td></tr>
+<tr data-c="infra"><td>4</td><td><code>b98ab19</code><br>02.09.</td><td><b>feat(ui) P2: keybindings F7/F8/End, OSD-HUD, de/en-Lokalisierung</b></td><td>5 Files +153/−5</td><td><span class="pill ok">fertig</span></td></tr>
+<tr data-c="infra"><td>5</td><td><code>05f358c</code><br>02.09.</td><td><b>perf(core) P0/P1: Spin-Wait weg, DXGI-Deadlock-Fix, BLAS/TLAS-Reuse</b><br><span style="color:var(--mut)">3 ms Spin gespart, Present-Mutex während VSync entsperrt, VRAM-Leak fix.</span></td><td>6 Files +149/−104</td><td><span class="pill ok">fertig</span></td></tr>
+<tr data-c="infra"><td>6</td><td><code>57af816</code><br>01.09.</td><td><b>Merge PR #6 (setup-java 6)</b> + darunter Dependabot-Stack #1–#5</td><td>CI-only</td><td><span class="pill merged">gemergt</span></td></tr>
+<tr data-c="infra"><td>7</td><td><code>da43999</code><br>älter</td><td><b>fix: stabilize Vulkan FG pipeline, Reflex auf GTX 1660 SUPER</b><br><span style="color:var(--mut)">Basis für nightly-2026-08-25. Hybrid-Caps 0x7f, tausende DXGI-Presents fehlerfrei.</span></td><td>Pipeline</td><td><span class="pill ok">validiert (GTX)</span></td></tr>
+</tbody></table>
+<p style="color:var(--mut);font-size:.82rem">Graph ist linear seit <code>da43999</code>, keine Seitenäste. Arbeitsweise: kleine, direkt gepushte Feature-Drops auf <code>main</code> — kein Branch-Flow, kein Review-Gate. Das erklärt, warum PRs/Issues leer sind, aber <code>main</code> sich schnell bewegt.</p>
+</div>
+
+<h2 class="h2" id="stand">4. Wie es aussieht — was gerade getan wird</h2>
+<div class="grid2">
+<div class="card"><h3>Aktive Arbeit (02.09.-Stack)</h3>
+<ul class="tight" style="font-size:.88rem">
+<li><b>RT-Renderer:</b> Punktlichter + AO + Wasser-Fresnel + Emissive (<code>e502594</code>) — visuell größter Sprung, aber noch kein HW-Nachweis.</li>
+<li><b>Perf-Stabilisierung:</b> Spin-Waits raus, <code>unique_lock.unlock()</code> vor WaitIdle, <code>vkCmdUpdateBuffer</code>+Barrier, BLAS/TLAS-Reuse (<code>05f358c</code>).</li>
+<li><b>UI-Polish:</b> F7/F8/End, OSD mit Reflex+RT-Status, DE/EN (<code>b98ab19</code>).</li>
+<li><b>Doku-Ehrlichkeit:</b> verifiziert vs. WIP vs. 🔒 sauber getrennt (<code>917f890</code>).</li>
+<li><b>CI-Hygiene:</b> alle 6 Dependabot-PRs gemergt — abgeschlossen.</li>
+</ul></div>
+<div class="card"><h3>Gesundheit (Ampel)</h3>
+<table class="table"><tr><th>Signal</th><th>Wert</th></tr>
+<tr><td>Lokaler Tree</td><td><span class="pill ok">clean</span> <code>## main...origin/main</code>, keine uncommitteten Changes</td></tr>
+<tr><td>Build + Tests</td><td><span class="pill ok">grün</span> 62/62 JUnit, JAR 141.5 MB, 53/53 JNI</td></tr>
+<tr><td>Lint / CodeQL</td><td><span class="pill no">rot</span> seit 25.08. bis letztem Push — <b>sichtbarstes offenes Thema</b></td></tr>
+<tr><td>GTX 1660 SUPER Smoke</td><td><span class="pill ok">bestanden</span> Vulkan-Start, Caps 0x7f, 1000e Presents</td></tr>
+<tr><td>RTX40 / RX7000 / Arc</td><td><span class="pill mid">offen</span> keine Logs in <code>logs/</code> (nur Unit-Diagnostik)</td></tr>
+<tr><td>Sodium/Iris echt</td><td><span class="pill mid">offen</span> nur Detektor, kein JAR-Run mit Validation</td></tr></table>
+</div>
+</div>
+
+<h2 class="h2" id="tun">5. Was gemacht werden muss — und was NICHT</h2>
+<div class="filters" id="priFilter"><button data-f="all" class="active">Alle</button><button data-f="tun">Nur: Tun</button><button data-f="nicht">Nur: Nicht tun</button><button data-f="teil">Nur: Teilweise/halboffen</button></div>
+<div class="card">
+<table class="table" id="todoTable"><thead><tr><th>Aufgabe</th><th>Klasse</th><th>Beweis / Ort</th><th>Prio</th></tr></thead><tbody>
+<tr data-c="tun"><td><b>Lint + CodeQL grün machen</b> — Build geht, Gates rot. Erstes sichtbares To-do, blockiert Vertrauen in jeden weiteren Push.</td><td><span class="pill no">TUN</span></td><td>Actions seit 25.08. failure</td><td>P0</td></tr>
+<tr data-c="tun"><td><b>RTX40-Matrix:</b> DLSS-G Interception, RR-Guides, Reflex-Latenz (Marker 0–5), Resize/Fullscreen/VSync/Tearing + Validation Layers. Je 10×.</td><td><span class="pill no">TUN</span></td><td><code>FEATURE_STATUS:145-153</code></td><td>P0</td></tr>
+<tr data-c="tun"><td><b>AMD-Matrix:</b> FSR3.1-Pacing, Resize/Fullscreen, Treiber-Varianz (RDNA2/3). Danach Arc XeSS-NativeAA + benannter FSR-Fallback.</td><td><span class="pill no">TUN</span></td><td><code>FEATURE_STATUS:39-43</code></td><td>P0</td></tr>
+<tr data-c="tun"><td><b>Sodium 0.9.1 + Iris 1.11.2 als echte JARs</b> mit Validation: World-Load/Reload/Resize/Fullscreen, Shaderpack-fail-closed, Capture-Punkt außerhalb Render-Pass beweisen.</td><td><span class="pill no">TUN</span></td><td><code>RendererDetector:111-114</code></td><td>P1</td></tr>
+<tr data-c="teil"><td><b>K1/K2 fertig ohne Regression:</b> Timeline-Semaphor aus Proxy-Present exportieren oder Marker-Submit in MC-Command-Buffer einbetten. DoD: Mailbox 5 min keine korrupten Schatten, Debug nie halb.</td><td><span class="pill mid">TEILWEISE</span></td><td><code>VulkanRayQueryRenderer:39-48 WIP</code>, <code>Pipeline:82,221,416</code> (stub)</td><td>P0</td></tr>
+<tr data-c="teil"><td><b>Resize-Storm-Härtung:</b> 10× DRAINING-Storm + forcierter configure-Fehler + DXGI-owned-Pfad, Timeout→FAILED verifizieren.</td><td><span class="pill mid">TEILWEISE</span></td><td><code>VulkanGpuSurfaceMixin:301-416</code></td><td>P1</td></tr>
+<tr data-c="teil"><td><b>DRS persistente Max-Size + Viewport + SPIR-V-Cache</b>, RT-Chunk-Budget + TLAS-Refit weg vom RenderThread, Blur-Kosten/1080p/1440p/4K messen.</td><td><span class="pill mid">TEILWEISE</span></td><td><code>FEATURE_STATUS:79,83 🟡</code></td><td>P2</td></tr>
+<tr data-c="tun"><td><b>OptiScaler-Policy fixen:</b> known-hashes.json + Warn-statt-Fallback für Custom-Builds (Audit Fix4), sonst bleibt Override tot.</td><td><span class="pill no">TUN</span></td><td><code>OptiScalerIntegration:205,213</code></td><td>P1</td></tr>
+<tr data-c="tun"><td><b>Pflege:</b> VulkanRegistry-Split (DeviceRegistry/FrameDispatcher), Dead-Code <code>getDampeningFactor</code> löschen, spirv-val + Coverage-Gate in CI, FEATURE_STATUS 🟡→✅/🔒 nur nach HW-Logs.</td><td><span class="pill no">TUN</span></td><td><code>VulkanRegistry:36</code>, <code>OpticalFlow:5</code></td><td>P2/P3</td></tr>
+<tr data-c="nicht"><td><b>OptiScaler-eigene FG NICHT aktivieren</b> — nur 1 Present-Owner, sonst Double-Present.</td><td><span class="pill inf">NICHT</span></td><td><code>FEATURE_STATUS:68 🔒</code></td><td>—</td></tr>
+<tr data-c="nicht"><td><b>FSR4-/XeSS-FG-DLLs NICHT ohne offizielles Redist bundlen</b> — Tests asserten bewusst <code>missingFiles</code>.</td><td><span class="pill inf">NICHT</span></td><td><code>D3D12ProviderRuntimeAuditTest:33-35</code></td><td>—</td></tr>
+<tr data-c="nicht"><td><b>GTX keine RTX-Features freischalten</b> — korrekt rejected, nur Reflex-Pacing.</td><td><span class="pill inf">NICHT</span></td><td><code>FEATURE_STATUS:43</code>, <code>da43999</code></td><td>—</td></tr>
+<tr data-c="nicht"><td><b>Iris-Shader/OpenGL-Pfad NICHT improvisieren</b> — braucht separates GL↔Vulkan-Interop-Projekt.</td><td><span class="pill inf">NICHT</span></td><td><code>FEATURE_STATUS:108 🔒</code></td><td>—</td></tr>
+<tr data-c="nicht"><td><b>KEIN Full-Path-Tracing, KEIN HDR-Fake im D3D12-Pfad, KEINE externen DLLs ohne SHA256, KEIN System.gc() für VRAM, KEIN memcpy-Uniform ohne Fence</b>.</td><td><span class="pill inf">NICHT</span></td><td>Plan P0-07, <code>Opti:213</code>, <code>RT:39-48</code></td><td>—</td></tr>
+<tr data-c="nicht"><td><b>RendererIntegration/MaterialProvider NICHT „auffüllen“</b> — leere Aperture-Grenze ist intentional, kein TODO.</td><td><span class="pill inf">NICHT</span></td><td>SODIUM_IRIS_PLAN</td><td>—</td></tr>
+</tbody></table>
+</div>
+
+<details class="details" data-c="teil" open><summary><span class="pill mid">Erledigt ✅ (Beleg — schon geschafft, nicht wiederholen)</span></summary><div class="body">
+Volatile/Sync + <code>close()</code>-Rollback · JNI ExceptionCheck+DeleteLocalRef · Unlock vor WaitIdle · DigestInputStream + ATOMIC_MOVE + .bak-Recovery · Reflex ohne Present-Sleep · Supply-SHA256 · SemVer-Detektor · Drain TAIL+finally+Timeout · READY erst nach nativem Erfolg · <code>applyConfig</code> Single-Source · Composite-Fallback world→display + Destroy-Ownership · Jitter=0 in Mode 0 · NaN-Guard + Miss=maxDist · F7/F8/End + OSD + i18n · <code>JAVA_25→21</code>. Beweise: <code>VulkanRegistry:608-617</code>, <code>GameRendererMixin:144-151</code>, <code>hybrid_ray_query:247-251,302-303</code>, <code>StreamlineBridge:123-157</code>, <code>NativeLoader:247-250</code>, <code>FrameGenConfig:444-446</code>, <code>RendererDetector:111-114</code>, <code>CompositeFallbackPolicyTest:28</code>.
+</div></details>
+
+<h2 class="h2" id="tipps">6. Tipps — Reihenfolge &amp; nächste Schritte</h2>
+<div class="timeline">
+<div class="step"><b>Schritt 1 · Lint/CodeQL zuerst (½ Tag).</b> <span style="color:var(--mut)">Rot seit 25.08. — jeder weitere Push ohne grüne Gates verliert Vertrauen. Danach erst HW-Tests, sonst debuggst du gegen ein kaputtes Gate.</span></div>
+<div class="step"><b>Schritt 2 · Resize-Storm vor Fence-Framework.</b> <span style="color:var(--mut)">10× DRAINING-Storm + forcierter configure-Fehler beweisen <code>VulkanGpuSurfaceMixin:301-416</code>. Macht jeden späteren Sync-Fehler harmlos (degradiert statt Freeze).</span></div>
+<div class="step"><b>Schritt 3 · K1/K2 fertig.</b> <span style="color:var(--mut)">Timeline aus Proxy-Present exportieren (<code>vkGetSemaphoreCounterValue</code>/<code>vkWaitSemaphores</code>), sonst Marker in MC-Buffer einbetten. WIP in <code>VulkanRayQueryRenderer:39-48</code> nicht regressieren.</span></div>
+<div class="step"><b>Schritt 4 · HW-Matrix RTX40 → RX7000 → Arc.</b> <span style="color:var(--mut)">Je 10× Resize/Fullscreen/VSync + Validation. Logs nach <code>logs/</code> (aktuell nur Unit-Diagnostik, kein Live-Run). Erst dann 🟡→✅.</span></div>
+<div class="step"><b>Schritt 5 · Sodium/Iris echt.</b> <span style="color:var(--mut)">Keine Mocks — echte JARs 0.9.1/1.11.2 in Repro-Instanz. Shaderpack muss fail-closed bleiben.</span></div>
+<div class="step"><b>Schritt 6 · Perf erst nach Korrektheit.</b> <span style="color:var(--mut)">DRS Max-Size+Viewport, TLAS-Refit vom RenderThread, Blur-Kosten messen (1080p/1440p/4K). Aktuell 🟡 ohne Zahlen.</span></div>
+<div class="step"><b>Schritt 7 · Prozess-Tipp: PRs/Issues nutzen.</b> <span style="color:var(--mut)">Aktuell 0/0 — alles geht direkt auf main ohne Review-Gate. Für RT/Fence-Änderungen Feature-Branches + PR anlegen (schützt vor Regression, macht Dependabot-Historie lesbar). Branch-Schutz für main + CI-Pflicht (Build+Lint+CodeQL) einschalten.</span></div>
+</div>
+
+<div class="grid2" style="margin-top:14px">
+<div class="card"><h3>DoD-Metriken (aus plan-kombiniert.html, weiter gültig)</h3>
+<table class="table"><tr><th>Metrik</th><th>Ziel</th></tr>
+<tr><td>LocalRef Overflow</td><td>0 nach 10k Frames</td></tr>
+<tr><td>Vulkan Leak bei Resize</td><td>0 Balance nach 20 Resizes</td></tr>
+<tr><td>Config korrupt</td><td>.bak + Recovery, kein Crash</td></tr>
+<tr><td>RT Uniform Race</td><td>0 korrupt in Mailbox 5 min</td></tr>
+<tr><td>FG-Slot halb</td><td>Completion-gated, Debug nie halb</td></tr>
+<tr><td>DRAINING-Hänger</td><td>0 in 10 Storms</td></tr>
+<tr><td>Hitch Mining</td><td>&lt; 2 ms</td></tr>
+<tr><td>Coverage</td><td>&gt; 80 % + spirv-val in CI</td></tr></table></div>
+<div class="card"><h3>Quellen &amp; Methode</h3>
+<ul class="tight" style="font-size:.85rem;color:var(--mut)">
+<li>4 Subagents: (1) lokale Codebasis, (2) GitHub PRs/Issues via <code>gh</code>, (3) Branches/Pushes via <code>git for-each-ref/ls-remote/log</code>, (4) Docs-vs-Plan-Vergleich.</li>
+<li>Verifiziert: <code>gh pr list --state all</code> (6/6 merged), <code>gh issue list</code> (0), <code>git ls-remote --heads</code> (nur main), <code>git log -10</code>, <code>FEATURE_STATUS 02.09.</code>, <code>audit_report.html</code>, <code>logs/latest.log</code>.</li>
+<li>Diese Datei ergänzt <code>plan-kombiniert.html</code> + <code>audit_report.html</code> — kein Ersatz.</li>
+<li>Wurzel: <code>E:\IJ\DLSS Frame Generation\</code> · Stand 03.09.2026.</li>
+</ul>
+<div style="margin-top:10px;display:flex;gap:8px"><button onclick="window.print()" style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--txt);cursor:pointer">Drucken / PDF</button></div>
+</div>
+</div>
+
+<div class="foot">Status &amp; Plan 03.09.2026 · Single-File HTML · Filter + Druckbar · 4 Subagents · gh CLI + git verifiziert · Upstream Malionaro/dlss-frame-generation (nur main)</div>
+</div>
+<script>
+function wire(id,tid,col){const btns=document.querySelectorAll('#'+id+' button');const rows=document.querySelectorAll('#'+tid+' tr[data-c]');btns.forEach(b=>b.addEventListener('click',()=>{btns.forEach(x=>x.classList.remove('active'));b.classList.add('active');const f=b.dataset.f;rows.forEach(r=>{r.classList.toggle('hidden',!(f==='all'||r.dataset.c===f));});}));}
+wire('branchFilter','pushTable');wire('priFilter','todoTable');
+</script>
+</body>
+</html>

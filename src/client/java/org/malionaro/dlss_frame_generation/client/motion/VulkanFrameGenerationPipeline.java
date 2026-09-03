@@ -80,6 +80,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private String status = "Frame-generation resources are not initialized";
     private MotionVectorSnapshot latestDebugSnapshot;
     private long completedPresentSerial;
+    private long unconfirmedPresentCount;
     private long capturedFrameCount;
     private long providerAcceptedFrameCount;
     private int pendingUiSlot = -1;
@@ -413,7 +414,12 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                 providerAcceptedFrameCount++;
                 lastProviderAcceptedIdentity = identity;
             }
-            current.inUseUntilPresentSerial = completedPresentSerial + 1;
+            // P0 K2: hold the slot for two confirmed presents. The completion gate
+            // confirms GPU progress through the frame submitted two presents ago,
+            // so margin 2 means a slot is recycled only after the GPU verifiably
+            // finished the frame that filled it (with 3 rotating slots this still
+            // leaves one spare slot per frame in steady state).
+            current.inUseUntilPresentSerial = completedPresentSerial + 2;
             historyValid = true;
             status = accepted
                     ? "Dense GPU motion vectors accepted by native provider"
@@ -604,22 +610,27 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     }
 
     public void onPresentCompleted() {
-        // Phase 3 K2: PresentSerial completion gating. completedPresentSerial
-        // drives slot reuse (inUseUntilPresentSerial), so it must only advance
-        // once the GPU has caught up. WIP: a real bounded wait needs a timeline
-        // semaphore exported from the present submission (vkWaitSemaphores) or
-        // a present-queue VkFence signalled per frame - Minecraft exposes
-        // neither handle. Under -Ddlss_fg.strictSync=true we therefore issue a
-        // full vkDeviceWaitIdle via VulkanRegistry (correct but expensive);
-        // otherwise we only spin briefly and accept that the serial can run
-        // ahead of actual GPU completion.
-        if (VulkanRegistry.isStrictSyncEnabled()) {
-            try {
-                VulkanRegistry.waitUntilGpuIdleBrief(2L);
-            } catch (Throwable ignored) {
-            }
+        // Phase 3 K2: completedPresentSerial counts CONFIRMED presents only. It
+        // drives slot reuse (inUseUntilPresentSerial), so it must advance only
+        // once the GPU caught up with the frames that filled those slots.
+        // waitUntilGpuIdleBrief performs a bounded (2ms here) wait on the
+        // present-gate marker armed two presents ago; under -Ddlss_fg.strictSync
+        // it issues a full vkDeviceWaitIdle instead (correct but expensive).
+        // When unconfirmed, the serial is held: capture back-pressures with
+        // "Waiting for present..." while vanilla rendering continues through the
+        // guaranteed composite fallback (fail-closed, self-healing: the next
+        // confirmed present resumes the serial, no latch, no force-advance).
+        boolean confirmed = false;
+        try {
+            confirmed = VulkanRegistry.waitUntilGpuIdleBrief(2L);
+        } catch (Throwable ignored) {
+            confirmed = false;
         }
-        completedPresentSerial++;
+        if (confirmed) {
+            completedPresentSerial++;
+        } else {
+            unconfirmedPresentCount++;
+        }
     }
 
     public void resetHistory() {
@@ -784,6 +795,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             historyValid = false;
             frameNumber = 0;
             completedPresentSerial = 0;
+            unconfirmedPresentCount = 0;
             capturedFrameCount = 0;
             providerAcceptedFrameCount = 0;
             pendingUiSlot = -1;
@@ -795,6 +807,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         historyValid = false;
         frameNumber = 0;
         completedPresentSerial = 0;
+        unconfirmedPresentCount = 0;
         capturedFrameCount = 0;
         providerAcceptedFrameCount = 0;
         pendingUiSlot = -1;

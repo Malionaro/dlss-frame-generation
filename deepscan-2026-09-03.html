@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deep Scan — DLSS Frame Generation · 03.09.2026</title>
+<style>
+:root{--bg:#0c0e14;--card:#151821;--card2:#1c2030;--line:#252b3d;--txt:#e9ecf3;--mut:#9aa3b8;--acc:#5b8def;--green:#7ee787;--yel:#e6c029;--red:#ff6b6b;--org:#ff8a3d;--blu:#6bb8ff}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;font-family:Inter,Segoe UI,system-ui,sans-serif;background:var(--bg);color:var(--txt);line-height:1.6}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+.header{position:sticky;top:0;z-index:20;background:rgba(12,14,20,.93);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.hdr{max-width:1240px;margin:0 auto;padding:14px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.brand{font-weight:800}.badge{font-size:.72rem;padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
+.badge.live{background:#112a12;border-color:#2a5a2a;color:var(--green)}
+.badge.crit{background:#2a1212;border-color:#5a2a2a;color:var(--red)}
+.badge.warn{background:#2a2610;border-color:#5a4a0a;color:var(--yel)}
+.badge.info{background:#10203a;border-color:#244a7a;color:var(--blu)}
+.nav{margin-left:auto;display:flex;gap:7px;flex-wrap:wrap}
+.nav a{font-size:.8rem;padding:6px 11px;border-radius:999px;background:var(--card);border:1px solid var(--line)}
+.hero{max-width:1240px;margin:0 auto;padding:26px 20px 8px}
+.hero h1{margin:0;font-size:1.85rem;letter-spacing:-.02em}.hero h1 span{color:var(--acc)}
+.hero p{color:var(--mut);max-width:920px}
+.kpi{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:18px 0}
+@media(max-width:900px){.kpi{grid-template-columns:repeat(2,1fr)}}
+.kpi .k{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.k b{font-size:1.4rem}.k span{color:var(--mut);font-size:.76rem}
+.wrap{max-width:1240px;margin:0 auto;padding:0 20px 40px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-top:14px}
+.card h3{margin:0 0 8px;font-size:.95rem}
+.h2{margin:30px 0 10px;font-size:1.25rem;border-left:4px solid var(--acc);padding-left:10px}
+.table{width:100%;border-collapse:collapse;font-size:.82rem}
+.table th{text-align:left;color:var(--mut);font-weight:600;border-bottom:1px solid var(--line);padding:7px;position:sticky;top:0}
+.table td{padding:7px;border-bottom:1px solid #222839;vertical-align:top}
+.pill{display:inline-block;font-size:.68rem;padding:2px 8px;border-radius:999px;font-weight:700;white-space:nowrap}
+.p0{background:rgba(255,77,77,.15);color:var(--red);border:1px solid rgba(255,77,77,.4)}
+.p1{background:rgba(255,138,61,.14);color:var(--org);border:1px solid rgba(255,138,61,.4)}
+.p2{background:rgba(230,192,41,.13);color:var(--yel);border:1px solid rgba(230,192,41,.35)}
+.p3{background:rgba(107,184,255,.13);color:var(--blu);border:1px solid rgba(107,184,255,.35)}
+.tag{font-size:.66rem;padding:2px 6px;border-radius:6px;background:#0e1422;border:1px solid #22304a;color:#8fb0ff}
+code{font-family:ui-monospace,Consolas,monospace;font-size:.8em;background:#0f1320;border:1px solid #1e2a44;padding:1px 5px;border-radius:6px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}
+.filters button{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--txt);cursor:pointer;font-size:.8rem}
+.filters button.active{background:var(--acc);color:#081018;border-color:var(--acc)}
+.hidden{display:none!important}
+.timeline{position:relative;padding-left:22px}
+.timeline::before{content:"";position:absolute;left:7px;top:6px;bottom:6px;width:2px;background:linear-gradient(var(--red),var(--blu))}
+.step{position:relative;margin:10px 0;padding:11px 14px;background:var(--card);border:1px solid var(--line);border-radius:12px;font-size:.88rem}
+.step::before{content:"";position:absolute;left:-18px;top:15px;width:10px;height:10px;border-radius:50%;background:var(--acc);border:2px solid var(--bg)}
+.foot{text-align:center;color:var(--mut);font-size:.78rem;padding:18px;border-top:1px solid var(--line);margin-top:20px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:950px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="header"><div class="hdr">
+<div class="brand">◼ Deep Scan <span style="font-weight:400;color:var(--mut)">· DLSS Frame Generation — 03.09.2026</span></div>
+<span class="badge crit">● 3 × P0</span><span class="badge warn">20 × P1 · 23 × P2</span><span class="badge info">4 × P3 · 50 total</span><span class="badge live">4 Module · read-only · HEAD e502594</span>
+<nav class="nav"><a href="#top">Top 10</a><a href="#a">A Sync/RT</a><a href="#b">B Native</a><a href="#c">C Core</a><a href="#d">D UI/Build</a></nav>
+</div></div>
+
+<div class="hero">
+<h1>Deep Scan: <span>Sync trägt, Native dichtet, Core entwirrt, UI entkoppelt</span></h1>
+<p>50 Befunde aus 4 parallelen Scan-Modulen (A: GPU-Sync/RT/Shader · B: Native/JNI/DXGI/Security · C: Core/Backend/Config · D: UI/i18n/Tests/Build), alle mit <code>datei:zeile</code> belegt. Methode: кредитуй Grep (`WIP`, `vkDeviceWaitIdle`, `completedPresentSerial`, `deleteOnExit`, `lock_guard`, `nSet*`) + Voll-Reads der Hot-Files. Keine Änderung am Code. Die 3 P0 sind alle Sync (Serial/Fence/Uniform) — sie entscheiden, ob der Rest überhaupt sicher läuft. Größte Security-Hebel: Bridge ohne SHA (B6), OptiScaler-Geschwister-Hijack (B7), ungedeckelte Semaphor-Counts (B5).</p>
+<div class="kpi">
+<div class="k"><div style="color:var(--mut);font-size:.76rem">P0 Race/Overwrite</div><b style="color:var(--red)">3</b><br><span>A1 Gate-No-Op · A2 Serial · A3 Uniform</span></div>
+<div class="k"><div style="color:var(--mut);font-size:.76rem">P1 Hoch</div><b style="color:var(--org)">20</b><br><span>Fence · Lock · Lifecycle · UI-Bypass</span></div>
+<div class="k"><div style="color:var(--mut);font-size:.76rem">P2 Mittel</div><b style="color:var(--yel)">23</b><br><span>Clamp · Debounce · Drift · Dead-Code</span></div>
+<div class="k"><div style="color:var(--mut);font-size:.76rem">P3 Pflege</div><b style="color:var(--blu)">4</b><br><span>Kontrast · Bounds · Readback</span></div>
+<div class="k"><div style="color:var(--mut);font-size:.76rem">Echte Tests</div><b>19 Files</b><br><span>62/62 grün, Negativ-Lücken offen</span></div>
+</div>
+<div class="filters" id="sevFilter"><button data-f="all" class="active">Alle</button><button data-f="p0">Nur P0</button><button data-f="p1">Nur P1</button><button data-f="p2">Nur P2</button><button data-f="p3">Nur P3</button></div>
+</div>
+
+<div class="wrap">
+
+<h2 class="h2" id="top">Fix-Reihenfolge (Top 10 — zuerst hebeln)</h2>
+<div class="card"><div class="timeline">
+<div class="step" data-p="p0"><b>1. A3 → A2 → A1 (P0-Sync):</b> <code>VulkanRayQueryRenderer.java:1287,1400</code> <code>await/mark</code> vor/nach <code>vkCmdUpdateBuffer:157</code> aufrufen · <code>VulkanFrameGenerationPipeline.java:606-622</code> Serial nur nach Fence-Wait erhöhen · <code>VulkanRegistry.java:283</code> <code>timeoutMs</code> an echten Fence/Timeline binden. <span style="color:var(--mut)">Danach ist jeder weitere Fix gefahrlos testbar.</span></div>
+<div class="step" data-p="p1"><b>2. B6 + B5 (Security):</b> Bridge-DLL in <code>NativeLoader.java:22-36</code> SHA aufnehmen + vor <code>System.load</code> verifizieren · <code>WindowsDxgiPresenter.cpp:785-801</code> <code>waitSemaphoreCount ≤ 16</code> + NULL-Check. <span style="color:var(--mut)">Schließt RCE/OOM per JNI-Zeiger.</span></div>
+<div class="step" data-p="p1"><b>3. B2 + B3 (DXGI):</b> bei <code>!found</code> <code>VK_NOT_READY</code> statt Busy-Reuse (<code>:1262-1284</code>) · Submit/D3D12-Calls aus <code>g_mutex</code> ziehen (<code>:1249,1332-1359</code>).</div>
+<div class="step" data-p="p1"><b>4. C12 + C1 (Config schützt User):</b> <code>UNKNOWN</code>-Cleanup nie <code>save()</code>n (<code>CompatibilityManager.java:235-251</code>) · drei FG-Defaults auf <code>false</code> (<code>FrameGenConfig.java:199,220,227</code>).</div>
+<div class="step" data-p="p1"><b>5. D1 + C3/C4 (Single-Source):</b> <code>nSet*</code> aus allen <code>*SettingsPanel</code> raus, nur <code>backend.applyConfig</code> (<code>FrameGenerationBackend.java:52</code>); AMD/Intel + Restore durch <code>RuntimeFallbackPolicy</code>.</div>
+<div class="step" data-p="p1"><b>6. B9 + B1 (Native-Locks):</b> Streamline-Globals unter <code>g_streamlineMutex</code>/atomic (<code>StreamlineBridge.cpp:968-982</code>) · Teardown-Epoch gegen TOCTOU (<code>WindowsDxgiPresenter.cpp:304-314</code>).</div>
+<div class="step" data-p="p1"><b>7. B7 (OptiScaler):</b> nur Embedded-Dir als <code>LoadLibrary</code>-Quelle oder alle Geschwister hashen; fremde <code>OptiDllPath</code> auf Allowlist (<code>OptiScalerIntegration.java:199-235</code>).</div>
+<div class="step" data-p="p1"><b>8. D10 + D11 (Tests/Build):</b> Config-Pfad injizierbar + <code>@TempDir</code>, Negativtests (Arity/Clamp/Vendor), <code>spirv-val</code> in Build, <code>copyNative/compileShaders</code> inputs/outputs.</div>
+<div class="step" data-p="p2"><b>9. C9 + D2/D3 (Spam raus):</b> Dirty-Flag + 300 ms Debounce für <code>save+apply</code>; Slider-Clamps vereinheitlichen.</div>
+<div class="step" data-p="p2"><b>10. A7–A11 + D6/D9 (Shader/Hygiene):</b> <code>forward.w</code>-Zweckentfremdung lösen, Miss-Distanz + Sonne clampen, Sky/Motion-Guards, <code>de_de.json</code> UTF-8, VRAM relativ statt 6-GB-Hardcode.</div>
+</div></div>
+
+<h2 class="h2" id="a">Modul A — GPU-Sync / RT / Shader (12)</h2>
+<div class="card"><table class="table"><thead><tr><th>ID</th><th>Befund + Ort</th><th>Sev</th><th>Fix</th></tr></thead><tbody>
+<tr data-p="p0"><td><b>A1</b></td><td><b>waitUntilGpuIdleBrief Default-No-Op, timeoutMs ignoriert</b><br><code>render/VulkanRegistry.java:283</code> — ohne <code>strictSync</code> immer <code>false</code>; Caller tun so als sei synchronisiert (<code>VulkanGpuSurfaceMixin:400</code>, <code>Pipeline:618</code>).</td><td><span class="pill p0">P0</span></td><td><code>timeoutMs</code> an echten Per-Frame-Fence/Timeline binden.</td></tr>
+<tr data-p="p0"><td><b>A2</b></td><td><b>completedPresentSerial ohne GPU-Gate → Slot-Reuse-Race</b><br><code>motion/VulkanFrameGenerationPipeline.java:221,416,606</code> — Guard+Latch+Inkrement reine CPU-Zähler.</td><td><span class="pill p0">P0</span></td><td>Freigabe nur nach <code>vkWaitForFences</code>/Timeline.</td></tr>
+<tr data-p="p0"><td><b>A3</b></td><td><b>RT-Uniform-Fences toter Code, vkCmdUpdateBuffer überschreibt In-Flight</b><br><code>raytracing/VulkanRayQueryRenderer.java:157,1287,1400</code> — <code>await/mark/setup</code> unreferenziert, 3×96-Byte-Uniforms rotieren ohne Gate.</td><td><span class="pill p0">P0</span></td><td><code>await</code> vor, <code>mark</code> nach Record aufrufen.</td></tr>
+<tr data-p="p1"><td><b>A4</b></td><td><b>lastAcquireSemaphore nie geschrieben, Timeline ohne Acquire-Check</b><br><code>mixin/VulkanGpuSurfaceMixin.java:51,379</code> — immer <code>0L</code>, keine <code>vkGetSemaphoreCounterValue</code>-Prüfung.</td><td><span class="pill p1">P1</span></td><td>Echte <code>pWaitSemaphores</code> speichern, Serial nur nach signaled erhöhen.</td></tr>
+<tr data-p="p1"><td><b>A5</b></td><td><b>vkDeviceWaitIdle auf Hot-Paths = Full-Stall</b><br><code>motion/VulkanFrameGenerationPipeline.java:679</code>, <code>raytracing/VulkanRayQueryRenderer.java:185,432,554</code> — bei jedem Resize/Rebuild.</td><td><span class="pill p1">P1</span></td><td>Per-Resource-Fences + deferred Destroy.</td></tr>
+<tr data-p="p1"><td><b>A6</b></td><td><b>Timeouts widersprüchlich: 100 ms Force-Retire, 2 s Drain, 2 ms-Spin</b><br><code>raytracing/VulkanRayQueryRenderer.java:1309</code>, <code>VulkanGpuSurfaceMixin.java:43</code>, <code>VulkanRegistry.java:283</code> — Sicherheit wird bei Timeout aufgegeben.</td><td><span class="pill p1">P1</span></td><td>Bei Timeout skippen/droppen, Budget vereinheitlichen.</td></tr>
+<tr data-p="p1"><td><b>A7</b></td><td><b>cameraForward.w koppelt Quality in Reflexions-Reichweite</b><br><code>hybrid_ray_query.comp:446,466</code>, <code>RayTracingFrameData.java:90</code> — Quality-Wechsel ändert still Distanz.</td><td><span class="pill p1">P1</span></td><td>Eigenes <code>reflectionRange</code>-Feld im UBO.</td></tr>
+<tr data-p="p2"><td><b>A8</b></td><td><b>searchRadius=4 + Score/Bias Magic Numbers</b><br><code>motion/VulkanFrameGenerationPipeline.java:1999</code>, <code>frame_generation_motion.comp:33,83,98,139</code> — kein Config-/DRS-Bezug.</td><td><span class="pill p2">P2</span></td><td>Als Uniform aus Config + Auflösung skalieren.</td></tr>
+<tr data-p="p2"><td><b>A9</b></td><td><b>Depth-Clear 0.0 vs REVERSED_ZERO_TO_ONE + Bias 0.15</b><br><code>hybrid_ray_query.comp:210,281</code>, <code>Pipeline:1368</code>, <code>FrameGuideConventions:48</code> — Konvention ungeprüft.</td><td><span class="pill p2">P2</span></td><td>Konvention assert'n, Clear ableiten, Bias dokumentieren.</td></tr>
+<tr data-p="p2"><td><b>A10</b></td><td><b>NaN/Inf-Guards nur im Debug-, nicht im Hauptpfad</b><br><code>frame_generation_motion.comp:64</code>, <code>motion_blur.comp:24</code>, <code>Pipeline:1956</code> — nur <code>w&lt;1e-6</code>, Debug schon <code>isFinite</code>.</td><td><span class="pill p2">P2</span></td><td><code>isnan/isinf</code>-Guards in beide Shader.</td></tr>
+<tr data-p="p2"><td><b>A11</b></td><td><b>Sky-Farbe hardcoded, 48/65536 dupliziert mit stillem Drop</b><br><code>hybrid_ray_query.comp:451</code>, <code>RayTracingScene.java:24,77</code>, <code>FrameGenConfig.java:187,650</code> — <code>break outer</code> ohne Log.</td><td><span class="pill p2">P2</span></td><td>Single-Source-Konstanten, Sky aus Raster, Overflow zählen.</td></tr>
+<tr data-p="p3"><td><b>A12</b></td><td><b>Debug-Readback ohne GPU-Fence</b><br><code>motion/VulkanFrameGenerationPipeline.java:1837,1908</code> — nur CPU-Serial + Barrier, Map kann vor Copy lesen.</td><td><span class="pill p3">P3</span></td><td>Readback pro Slot mit Fence, Map erst nach Wait.</td></tr>
+</tbody></table></div>
+
+<h2 class="h2" id="b">Modul B — Native / JNI / DXGI / Security (13)</h2>
+<div class="card"><table class="table"><thead><tr><th>ID</th><th>Befund + Ort</th><th>Sev</th><th>Fix</th></tr></thead><tbody>
+<tr data-p="p1"><td><b>B1</b></td><td><b>Teardown-Unlock-Fenster (TOCTOU/Double-Reset)</b><br><code>WindowsDxgiPresenter.cpp:304-314,840,1059</code> — Lock freigegeben für WaitIdle, danach weiter auf ggf. fremdem Zustand.</td><td><span class="pill p1">P1</span></td><td>Epoch/Generation nach Re-Lock prüfen.</td></tr>
+<tr data-p="p1"><td><b>B2</b></td><td><b>Busy-Frame-Fallback überschreibt In-Flight ohne Fence-Wait</b><br><code>WindowsDxgiPresenter.cpp:1262-1284,1366-1368</code> — Round-Robin auf belegte Textur, wartet nur Vulkan-Fence.</td><td><span class="pill p1">P1</span></td><td><code>VK_NOT_READY</code> oder blockierend auf <code>doneValue</code> warten.</td></tr>
+<tr data-p="p1"><td><b>B3</b></td><td><b>Blockierende GPU-Calls unter g_mutex</b><br><code>WindowsDxgiPresenter.cpp:1249,1285,1303,1332-1359</code> — serialisiert stage/status/probe, Reentrancy via Treiber möglich.</td><td><span class="pill p1">P1</span></td><td>Nur Snapshot unter Lock, Submits ohne Lock.</td></tr>
+<tr data-p="p2"><td><b>B4</b></td><td><b>Retired-Swapchain-ABA via Pointer + fragile ||/&&</b><br><code>WindowsDxgiPresenter.cpp:366-371,1034-1041</code> — Adresse recycelbar, Klammern fehlen.</td><td><span class="pill p2">P2</span></td><td>Monotoner <code>uint64 swapchainId</code> + Klammern.</td></tr>
+<tr data-p="p1"><td><b>B5</b></td><td><b>Ungedeckelte waitSemaphoreCount + fehlender NULL-Check</b><br><code>WindowsDxgiPresenter.cpp:785-801,1307-1316</code> — korrupter JNI-Zeiger → OOM/JVM-Crash.</td><td><span class="pill p1">P1</span></td><td>Deckel ≤16, NULL+count ablehnen.</td></tr>
+<tr data-p="p1"><td><b>B6</b></td><td><b>Bridge-DLL ohne SHA, Verify→Load-TOCTOU</code></b><br><code>interop/NativeLoader.java:83-90,169-181,237-262</code> — 12 DLLs geprüft, privilegierteste nicht.</td><td><span class="pill p1">P1</span></td><td>Bridge in <code>TRUSTED_SHA256</code>, direkt vor Load verifizieren.</td></tr>
+<tr data-p="p1"><td><b>B7</b></td><td><b>DLL-Hijack über OptiScaler-Geschwister + OptiDllPath fail-open</b><br><code>interop/OptiScalerIntegration.java:199-235,316-345</code>, <code>FidelityFxBridge.cpp:300-308</code> — nur <code>OptiScaler.dll</code> verifiziert.</td><td><span class="pill p1">P1</span></td><td>Nur Embedded-Dir oder alle Geschwister hashen + Allowlist.</td></tr>
+<tr data-p="p2"><td><b>B8</b></td><td><b>Temp-Cleanup mit Symlink-Delete + deleteOnExit-Leak</b><br><code>interop/NativeLoader.java:63-64,90,166,176,264-294</code> — walkt tmpdir ohne Check, löscht Dirs nie.</td><td><span class="pill p2">P2</span></td><td>Nur eigene Dirs + Owner-/Symlink-Check + Shutdown-Hook.</td></tr>
+<tr data-p="p1"><td><b>B9</b></td><td><b>Unsynchronisierte Streamline-Globals / Use-after-Shutdown</b><br><code>StreamlineBridge.cpp:968-982,1007-1011,1143-1153,1978-1992</code> — Race gegen <code>nShutdown:606-636</code>.</td><td><span class="pill p1">P1</span></td><td>Alles unter Mutex/atomic + Shutdown-Flag.</td></tr>
+<tr data-p="p2"><td><b>B10</b></td><td><b>NewStringUTF-NULL → Java-NPE, Requirements fail-open</b><br><code>StreamlineBridge.cpp:119-159,596-601,1901-1918</code>, <code>D3D12PresentationBridge.java:178,240-248</code>.</td><td><span class="pill p2">P2</span></td><td>Null-checken + fail-closed loggen.</td></tr>
+<tr data-p="p2"><td><b>B11</b></td><td><b>JNI/slInit unter g_streamlineMutex + Allocs</b><br><code>StreamlineBridge.cpp:312-330,332-376,723-756</code> — GC-Safepoint-Block + Rückruf-Risiko.</td><td><span class="pill p2">P2</span></td><td>Args vor Lock kopieren, nur State unter Lock.</td></tr>
+<tr data-p="p2"><td><b>B12</b></td><td><b>lock_guard über FFX-Dispatch + HRESULT-Detailverlust</b><br><code>FidelityFxBridge.cpp:512-631,633-697</code>, <code>WindowsDxgiPresenter.cpp:107-112</code> — Frame-Latenz unter Lock.</td><td><span class="pill p2">P2</span></td><td>Lock auf Handle-Kopie reduzieren + RemovedReason loggen.</td></tr>
+<tr data-p="p3"><td><b>B13</b></td><td><b>LUID ok, aber Extent/Format/BackBuffer-Index ungeprüft</b><br><code>WindowsDxgiPresenter.cpp:99-105,907-912,1078-1082,1350-1355,545-552</code>.</td><td><span class="pill p3">P3</span></td><td><code>w/h&gt;0</code> + Bounds-Check vor Copy.</td></tr>
+</tbody></table></div>
+
+<h2 class="h2" id="c">Modul C — Core / Backend / Config / Lifecycle (12)</h2>
+<div class="card"><table class="table"><thead><tr><th>ID</th><th>Befund + Ort</th><th>Sev</th><th>Fix</th></tr></thead><tbody>
+<tr data-p="p1"><td><b>C1</b></td><td><b>Alle 3 FG-Provider default true → Dauer-UNKNOWN</b><br><code>config/FrameGenConfig.java:199,220,227,339-354</code> — sanitize löst nur still mit NVIDIA-Präferenz.</td><td><span class="pill p1">P1</span></td><td>Defaults <code>false</code>, Opt-in per Vendor.</td></tr>
+<tr data-p="p2"><td><b>C2</b></td><td><b>AMD/Intel-Upscaler 2..6 passieren sanitize</b><br><code>config/FrameGenConfig.java:519-528</code> vs. Kommentar <code>:213-228</code> (nur 0/1 real).</td><td><span class="pill p2">P2</span></td><td>Auf <code>0..1</code> clampen + Warnung.</td></tr>
+<tr data-p="p1"><td><b>C3</b></td><td><b>Nur NVIDIA nutzt RuntimeFallbackPolicy</b><br><code>backend/NvidiaBackend.java:50-57</code> vs. <code>AmdBackend:36-39</code>, <code>IntelBackend:36-37</code> — AMD/Intel zeigen FG trotz FAILED.</td><td><span class="pill p1">P1</span></td><td>Fallback-Pfad in alle Backends.</td></tr>
+<tr data-p="p1"><td><b>C4</b></td><td><b>Restore reaktiviert FG hart ohne Check</b><br><code>backend/NvidiaBackend.java:75-81</code> — <code>restoreAfterSwapchainRecreation</code> nutzt rohes <code>config.dlssFgEnabled</code>.</td><td><span class="pill p1">P1</span></td><td>Restore durch Policy filtern / <code>applyConfig</code> delegieren.</td></tr>
+<tr data-p="p1"><td><b>C5</b></td><td><b>FAILED harter Latch ohne Retry</b><br><code>backend/ProviderLifecycle.java:157-163</code>, <code>compat/CompatibilityManager.java:182-191</code>, <code>VulkanGpuSurfaceMixin.java:308-312</code> — 2-s-Timeout wird terminal.</td><td><span class="pill p1">P1</span></td><td>Ursache/Generation tragen, OOM/transient retrybar.</td></tr>
+<tr data-p="p2"><td><b>C6</b></td><td><b>DRAINING mit Generation 0 + stilles Filtern</b><br><code>render/VulkanRegistry.java:335-342</code>, <code>compat/CompatibilityManager.java:193-201</code> — <code>draining(0)</code> wirft, Rest ohne Log.</td><td><span class="pill p2">P2</span></td><td>Nur <code>generation&gt;0</code> + Warn-Log.</td></tr>
+<tr data-p="p2"><td><b>C7</b></td><td><b>waitUntilGpuIdleBrief ignoriert Timeout (Duplikat zu A1, Core-Sicht)</b><br><code>render/VulkanRegistry.java:261-307</code>, <code>VulkanGpuSurfaceMixin.java:398-403</code>.</td><td><span class="pill p2">P2</span></td><td>Echter Deadline-Loop mit Fence.</td></tr>
+<tr data-p="p2"><td><b>C8</b></td><td><b>Geteilte statische Mutables ohne Atomik</b><br><code>render/VulkanRegistry.java:42-67,417-420,590-593</code>, <code>DynamicResolutionController.java:34-35</code>, <code>ReflexPacer.java:9-11</code>.</td><td><span class="pill p2">P2</span></td><td><code>AtomicLong/Boolean</code>, Matrizen synchronisieren.</td></tr>
+<tr data-p="p2"><td><b>C9</b></td><td><b>Kein Debounce, sync Disk-Write pro Klick</b><br><code>config/FrameGenConfig.java:673-695</code>, <code>MultiVendorSettingsScreen.java:502,547,561</code> — UI-Thread blockiert.</td><td><span class="pill p2">P2</span></td><td>Dirty-Flag + 300–500 ms, async persistieren.</td></tr>
+<tr data-p="p2"><td><b>C10</b></td><td><b>Stille Fallbacks ohne UX-Signal</b><br><code>render/RuntimeFallbackPolicy.java:58-60</code>, <code>FrameGenerationCompatibilityLayer.java:124-135</code> — nur Log.</td><td><span class="pill p2">P2</span></td><td>Effektiv-Modus in OSD/Status persistieren.</td></tr>
+<tr data-p="p1"><td><b>C11</b></td><td><b>catch(Throwable)-Schluck + Config-Pfad-Fallback spaltet Config</b><br><code>render/VulkanRegistry.java:364,874,1045</code>, <code>VulkanGpuSurfaceMixin.java:296,374,381</code>, <code>FrameGenConfig.java:18-27</code> — Lifecycle/Nativ driften.</td><td><span class="pill p1">P1</span></td><td>Lifecycle-Fehler an <code>failProvider</code> reichen, Pfad-Fallback warnen.</td></tr>
+<tr data-p="p1"><td><b>C12</b></td><td><b>Transient vendorId==0 löscht User-Config</b><br><code>compat/CompatibilityManager.java:235-251</code>, <code>config/FrameGenConfig.java:363-408</code> — <code>UNKNOWN</code> + sofort <code>save()</code>.</td><td><span class="pill p1">P1</span></td><td><code>UNKNOWN</code> nur in-memory, nie speichern.</td></tr>
+</tbody></table></div>
+
+<h2 class="h2" id="d">Modul D — UI / i18n / Tests / Build (13)</h2>
+<div class="card"><table class="table"><thead><tr><th>ID</th><th>Befund + Ort</th><th>Sev</th><th>Fix</th></tr></thead><tbody>
+<tr data-p="p1"><td><b>D1</b></td><td><b>UI umgeht Single-Source (nSet* direkt)</b><br><code>ui/settings/NvidiaSettingsPanel.java:62,105,157,204</code>, <code>Amd:41</code>, <code>Intel:43</code> vs. <code>FrameGenerationBackend.java:52</code>.</td><td><span class="pill p1">P1</span></td><td>Panels nur Config mutieren, Push via <code>applyConfig</code>.</td></tr>
+<tr data-p="p2"><td><b>D2</b></td><td><b>Slider-Spam: save()+JNI pro Drag-Tick</b><br><code>ui/settings/AmdSettingsPanel.java:126</code>, <code>Intel:129</code>, <code>MultiVendorSettingsScreen.java:622,668</code>.</td><td><span class="pill p2">P2</span></td><td>Nur Feld live, save/nativ auf Release/Debounce.</td></tr>
+<tr data-p="p2"><td><b>D3</b></td><td><b>Sharpness ohne Clamp (Single-Source-Drift)</b><br><code>ui/settings/AmdSettingsPanel.java:127</code>, <code>Intel:130</code> — roh persistiert, NaN speicherbar.</td><td><span class="pill p2">P2</span></td><td><code>isFinite+clamp(0,1)</code> wie Blur/DRS.</td></tr>
+<tr data-p="p2"><td><b>D4</b></td><td><b>Scroll-Clamp No-Op; Diagnostics ohne Keyboard</b><br><code>ui/settings/MultiVendorSettingsScreen.java:301</code> (<code>max(saved,max)</code>), <code>ui/diagnostics/DiagnosticsScreen.java:76</code>.</td><td><span class="pill p2">P2</span></td><td><code>clamp(s,0,max)</code> + keyPressed (ESC/PgUp/PgDn).</td></tr>
+<tr data-p="p3"><td><b>D5</b></td><td><b>OSD-Kontrast + hardcoded Strings</b><br><code>ui/FrameGenOsdRenderer.java:55,99</code>, <code>DiagnosticsScreen.java:24</code> — fixe 210-px-Box, DE-Overflow.</td><td><span class="pill p3">P3</span></td><td>Farben ≥ <code>0xFFE8E8E8</code>, Breite aus <code>font.width</code>, i18n-Keys.</td></tr>
+<tr data-p="p2"><td><b>D6</b></td><td><b>i18n ohne Arity-Gate; de_de-Mojibake shippbar</b><br><code>lang/de_de.json:2</code> (U+FFFD), <code>en_us.json:11</code> (0x1A), <code>LanguageResourcesTest.java:28</code> Regex-Lücke.</td><td><span class="pill p2">P2</span></td><td>UTF-8 reparieren + Arity-Test in CI.</td></tr>
+<tr data-p="p2"><td><b>D7</b></td><td><b>OpticalFlowArtifactCorrector Dead Write</b><br><code>motion/OpticalFlowArtifactCorrector.java:7,19,22</code> — <code>dampeningFactor</code> nie gelesen, Caller <code>VulkanRegistry:578</code>.</td><td><span class="pill p2">P2</span></td><td>Auswerten oder löschen.</td></tr>
+<tr data-p="p3"><td><b>D8</b></td><td><b>RendererIntegration/MaterialProvider ohne Impl/Tests</b><br><code>integration/RendererIntegration.java:15</code>, <code>MaterialProvider.java:13</code>.</td><td><span class="pill p3">P3</span></td><td>NoOp + Negativtests oder als experimentell labeln.</td></tr>
+<tr data-p="p2"><td><b>D9</b></td><td><b>VramBudgetOptimizer statisch-mutabel, 6-GB-Hardcode, halbseitiger Fallback</b><br><code>vulkan/VramBudgetOptimizer.java:11,76,78</code> — Legacy nur <code>debug</code>.</td><td><span class="pill p2">P2</span></td><td>Atomic + relative Schwelle + <code>notifyVramPressure</code> beidseitig.</td></tr>
+<tr data-p="p1"><td><b>D10</b></td><td><b>Tests: echte Pfade, setAccessible, keine UI/Negativ-Abdeckung</b><br><code>FrameGenUnitTest.java:255,264,283</code> — <code>build/tmp/frame_gen.json</code> real, Singleton-Reset per Reflection.</td><td><span class="pill p1">P1</span></td><td>Pfad injizierbar + <code>@TempDir</code> + JaCoCo-Gate.</td></tr>
+<tr data-p="p1"><td><b>D11</b></td><td><b>Build: copyNative ohne I/O-Dekl, compileShaders stiller No-Op ohne spirv-val</b><br><code>build.gradle:100,129,302</code>, <code>:376</code> — glslc-fehlt → still grün.</td><td><span class="pill p1">P1</span></td><td>inputs/outputs + Warnung + spirv-val im Build.</td></tr>
+<tr data-p="p2"><td><b>D12</b></td><td><b>Config-Drift: Mixins JAVA_21 vs Toolchain 25, Fabric-API hardcoded, 2 Shader-Wege</b><br><code>dlss_fg.mixins.json:6</code>, <code>build.gradle:376</code>, <code>fabric.mod.json:28</code> vs <code>gradle.properties:13</code>.</td><td><span class="pill p2">P2</span></td><td>Level vereinheitlichen, Version expandieren, 1 Validator.</td></tr>
+<tr data-p="p2"><td><b>D13</b></td><td><b>DiagnosticsScreen Null-Risiko + Render-Seiteneffekt</b><br><code>ui/diagnostics/DiagnosticsScreen.java:65,71,191</code> — kein Nullcheck, Höhe erst im Render.</td><td><span class="pill p2">P2</span></td><td>Null-Guards + Höhe in init/resize.</td></tr>
+</tbody></table></div>
+
+<div class="grid2">
+<div class="card"><h3>Nicht anfassen (intentional, Code-belegt)</h3>
+<ul style="font-size:.84rem;color:var(--mut)">
+<li><code>FallbackBackend:25-27</code> Pass-through, <code>FrameGenerationBackend:61-62</code> Default-<code>{}</code> — kein TODO.</li>
+<li><code>RendererIntegration:24-33</code> + <code>MaterialProvider:22-35</code> leere Aperture-Grenze — Zukunfts-API.</li>
+<li><code>ReflexPacer:50-55</code> Present-Sleep no-op (P0) — nicht „reparieren“.</li>
+<li>FSR4/XeSS-FG-DLLs fehlen bewusst — Tests asserten <code>missingFiles</code>.</li>
+<li><code>System.gc()</code> bleibt draußen (<code>VramBudgetOptimizer:80</code>) — kein Rollback.</li>
+</ul></div>
+<div class="card"><h3>DoD — wann ist der Scan abgearbeitet?</h3>
+<table class="table"><tr><th>Signal</th><th>Ziel</th></tr>
+<tr><td>P0 Serial/Uniform</td><td>Mailbox 5 min keine korrupten Schatten, Debug nie halb</td></tr>
+<tr><td>JNI-Fuzz</code></td><td>10k Presents mit großem/NULL-presentInfo ohne Crash</td></tr>
+<tr><td>Resize-Storm</td><td>10 Storms, 0 DRAINING-Hänger, 0 Leaks</td></tr>
+<tr><td>Config-Fuzz</td><td>1000 Random-Werte, 0 Crash, UNKNOWN nie gespeichert</td></tr>
+<tr><td>Shader</td><td><code>spirv-val</code> im Build grün, NaN-Seed ohne Vergiftung</td></tr>
+<tr><td>CI</td><td>Build + Lint + CodeQL grün, Coverage-Gate an</td></tr></table>
+<div style="margin-top:10px"><button onclick="window.print()" style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--txt);cursor:pointer">Drucken / PDF</button></div>
+</div>
+</div>
+
+<div class="foot">Deep Scan 03.09.2026 · 50 Befunde (3/20/23/4) · 4 Module read-only · HEAD e502594 · ergänzt audit_report.html + status-plan-2026-09-03.html · Wurzel E:\IJ\DLSS Frame Generation\</div>
+</div>
+<script>
+const btns=document.querySelectorAll('#sevFilter button');
+btns.forEach(b=>b.addEventListener('click',()=>{
+btns.forEach(x=>x.classList.remove('active'));b.classList.add('active');
+const f=b.dataset.f;
+document.querySelectorAll('[data-p]').forEach(el=>{if(f==='all')el.classList.remove('hidden');else el.classList.toggle('hidden',el.dataset.p!==f);});
+}));
+</script>
+</body>
+</html>

@@ -81,6 +81,19 @@ public final class VulkanRegistry {
         activeDevice = device;
         LOGGER.info("Registered active VulkanDevice context: {}", device);
         frameGenerationPipeline = new VulkanFrameGenerationPipeline(device, LOGGER);
+        // P0 K2/A1: the present gate holds VkDevice-bound fences/markers, so it
+        // must never survive a device change. Recreate lazily-initialized.
+        SlotFenceGate previousGate = presentGate;
+        presentGate = null;
+        presentGateSequence = 0L;
+        if (previousGate != null) {
+            try {
+                previousGate.close();
+            } catch (Throwable closeError) {
+                LOGGER.warn("Failed to release previous present-gate: {}", closeError.toString());
+            }
+        }
+        presentGate = new SlotFenceGate(device, LOGGER, "present", PRESENT_GATE_SLOTS);
 
         CompatibilityManager comp = FrameGenMod.compatibilityManager();
         if (comp != null) {
@@ -266,19 +279,32 @@ public final class VulkanRegistry {
     }
 
     /**
-     * Bounded GPU-idle gate ahead of present-serial bookkeeping.
+     * Rotating present-completion gate (depth 3, matches the 3-slot pipelines).
      *
-     * <p>Returns {@code true} when GPU idleness was confirmed (or trivially,
-     * when no Vulkan device is active), {@code false} when the caller must
-     * fall back to a short spin because no wait was performed.</p>
+     * <p>Every present arms one slot with a drain-marker on Minecraft's graphics
+     * queue; the gate wait targets the marker armed two presents ago, so a short
+     * timeout can actually confirm instead of always expiring on the frame that
+     * was just submitted. Recreated on every device registration.</p>
+     */
+    private static final int PRESENT_GATE_SLOTS = 3;
+    private static volatile SlotFenceGate presentGate;
+    private static long presentGateSequence;
+
+    /**
+     * Bounded GPU-progress gate ahead of present-serial bookkeeping.
      *
-     * <p>WIP: a genuinely brief bounded wait needs a tracked VkFence or a
-     * timeline semaphore exported from Minecraft's present submission
-     * (vkWaitSemaphores); neither handle is plumbed through the surface yet.
-     * Until then the only correct idle primitive is vkDeviceWaitIdle, which
-     * blocks the render thread for the full queue depth and is therefore
-     * opt-in via {@code -Ddlss_fg.strictSync=true}; the {@code timeoutMs}
-     * parameter is reserved for that future fence/timeline wait.</p>
+     * <p>Returns {@code true} only when GPU progress was confirmed (or trivially,
+     * when no Vulkan device is active or nothing is in flight yet), {@code false}
+     * when the caller must treat the present as unconfirmed and delay slot reuse.
+     * The wait is bounded by {@code timeoutMs} (clamped to 0..100&nbsp;ms) and
+     * never stalls the render thread beyond it.</p>
+     *
+     * <p>Under {@code -Ddlss_fg.strictSync=true} a full {@code vkDeviceWaitIdle}
+     * is issued instead (correct but expensive: blocks the render thread for the
+     * full queue depth). Still open (P1): timeline semaphores
+     * ({@code vkWaitSemaphores}) exported from Minecraft's present submission;
+     * until then the self-owned drain-marker is the earliest observable point of
+     * GPU progress.</p>
      */
     public static boolean waitUntilGpuIdleBrief(long timeoutMs) {
         VulkanDevice device = activeDevice;
@@ -290,16 +316,24 @@ public final class VulkanRegistry {
             if (vkDevice == null || vkDevice.address() == 0L) {
                 return true;
             }
-            if (!strictSyncEnabled) {
-                // Default: do not stall the render thread; callers spin briefly instead.
+            if (strictSyncEnabled) {
+                int result = VK13.vkDeviceWaitIdle(vkDevice);
+                if (result != VK13.VK_SUCCESS) {
+                    LOGGER.warn("vkDeviceWaitIdle failed with VkResult {}", result);
+                    return false;
+                }
+                return true;
+            }
+            SlotFenceGate gate = presentGate;
+            if (gate == null) {
                 return false;
             }
-            int result = VK13.vkDeviceWaitIdle(vkDevice);
-            if (result != VK13.VK_SUCCESS) {
-                LOGGER.warn("vkDeviceWaitIdle failed with VkResult {}", result);
-                return false;
-            }
-            return true;
+            long clampedMs = Math.max(0L, Math.min(timeoutMs, 100L));
+            // Oldest outstanding marker: armed (sequence-3), i.e. index
+            // (sequence % SLOTS); for the first presents the slots are not in
+            // flight yet and the gate trivially confirms (bootstrap).
+            int awaitIndex = (int) (presentGateSequence % PRESENT_GATE_SLOTS);
+            return gate.awaitSlot(awaitIndex, clampedMs * 1_000_000L);
         } catch (Throwable t) {
             LOGGER.warn("waitUntilGpuIdleBrief failed: {}", t.toString());
             return false;
@@ -802,6 +836,19 @@ public final class VulkanRegistry {
         // Feature: Dynamic VRAM Budget Optimizer
         org.malionaro.dlss_frame_generation.client.vulkan.VramBudgetOptimizer.checkVramPressure(
                 activePhysicalDeviceHandle);
+
+        // P0 K2/A1: arm the next drain-marker behind this present's submissions.
+        // Queue order makes it observable GPU progress for the completion gate.
+        // Never throws; a failed gate simply reports unconfirmed waits.
+        try {
+            SlotFenceGate gate = presentGate;
+            if (gate != null) {
+                gate.markSlot((int) (presentGateSequence % PRESENT_GATE_SLOTS));
+                presentGateSequence++;
+            }
+        } catch (Throwable markerError) {
+            LOGGER.warn("Present-gate marker submit failed: {}", markerError.toString());
+        }
 
         // Provider work was recorded at the pre-HUD capture point. Streamline
         // and FidelityFX insert generated frames from their present hooks.

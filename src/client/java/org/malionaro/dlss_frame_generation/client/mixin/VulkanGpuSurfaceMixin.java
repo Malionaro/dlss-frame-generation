@@ -42,9 +42,9 @@ public class VulkanGpuSurfaceMixin {
     @Unique
     private static final long dlss_fg$DRAIN_TIMEOUT_NANOS = 2_000_000_000L;
 
-    // Phase 3 K2: PresentSerial completion-gated – fence/timeline tracking
-    // Full VK would own a VkFence or timeline semaphore per present; serial increments only on GPU completion.
-    // Pragmatic stub: acquireSemaphore signaled check + yield/wait as vkQueueWaitIdle Ersatz.
+    // Phase 3 K2: completion gating lives in VulkanRegistry's rotating
+    // present-gate (SlotFenceGate) + the pipeline's confirmed-present serial.
+    // The counters below are diagnostics only, not sync primitives.
     @Unique
     private long dlss_fg$presentSerialTimeline = 0L;
     @Unique
@@ -389,12 +389,11 @@ public class VulkanGpuSurfaceMixin {
 
     @Inject(method = "present", at = @At("RETURN"))
     private void onPresentEnd(CallbackInfo ci) {
-        // Phase 3 K2: Present completion gating. A genuinely brief wait would
-        // need a timeline semaphore exported from the present submission
-        // (vkWaitSemaphores) or a present-queue VkFence; neither handle is
-        // exposed by Minecraft's VulkanGpuSurface. Delegate to the registry:
-        // real vkDeviceWaitIdle under -Ddlss_fg.strictSync=true, otherwise a
-        // bounded ~2ms spin so slot-reuse bookkeeping stays conservative.
+        // Phase 3 K2: Present completion gating. The registry's rotating
+        // present-gate (drain-marker fence, 2 presents deep) is polled with a
+        // bounded wait; under -Ddlss_fg.strictSync=true this is a full
+        // vkDeviceWaitIdle instead. The serial itself advances in
+        // VulkanFrameGenerationPipeline.onPresentCompleted only on confirmation.
         if (VulkanRegistry.isStrictSyncEnabled()) {
             try {
                 VulkanRegistry.waitUntilGpuIdleBrief(2L);

@@ -41,11 +41,15 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     // Upload per vkResetFences bewaffnet; ein minimaler Drain-Marker-Submit auf
     // der Graphics-Queue signalisiert sie, sobald die GPU alle zuvor eingereihten
     // Command Buffers (inkl. des Frames, der den Slot zuletzt konsumierte)
-    // abgearbeitet hat. awaitUniformSlotFence wartet dann echt via
-    // vkWaitForFences (100ms Budget) statt einer CPU-Sleep-Heuristik.
-    // WIP: Timeline-Semaphoren (vkWaitSemaphores) und ein HOST_VISIBLE-Staging-Ring
-    // via vkCmdCopyBuffer bleiben offen; der Renderer besitzt keinen eigenen
-    // Frame-Submit, daher ersetzt der Marker-Submit die fehlende Fence-Zuordnung.
+    // abgearbeitet hat. render() ruft vor jedem vkCmdUpdateBuffer
+    // awaitUniformSlotFence(frameSlot) und nach dem Dispatch
+    // markUniformSlotInFlight(frameSlot): ein belegter Slot wird nie
+    // überschrieben – bei Timeout/Fehler wird der Frame übersprungen und im
+    // nächsten Frame erneut gewartet (kein Force-Retire, kein korrupter Upload).
+    // Offen (P1): Timeline-Semaphoren (vkWaitSemaphores) und ein
+    // HOST_VISIBLE-Staging-Ring via vkCmdCopyBuffer; der Renderer besitzt keinen
+    // eigenen Frame-Submit, daher ersetzt der Marker-Submit die fehlende
+    // Fence-Zuordnung.
     private final long[] slotFences = new long[FRAME_SLOT_COUNT];
     private final VkCommandBuffer[] slotMarkerCommandBuffers =
             new VkCommandBuffer[FRAME_SLOT_COUNT];
@@ -55,6 +59,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private final long[] slotSubmittedFrame = new long[FRAME_SLOT_COUNT];
     private final int[] slotTimeline = new int[FRAME_SLOT_COUNT];
     private long nextTimelineValue = 1L;
+    private long lastUniformWaitWarnNanos;
 
     private final Logger logger;
     private final VulkanDevice minecraftDevice;
@@ -153,6 +158,12 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 return false;
             }
             int frameSlot = (int) (frameNumber % FRAME_SLOT_COUNT);
+            // P0 K1: niemals einen Slot überschreiben, den die GPU noch liest.
+            // Bei Timeout/Fehler Frame überspringen (alte Uniform-Daten bleiben
+            // gültig) statt korrupte Matrizen hochzuladen.
+            if (!awaitUniformSlotFence(frameSlot)) {
+                return false;
+            }
             ByteBuffer nativeData = frame.toNativeBuffer();
             vkCmdUpdateBuffer(commandBuffer, uniformBuffers[frameSlot].buffer, 0L, nativeData);
             try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -175,8 +186,9 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                         null
                 );
             }
-            slotInFlight[frameSlot] = true;
-            slotSubmittedFrame[frameSlot] = frameNumber;
+            // Slot-Fence bewaffnen (setzt slotInFlight/slotSubmittedFrame und
+            // reicht bei verfügbarem Fence-Pfad einen Drain-Marker ein).
+            markUniformSlotInFlight(frameSlot);
             if (descriptorDepthView != depthView.vkImageView()) {
                 if (descriptorDepthView != NULL) {
                     // Descriptor sets from previous frames may still be in
@@ -1284,12 +1296,21 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         return vkGetBufferDeviceAddress(device, info);
     }
 
-    private void awaitUniformSlotFence(int slot) {
+    /**
+     * Wartet (bounded, 100&nbsp;ms) bis der Slot wiederverwendet werden darf.
+     *
+     * @return {@code true} nur bei bestätigter GPU-Fertigstellung (oder wenn der
+     *         Slot gar nicht belegt war); {@code false} wenn der Aufrufer den
+     *         Frame überspringen muss. Ein belegter Slot wird bei
+     *         Timeout/Fehler bewusst <em>nicht</em> zwangs-retired – der nächste
+     *         Frame wartet erneut, statt In-Flight-Daten zu überschreiben.
+     */
+    private boolean awaitUniformSlotFence(int slot) {
         if (slot < 0 || slot >= FRAME_SLOT_COUNT) {
-            return;
+            return true;
         }
         if (!slotInFlight[slot]) {
-            return;
+            return true;
         }
         long lastFrame = slotSubmittedFrame[slot];
         if (!fenceSyncAvailable || slotFences[slot] == NULL) {
@@ -1297,7 +1318,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             // drain-marker submit; without them only the CPU frame-retired
             // heuristic remains as a conservative fallback.
             awaitUniformSlotCpuFallback(slot, lastFrame);
-            return;
+            return !slotInFlight[slot];
         }
         // Real GPU gate: vkWaitForFences blocks until the drain-marker
         // submission attached to this slot's fence completes, i.e. until the
@@ -1308,23 +1329,34 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             result = VK13.vkWaitForFences(
                     device, stack.longs(slotFences[slot]), true, 100_000_000L);
         } catch (Throwable throwable) {
-            logger.warn("Uniform slot {} VkFence wait threw; forcing retire", slot, throwable);
-            retireSlot(slot);
-            return;
+            warnUniformWaitThrottled(
+                    "Uniform slot {} VkFence wait threw; keeping slot in flight ({})",
+                    slot, throwable.toString());
+            return false;
         }
         if (result == VK_SUCCESS) {
             retireSlot(slot);
-        } else if (result == VK_TIMEOUT) {
-            logger.warn(
-                    "Uniform slot {} VkFence wait timeout (frame {} last {}); forcing retire to avoid overwrite",
-                    slot, frameNumber, lastFrame);
-            retireSlot(slot);
-        } else {
-            logger.warn(
-                    "Uniform slot {} VkFence wait failed with VkResult {}; forcing retire to avoid overwrite",
-                    slot, result);
-            retireSlot(slot);
+            return true;
         }
+        if (result == VK_TIMEOUT) {
+            warnUniformWaitThrottled(
+                    "Uniform slot {} still in flight after 100ms (frame {} last {}); skipping frame, retry next frame",
+                    slot, frameNumber, lastFrame);
+        } else {
+            warnUniformWaitThrottled(
+                    "Uniform slot {} VkFence wait failed with VkResult {}; skipping frame, retry next frame",
+                    slot, result);
+        }
+        return false;
+    }
+
+    private void warnUniformWaitThrottled(String format, Object... args) {
+        long now = System.nanoTime();
+        if (now - lastUniformWaitWarnNanos < 1_000_000_000L) {
+            return;
+        }
+        lastUniformWaitWarnNanos = now;
+        logger.warn(format, args);
     }
 
     private void retireSlot(int slot) {
