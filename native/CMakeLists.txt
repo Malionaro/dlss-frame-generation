@@ -69,11 +69,15 @@ if(WIN32)
     message(STATUS "Found NVIDIA Streamline import library: ${SL_LIB}")
     target_link_libraries(dlss_fg_native PRIVATE ${SL_LIB} Vulkan::Headers d3d12.lib dxgi.lib)
 else()
-    # Fallback configuration for non-Windows (if compiled on Linux/macOS)
+    # Fallback configuration for non-Windows (if compiled on Linux/macOS).
+    # Vulkan headers are always required; the Streamline import library is
+    # optional (Windows-only redistributable) and must not gate them.
+    target_link_libraries(dlss_fg_native PRIVATE Vulkan::Headers)
     find_library(SL_LIB NAMES sl sl_wrapper sl_interop sl.interposer
         PATHS "${STREAMLINE_SDK_DIR}/lib"
     )
     if(SL_LIB)
-        target_link_libraries(dlss_fg_native PRIVATE ${SL_LIB} Vulkan::Headers)
+        message(STATUS "Found NVIDIA Streamline import library: ${SL_LIB}")
+        target_link_libraries(dlss_fg_native PRIVATE ${SL_LIB})
     endif()
 endif()

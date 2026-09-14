@@ -26,9 +26,12 @@ jobs:
           java-version: "25"
           cache: gradle
       - name: Run Gradle check (tests + any spotless/checkstyle if configured)
+        # 'test' instead of 'check': the JNI bridge is Windows-only
+        # (unconditional D3D12/dxgipresenter usage, Streamline .lib/.dll) and
+        # is covered by the Windows build job. Ubuntu lint validates Java.
         run: |
           chmod +x ./gradlew
-          ./gradlew check --no-daemon --stacktrace --continue || {
+          ./gradlew test --no-daemon --stacktrace || {
             echo "::warning::Gradle check failed or not fully configured - see logs"
             exit 1
           }
