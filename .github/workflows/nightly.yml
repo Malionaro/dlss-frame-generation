@@ -1,0 +1,67 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build and release nightly
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: corretto
+          java-version: "25"
+          cache: gradle
+
+      - name: Install Vulkan SDK (glslc + spirv-val for compileShaders)
+        run: |
+          winget install -e --id KhronosGroup.VulkanSDK --silent --accept-package-agreements --accept-source-agreements
+          $sdk = (Get-ChildItem C:\VulkanSDK | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Resolve nightly tag
+        id: tag
+        run: |
+          $tag = "nightly-$(Get-Date -Format 'yyyy-MM-dd')"
+          "value=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build native bridge, shaders, tests and mod JAR
+        run: .\gradlew.bat clean build --no-daemon --stacktrace
+
+      - name: Verify artifacts
+        run: |
+          Get-ChildItem build/libs/ | Format-Table Name,Length
+          if (-not (Test-Path "build/libs/dlss-frame-generation-*.jar")) { throw "No mod JAR found" }
+          $jar = (Get-ChildItem build/libs/dlss-frame-generation-*.jar | Where-Object Name -notmatch "-sources").FullName | Select-Object -First 1
+          jar tf "$jar" | Select-String "dlss_fg_native|sl.interposer" | ForEach-Object { Write-Host $_ }
+          if (-not (jar tf "$jar" | Select-String "dlss_fg_native.dll")) { throw "JAR missing dlss_fg_native.dll - copyNative failed" }
+
+      - name: Create nightly GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tag.outputs.value }}
+          name: ${{ steps.tag.outputs.value }}
+          generate_release_notes: true
+          prerelease: true
+          files: |
+            build/libs/dlss-frame-generation-*.jar
+            !build/libs/*-sources.jar
+          fail_on_unmatched_files: true
