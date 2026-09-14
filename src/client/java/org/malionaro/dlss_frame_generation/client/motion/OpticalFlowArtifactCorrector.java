@@ -6,6 +6,16 @@ public class OpticalFlowArtifactCorrector {
     private static Vector3f prevFwd = new Vector3f(0, 0, 1);
     private static float dampeningFactor = 1.0f; // 1.0 = Full FG, 0.0 = Dampened for zero artifacts
 
+    /**
+     * D7: current dampening factor, consumed by the motion pipeline to reset
+     * temporal history while whipping the camera (reprojection is unreliable
+     * then; static vectors beat tearing). Render-thread confined, like the
+     * camera state that feeds it.
+     */
+    public static float dampeningFactor() {
+        return dampeningFactor;
+    }
+
     public static void updateCameraRotation(float fwdX, float fwdY, float fwdZ) {
         Vector3f currFwd = new Vector3f(fwdX, fwdY, fwdZ).normalize();
         

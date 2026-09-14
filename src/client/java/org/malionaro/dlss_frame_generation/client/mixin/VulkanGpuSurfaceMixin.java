@@ -44,11 +44,10 @@ public class VulkanGpuSurfaceMixin {
 
     // Phase 3 K2: completion gating lives in VulkanRegistry's rotating
     // present-gate (SlotFenceGate) + the pipeline's confirmed-present serial.
-    // The counters below are diagnostics only, not sync primitives.
+    // The counter below is diagnostics only, not a sync primitive (A4: the
+    // never-written acquire-semaphore stub was removed).
     @Unique
     private long dlss_fg$presentSerialTimeline = 0L;
-    @Unique
-    private long dlss_fg$lastAcquireSemaphore = 0L;
     @Unique
     private long dlss_fg$proxySwapchain = 0L;
 
@@ -308,7 +307,7 @@ public class VulkanGpuSurfaceMixin {
                 if (comp != null && comp.providerSnapshot().state() == org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle.State.DRAINING) {
                     long elapsed = dlss_fg$drainStartNanos == 0L ? 0L : System.nanoTime() - dlss_fg$drainStartNanos;
                     if (elapsed > dlss_fg$DRAIN_TIMEOUT_NANOS) {
-                        comp.failProvider("Swapchain drain timeout after " + (elapsed / 1_000_000L) + "ms -> FAILED");
+                        comp.failProviderTransient("Swapchain drain timeout after " + (elapsed / 1_000_000L) + "ms -> FAILED");
                         org.slf4j.LoggerFactory.getLogger("DLSS_FG_Mixin").warn("Drain timeout ({} ms) -> FAILED", elapsed / 1_000_000L);
                     } else {
                         long gen = VulkanRegistry.getSwapchainGeneration();
@@ -324,7 +323,7 @@ public class VulkanGpuSurfaceMixin {
             } catch (Throwable t) {
                 try {
                     var c2 = FrameGenMod.compatibilityManager();
-                    if (c2 != null) c2.failProvider("Drain finally resolution failed: " + t.getMessage());
+                    if (c2 != null) c2.failProviderTransient("Drain finally resolution failed: " + t.getMessage());
                 } catch (Throwable ignored) {}
                 org.slf4j.LoggerFactory.getLogger("DLSS_FG_Mixin").debug("Drain finally handling failed", t);
             } finally {
@@ -340,7 +339,7 @@ public class VulkanGpuSurfaceMixin {
             if (comp != null && comp.providerSnapshot().state() == org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle.State.DRAINING) {
                 long elapsed = dlss_fg$drainStartNanos == 0L ? 0L : System.nanoTime() - dlss_fg$drainStartNanos;
                 if (elapsed > dlss_fg$DRAIN_TIMEOUT_NANOS) {
-                    comp.failProvider("Swapchain configure failed and drain timed out: " + (cause != null ? cause.getMessage() : "unknown"));
+                    comp.failProviderTransient("Swapchain configure failed and drain timed out: " + (cause != null ? cause.getMessage() : "unknown"));
                 } else {
                     long gen = VulkanRegistry.getSwapchainGeneration();
                     if (gen == 0L) gen = comp.providerSnapshot().swapchainGeneration() + 1;
@@ -351,7 +350,7 @@ public class VulkanGpuSurfaceMixin {
         } catch (Throwable t) {
             try {
                 var c2 = FrameGenMod.compatibilityManager();
-                if (c2 != null) c2.failProvider("Configure failure drain resolution failed: " + t.getMessage());
+                if (c2 != null) c2.failProviderTransient("Configure failure drain resolution failed: " + t.getMessage());
             } catch (Throwable ignored) {}
         } finally {
             dlss_fg$drainStartNanos = 0L;
@@ -366,18 +365,16 @@ public class VulkanGpuSurfaceMixin {
             if (comp != null && comp.providerSnapshot().state() == org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle.State.DRAINING) {
                 long elapsed = dlss_fg$drainStartNanos == 0L ? 0L : System.nanoTime() - dlss_fg$drainStartNanos;
                 if (elapsed > dlss_fg$DRAIN_TIMEOUT_NANOS) {
-                    comp.failProvider("Swapchain drain timeout in present after " + (elapsed / 1_000_000L) + "ms -> FAILED");
+                    comp.failProviderTransient("Swapchain drain timeout in present after " + (elapsed / 1_000_000L) + "ms -> FAILED");
                     org.slf4j.LoggerFactory.getLogger("DLSS_FG_Mixin").warn("Drain timeout in present ({} ms) -> FAILED", elapsed / 1_000_000L);
                     dlss_fg$drainStartNanos = 0L;
                 }
             }
         } catch (Throwable ignored) {}
-        // Phase 3 K2: capture acquireSemaphore for completion-gated check (stub)
-        // Full VK: would query timeline semaphore counter via vkGetSemaphoreCounterValue
-        // or wait on VkFence with vkWaitForFences before allowing serial increment.
+        // Phase 3 K2: diagnostic present counter. Completion gating is owned
+        // by VulkanRegistry's present-gate + the pipeline serial (see above).
         try {
             dlss_fg$presentSerialTimeline++;
-            // Real: dlss_fg$lastAcquireSemaphore = presentInfo.pWaitSemaphores() value if proxy path
         } catch (Throwable ignored) {}
         try {
             StreamlineBridge.nReflexMarker(4); // PRESENT_START
@@ -412,7 +409,7 @@ public class VulkanGpuSurfaceMixin {
             if (comp != null && comp.providerSnapshot().state() == org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle.State.DRAINING) {
                 long elapsed = dlss_fg$drainStartNanos == 0L ? 0L : System.nanoTime() - dlss_fg$drainStartNanos;
                 if (elapsed > dlss_fg$DRAIN_TIMEOUT_NANOS) {
-                    comp.failProvider("Swapchain drain timeout in presentEnd after " + (elapsed / 1_000_000L) + "ms -> FAILED");
+                    comp.failProviderTransient("Swapchain drain timeout in presentEnd after " + (elapsed / 1_000_000L) + "ms -> FAILED");
                     dlss_fg$drainStartNanos = 0L;
                 }
             }

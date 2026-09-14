@@ -24,7 +24,6 @@ public class FrameGenOsdRenderer {
         // OSD Position Top-Left with dark background pill
         int osdX = 10;
         int osdY = 10;
-        int width = 210;
 
         // Extract metrics
         int baseFps = mc.getFps();
@@ -46,65 +45,67 @@ public class FrameGenOsdRenderer {
         boolean showReflex = backend != null && backend.vendor() == FrameGenerationBackend.GpuVendor.NVIDIA;
         boolean showRt = config.rayTracingMode != FrameGenConfig.RayTracingMode.OFF;
 
-        int lineCount = 3;
-        if (showReflex) lineCount++;
-        if (showRt) lineCount++;
-        int height = 18 + lineCount * 13;
+        // D5: build lines first so the card width follows the longest line
+        // (German strings overflowed the fixed 210px box). Colors raised to
+        // WCAG-friendlier values on the translucent card.
+        record OsdLine(Component text, int color) {}
+        java.util.List<OsdLine> lines = new java.util.ArrayList<>();
+        lines.add(new OsdLine(
+                Component.translatable("dlss_fg.osd.title"), 0xFF00FF88));
+        lines.add(new OsdLine(
+                Component.translatable(
+                        "dlss_fg.osd.fps",
+                        estimatedFgFps,
+                        baseFps,
+                        fgActive
+                                ? Component.translatable(
+                                        "dlss_fg.value.multiplier", fgMultiplier
+                                )
+                                : Component.translatable("dlss_fg.osd.inactive")),
+                0xFFFFFFFF));
+        lines.add(new OsdLine(
+                Component.translatable(
+                        "dlss_fg.osd.latency",
+                        String.format(java.util.Locale.ROOT, "%.2f", frameTimeMs)),
+                0xFFE8E8E8));
+        lines.add(new OsdLine(
+                Component.translatable(
+                        "dlss_fg.osd.backend",
+                        vendorName,
+                        VulkanRegistry.getProviderAcceptedFrameCount(),
+                        VulkanRegistry.getCapturedFrameCount()),
+                0xFF66CCFF));
+        if (showReflex) {
+            // D5: no hardcoded English — reuse the value keys.
+            Component reflexValue = Component.translatable(
+                    config.reflexMode == 2 ? "dlss_fg.value.on_boost"
+                            : config.reflexMode == 1 ? "dlss_fg.value.on"
+                            : "dlss_fg.value.off");
+            lines.add(new OsdLine(
+                    Component.translatable("dlss_fg.osd.reflex", reflexValue),
+                    0xFFFFCC55));
+        }
+        if (showRt) {
+            lines.add(new OsdLine(
+                    Component.translatable(
+                            "dlss_fg.osd.rt",
+                            config.rayTracingMode.displayName()),
+                    0xFFFF88FF));
+        }
+
+        int width = 16;
+        for (OsdLine line : lines) {
+            width = Math.max(width, mc.font.width(line.text()) + 16);
+        }
+        int height = 12 + lines.size() * 13;
 
         // Draw translucent dark background card (ARGB 0xCC111111)
         extractor.fill(osdX, osdY, osdX + width, osdY + height, 0xCC111111);
 
-        // Header Title
-        extractor.text(
-                mc.font,
-                Component.translatable("dlss_fg.osd.title"),
-                osdX + 8,
-                osdY + 6,
-                0xFF00FF88
-        );
-
-        int currentY = osdY + 20;
-
-        // Metric Lines
-        Component fpsLine = Component.translatable(
-                "dlss_fg.osd.fps",
-                estimatedFgFps,
-                baseFps,
-                fgActive
-                        ? Component.translatable(
-                                "dlss_fg.value.multiplier", fgMultiplier
-                        )
-                        : Component.translatable("dlss_fg.osd.inactive")
-        );
-        extractor.text(mc.font, fpsLine, osdX + 8, currentY, 0xFFFFFFFF);
-        currentY += 13;
-
-        Component latencyLine = Component.translatable(
-                "dlss_fg.osd.latency",
-                String.format(java.util.Locale.ROOT, "%.2f", frameTimeMs)
-        );
-        extractor.text(mc.font, latencyLine, osdX + 8, currentY, 0xFFAAAAAA);
-        currentY += 13;
-
-        Component backendLine = Component.translatable(
-                "dlss_fg.osd.backend",
-                vendorName,
-                VulkanRegistry.getProviderAcceptedFrameCount(),
-                VulkanRegistry.getCapturedFrameCount()
-        );
-        extractor.text(mc.font, backendLine, osdX + 8, currentY, 0xFF00AAFF);
-        currentY += 13;
-
-        if (showReflex) {
-            String reflexText = config.reflexMode == 2 ? "On + Boost" : (config.reflexMode == 1 ? "On" : "Off");
-            Component reflexLine = Component.translatable("dlss_fg.osd.reflex", reflexText);
-            extractor.text(mc.font, reflexLine, osdX + 8, currentY, 0xFFFFAA00);
+        int currentY = osdY + 6;
+        for (OsdLine line : lines) {
+            extractor.text(mc.font, line.text(), osdX + 8, currentY, line.color());
             currentY += 13;
-        }
-
-        if (showRt) {
-            Component rtLine = Component.translatable("dlss_fg.osd.rt", config.rayTracingMode.displayName());
-            extractor.text(mc.font, rtLine, osdX + 8, currentY, 0xFFFF55FF);
         }
     }
 

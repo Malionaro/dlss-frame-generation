@@ -3,6 +3,7 @@
 #include "WindowsDxgiPresenter.h"
 #include "FidelityFxBridge.h"
 #include <algorithm>
+#include <atomic>
 #include <iostream>
 #include <iterator>
 #include <mutex>
@@ -25,35 +26,40 @@
 #define DLSS_FG_NATIVE_ABI_VERSION 2
 
 static std::mutex g_streamlineMutex;
+// B9: lifecycle flags and device handles are read from JNI entry points that
+// do not take g_streamlineMutex (capability queries, mode setters, VRAM
+// probes) while nShutdown/nInit mutate them under lock. Plain statics would
+// be a data race / use-after-shutdown TOCTOU, so they are atomic. Larger
+// state (strings, vectors, tokens, viewport) stays mutex-guarded.
 static bool g_coreInitialized = false;
-static bool g_initialized = false;
-static bool g_dlssgSupported = false;
+static std::atomic<bool> g_initialized = false;
+static std::atomic<bool> g_dlssgSupported = false;
 // Hardware support alone is not enough. DLSS-G must remain disabled until the
 // renderer supplies every mandatory Vulkan resource (including dense motion
 // vectors and complete VkImage/VkImageView/VkDeviceMemory/format metadata).
-static bool g_dlssgInputsReady = false;
-static bool g_dlssgEnabled = false;
-static bool g_dlssgRuntimeReady = false;
-static bool g_dlssSupported = false;
-static bool g_dlssInputsReady = false;
-static bool g_dlssRrSupported = false;
-static bool g_dlssRrInputsReady = false;
-static bool g_dlssRrModeActive = false;
-static bool g_reflexSupported = false;
+static std::atomic<bool> g_dlssgInputsReady = false;
+static std::atomic<bool> g_dlssgEnabled = false;
+static std::atomic<bool> g_dlssgRuntimeReady = false;
+static std::atomic<bool> g_dlssSupported = false;
+static std::atomic<bool> g_dlssInputsReady = false;
+static std::atomic<bool> g_dlssRrSupported = false;
+static std::atomic<bool> g_dlssRrInputsReady = false;
+static std::atomic<bool> g_dlssRrModeActive = false;
+static std::atomic<bool> g_reflexSupported = false;
 static sl::Result g_dlssgSupportResult = sl::Result::eErrorNotInitialized;
 static sl::Result g_dlssSupportResult = sl::Result::eErrorNotInitialized;
 static sl::Result g_dlssRrSupportResult = sl::Result::eErrorNotInitialized;
 static sl::Result g_reflexSupportResult = sl::Result::eErrorNotInitialized;
 static uint32_t g_maxFrameMultiplier = 1;
 static std::string g_nvidiaStatus = "NVIDIA Streamline has not been initialized";
-static VkInstance g_vkInstance = VK_NULL_HANDLE;
-static VkPhysicalDevice g_vkPhysicalDevice = VK_NULL_HANDLE;
-static VkDevice g_streamlineDevice = VK_NULL_HANDLE;
+static std::atomic<VkInstance> g_vkInstance = VK_NULL_HANDLE;
+static std::atomic<VkPhysicalDevice> g_vkPhysicalDevice = VK_NULL_HANDLE;
+static std::atomic<VkDevice> g_streamlineDevice = VK_NULL_HANDLE;
 static sl::ViewportHandle g_viewport(0);
 static sl::FrameToken* g_currentFrameToken = nullptr;
 static bool g_frameTokenRefreshedForCurrentFrame = false;
 static uint32_t g_frameIndex = 0;
-static int g_dlssMode = 0;
+static std::atomic<int> g_dlssMode = 0;
 static std::vector<std::string> g_requiredInstanceExtensions;
 static std::vector<std::string> g_requiredDeviceExtensions;
 static std::vector<std::string> g_requiredFeatures12;
@@ -330,10 +336,18 @@ static std::wstring toWideString(JNIEnv* env, jstring value) {
 }
 
 static bool initializeCore(JNIEnv* env, jstring pluginsPath) {
-    std::lock_guard<std::mutex> lock(g_streamlineMutex);
-    if (g_coreInitialized) return true;
-
+    // B11: JNI string extraction can block at GC safepoints and slInit below
+    // blocks for seconds — neither may run under the global frame-path lock.
+    // A dedicated init-only mutex serializes concurrent initializers; the
+    // global lock is taken only for the state check/update snapshots.
     std::wstring path = toWideString(env, pluginsPath);
+    static std::mutex initMutex;
+    std::lock_guard<std::mutex> initLock(initMutex);
+    {
+        std::lock_guard<std::mutex> lock(g_streamlineMutex);
+        if (g_coreInitialized) return true;
+    }
+
     const wchar_t* paths[] = { path.c_str() };
 
     sl::Preferences pref{};
@@ -363,16 +377,22 @@ static bool initializeCore(JNIEnv* env, jstring pluginsPath) {
     pref.numFeaturesToLoad = static_cast<uint32_t>(features.size());
 
     const sl::Result result = slInit(pref);
-    if (result != sl::Result::eOk) {
-        g_nvidiaStatus = "Streamline core initialization failed (" + std::to_string(static_cast<int>(result)) + ")";
-        std::cerr << "[DLSS_FG_Native] " << g_nvidiaStatus << std::endl;
-        return false;
-    }
+    {
+        std::lock_guard<std::mutex> lock(g_streamlineMutex);
+        // Re-check: a shutdown (or a racing initializer) may have run while
+        // slInit was in flight without the global lock.
+        if (g_coreInitialized) return true;
+        if (result != sl::Result::eOk) {
+            g_nvidiaStatus = "Streamline core initialization failed (" + std::to_string(static_cast<int>(result)) + ")";
+            std::cerr << "[DLSS_FG_Native] " << g_nvidiaStatus << std::endl;
+            return false;
+        }
 
-    g_coreInitialized = true;
-    refreshVulkanRequirements();
-    g_nvidiaStatus = "Streamline core initialized; waiting for Vulkan device";
-    return true;
+        g_coreInitialized = true;
+        refreshVulkanRequirements();
+        g_nvidiaStatus = "Streamline core initialized; waiting for Vulkan device";
+        return true;
+    }
 }
 
 extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nInitCore
@@ -720,6 +740,27 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
     if (vendorId != 0x10DE || !g_initialized || !g_dlssgSupported) {
         return JNI_FALSE;
     }
+    // B11: copy every JNI input to stack locals BEFORE taking the global
+    // lock. Array-region copies run per frame and must not execute under it.
+    const jsize v2cLen = viewToClip ? env->GetArrayLength(viewToClip) : 0;
+    const jsize c2vLen = clipToView ? env->GetArrayLength(clipToView) : 0;
+    const jsize c2pLen = clipToPreviousClip ? env->GetArrayLength(clipToPreviousClip) : 0;
+    const jsize p2cLen = previousClipToClip ? env->GetArrayLength(previousClipToClip) : 0;
+    jfloat v2c[16] = {};
+    jfloat c2v[16] = {};
+    jfloat c2p[16] = {};
+    jfloat p2c[16] = {};
+    bool matricesCopied = v2cLen >= 16 && c2vLen >= 16 && c2pLen >= 16 && p2cLen >= 16;
+    if (matricesCopied) {
+        env->GetFloatArrayRegion(viewToClip, 0, 16, v2c);
+        env->GetFloatArrayRegion(clipToView, 0, 16, c2v);
+        env->GetFloatArrayRegion(clipToPreviousClip, 0, 16, c2p);
+        env->GetFloatArrayRegion(previousClipToClip, 0, 16, p2c);
+        matricesCopied = !env->ExceptionCheck();
+        if (!matricesCopied) {
+            env->ExceptionClear();
+        }
+    }
     std::lock_guard lock(g_streamlineMutex);
     g_dlssgEnabled = enabled == JNI_TRUE;
     g_dlssgRuntimeReady = false;
@@ -731,27 +772,10 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         colorWidth <= 0 || colorHeight <= 0 ||
         guideWidth <= 0 || guideHeight <= 0 || viewToClip == nullptr ||
         clipToView == nullptr || clipToPreviousClip == nullptr ||
-        previousClipToClip == nullptr ||
-        env->GetArrayLength(viewToClip) < 16 ||
-        env->GetArrayLength(clipToView) < 16 ||
-        env->GetArrayLength(clipToPreviousClip) < 16 ||
-        env->GetArrayLength(previousClipToClip) < 16) {
+        previousClipToClip == nullptr || !matricesCopied) {
         g_dlssgInputsReady = false;
         g_nvidiaStatus =
             "DLSS-G is waiting for complete Vulkan color, depth and motion-vector resources";
-        return JNI_FALSE;
-    }
-
-    jfloat v2c[16];
-    jfloat c2v[16];
-    jfloat c2p[16];
-    jfloat p2c[16];
-    env->GetFloatArrayRegion(viewToClip, 0, 16, v2c);
-    env->GetFloatArrayRegion(clipToView, 0, 16, c2v);
-    env->GetFloatArrayRegion(clipToPreviousClip, 0, 16, c2p);
-    env->GetFloatArrayRegion(previousClipToClip, 0, 16, p2c);
-    if (env->ExceptionCheck()) {
-        g_dlssgInputsReady = false;
         return JNI_FALSE;
     }
 
@@ -1009,7 +1033,10 @@ extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
     g_dlssMode = std::clamp(static_cast<int>(mode), 0, 6);
     (void)sharpness;
     if (!g_initialized || !g_dlssSupported) return;
-    if (g_dlssMode != 0) {
+    // B9: single atomic snapshot — the mode must not change between the
+    // branch and the option build below.
+    const int selectedDlssMode = g_dlssMode.load();
+    if (selectedDlssMode != 0) {
         // Output dimensions are mandatory for an enabled mode and are only
         // authoritative at frame capture time. The per-frame submission
         // applies the complete option set on the next rendered frame.
@@ -1019,7 +1046,7 @@ extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
     }
 
     sl::DLSSOptions dlssOptions{};
-    dlssOptions.mode = dlssModeFromIndex(g_dlssMode);
+    dlssOptions.mode = dlssModeFromIndex(selectedDlssMode);
     useRecommendedDlssPresets(dlssOptions);
     // DLSS sharpness is deprecated by current Streamline. Leave it at the SDK
     // default instead of exposing a control which may have no effect.
@@ -1190,7 +1217,9 @@ Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nQueryMemoryB
     // VkPhysicalDeviceMemoryBudgetPropertiesEXT im pNext.
     auto pfnGetPhysicalDeviceMemoryProperties2 = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties2>(
         vkGetInstanceProcAddr(
-            g_vkInstance != VK_NULL_HANDLE ? g_vkInstance : VkInstance(nullptr),
+            // B9: explicit atomic load — a ternary mixing atomic and plain
+            // handles is ambiguous (C2445).
+            g_vkInstance != VK_NULL_HANDLE ? g_vkInstance.load() : VkInstance(nullptr),
             "vkGetPhysicalDeviceMemoryProperties2"));
     if (!pfnGetPhysicalDeviceMemoryProperties2) {
         return JNI_FALSE;
@@ -1275,6 +1304,27 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         if (!g_initialized || !g_dlssSupported) {
             return JNI_FALSE;
         }
+        // B11: JNI array copies before the global lock (see
+        // nSubmitFrameGenerationInputs for the rationale).
+        const jsize v2cLen = viewToClip ? env->GetArrayLength(viewToClip) : 0;
+        const jsize c2vLen = clipToView ? env->GetArrayLength(clipToView) : 0;
+        const jsize c2pLen = clipToPreviousClip ? env->GetArrayLength(clipToPreviousClip) : 0;
+        const jsize p2cLen = previousClipToClip ? env->GetArrayLength(previousClipToClip) : 0;
+        jfloat v2c[16] = {};
+        jfloat c2v[16] = {};
+        jfloat c2p[16] = {};
+        jfloat p2c[16] = {};
+        bool matricesCopied = v2cLen >= 16 && c2vLen >= 16 && c2pLen >= 16 && p2cLen >= 16;
+        if (matricesCopied) {
+            env->GetFloatArrayRegion(viewToClip, 0, 16, v2c);
+            env->GetFloatArrayRegion(clipToView, 0, 16, c2v);
+            env->GetFloatArrayRegion(clipToPreviousClip, 0, 16, c2p);
+            env->GetFloatArrayRegion(previousClipToClip, 0, 16, p2c);
+            matricesCopied = !env->ExceptionCheck();
+            if (!matricesCopied) {
+                env->ExceptionClear();
+            }
+        }
         std::lock_guard lock(g_streamlineMutex);
         if (commandBuffer == 0 || colorImage == 0 || colorMemory == 0 ||
             colorView == 0 || depthImage == 0 || depthMemory == 0 ||
@@ -1285,26 +1335,10 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
             renderHeight <= 0 || outputWidth <= 0 || outputHeight <= 0 ||
             viewToClip == nullptr || clipToView == nullptr ||
             clipToPreviousClip == nullptr || previousClipToClip == nullptr ||
-            env->GetArrayLength(viewToClip) < 16 ||
-            env->GetArrayLength(clipToView) < 16 ||
-            env->GetArrayLength(clipToPreviousClip) < 16 ||
-            env->GetArrayLength(previousClipToClip) < 16) {
+            !matricesCopied) {
             g_dlssInputsReady = false;
             g_nvidiaStatus =
                 "DLSS-SR is waiting for complete Vulkan color, depth, motion-vector and output resources";
-            return JNI_FALSE;
-        }
-
-        jfloat v2c[16];
-        jfloat c2v[16];
-        jfloat c2p[16];
-        jfloat p2c[16];
-        env->GetFloatArrayRegion(viewToClip, 0, 16, v2c);
-        env->GetFloatArrayRegion(clipToView, 0, 16, c2v);
-        env->GetFloatArrayRegion(clipToPreviousClip, 0, 16, c2p);
-        env->GetFloatArrayRegion(previousClipToClip, 0, 16, p2c);
-        if (env->ExceptionCheck()) {
-            g_dlssInputsReady = false;
             return JNI_FALSE;
         }
 
@@ -1569,7 +1603,9 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         noisyFormat != 0 && albedoFormat != 0 && specularFormat != 0 &&
         normalRoughnessFormat != 0 && specularHitDistanceFormat != 0 &&
         depthFormat != 0 && motionFormat != 0 && outputFormat != 0;
-    const bool arraysValid =
+    // B11: JNI array copies before the global lock (same pattern as the
+    // DLSS-G/SR submits above). arraysValid also covers the copy outcome.
+    const bool arraysPresent =
         viewToClip != nullptr && clipToView != nullptr &&
         clipToPreviousClip != nullptr && previousClipToClip != nullptr &&
         worldToView != nullptr && viewToWorld != nullptr &&
@@ -1579,6 +1615,20 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         env->GetArrayLength(previousClipToClip) >= 16 &&
         env->GetArrayLength(worldToView) >= 16 &&
         env->GetArrayLength(viewToWorld) >= 16;
+    jfloat v2c[16] = {}, c2v[16] = {}, c2p[16] = {}, p2c[16] = {}, w2v[16] = {}, v2w[16] = {};
+    bool arraysValid = arraysPresent;
+    if (arraysValid) {
+        env->GetFloatArrayRegion(viewToClip, 0, 16, v2c);
+        env->GetFloatArrayRegion(clipToView, 0, 16, c2v);
+        env->GetFloatArrayRegion(clipToPreviousClip, 0, 16, c2p);
+        env->GetFloatArrayRegion(previousClipToClip, 0, 16, p2c);
+        env->GetFloatArrayRegion(worldToView, 0, 16, w2v);
+        env->GetFloatArrayRegion(viewToWorld, 0, 16, v2w);
+        arraysValid = !env->ExceptionCheck();
+        if (!arraysValid) {
+            env->ExceptionClear();
+        }
+    }
     std::lock_guard lock(g_streamlineMutex);
     if (!g_initialized || !g_dlssRrSupported || !handlesValid ||
         !formatsValid || !arraysValid || renderWidth <= 0 ||
@@ -1587,18 +1637,6 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         g_dlssRrInputsReady = false;
         g_nvidiaStatus =
             "DLSS-RR is waiting for low-resolution HDR lighting, material guides, depth, motion and output resources";
-        return JNI_FALSE;
-    }
-
-    jfloat v2c[16], c2v[16], c2p[16], p2c[16], w2v[16], v2w[16];
-    env->GetFloatArrayRegion(viewToClip, 0, 16, v2c);
-    env->GetFloatArrayRegion(clipToView, 0, 16, c2v);
-    env->GetFloatArrayRegion(clipToPreviousClip, 0, 16, c2p);
-    env->GetFloatArrayRegion(previousClipToClip, 0, 16, p2c);
-    env->GetFloatArrayRegion(worldToView, 0, 16, w2v);
-    env->GetFloatArrayRegion(viewToWorld, 0, 16, v2w);
-    if (env->ExceptionCheck()) {
-        g_dlssRrInputsReady = false;
         return JNI_FALSE;
     }
 

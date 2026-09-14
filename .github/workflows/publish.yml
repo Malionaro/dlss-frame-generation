@@ -31,6 +31,12 @@ jobs:
           java-version: "25"
           cache: gradle
 
+      - name: Install Vulkan SDK (glslc + spirv-val for compileShaders)
+        run: |
+          winget install -e --id KhronosGroup.VulkanSDK --silent --accept-package-agreements --accept-source-agreements
+          $sdk = (Get-ChildItem C:\VulkanSDK | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build release JAR
         run: .\gradlew.bat clean build --no-daemon --stacktrace
 
@@ -57,7 +63,7 @@ jobs:
           game-versions: "26.2"
           dependencies: |
             fabric-api | depends | *
-            fabricloader | depends | >=0.19.3
+            fabricloader | depends | >=0.19.5
           fail-mode: fail
 
       - name: Publish to CurseForge

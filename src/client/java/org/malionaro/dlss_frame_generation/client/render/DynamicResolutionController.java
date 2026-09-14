@@ -31,8 +31,13 @@ public final class DynamicResolutionController {
     private int overBudgetSamples;
     private int underBudgetSamples;
 
-    private static volatile long lastVramPressureAcceptedNanos;
-    private static volatile boolean vramPressureScaleDropPending;
+    // C8: atomic check-then-act. The flag is intentionally process-wide (one
+    // GPU, one active controller); the CAS loop makes concurrent notifies safe
+    // instead of relying on render-thread confinement.
+    private static final java.util.concurrent.atomic.AtomicLong lastVramPressureAcceptedNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicBoolean vramPressureScaleDropPending =
+            new java.util.concurrent.atomic.AtomicBoolean();
 
     /**
      * Statischer Backpressure-Hook für den VramBudgetOptimizer: setzt intern
@@ -41,18 +46,19 @@ public final class DynamicResolutionController {
      */
     public static void notifyVramPressure() {
         long now = System.nanoTime();
-        long last = lastVramPressureAcceptedNanos;
+        long last = lastVramPressureAcceptedNanos.get();
         if (last != 0L && now - last < VRAM_PRESSURE_HYSTERESIS_NANOS) {
             return;
         }
-        lastVramPressureAcceptedNanos = now;
-        vramPressureScaleDropPending = true;
+        if (!lastVramPressureAcceptedNanos.compareAndSet(last, now)) {
+            return;
+        }
+        vramPressureScaleDropPending.set(true);
     }
 
     /** Konsumiert einen ausstehenden VRAM-Druck-Abfall genau einmal pro Instanz. */
     private void applyPendingVramPressureDrop() {
-        if (vramPressureScaleDropPending) {
-            vramPressureScaleDropPending = false;
+        if (vramPressureScaleDropPending.compareAndSet(true, false)) {
             scale = clampScale(scale - VRAM_PRESSURE_STEP);
         }
     }

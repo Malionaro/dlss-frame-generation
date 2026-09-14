@@ -166,13 +166,15 @@ public final class NativeLoader {
                 extractedDir.toFile().deleteOnExit();
             }
 
-            // Extract the JNI bridge DLL
+            // Extract the JNI bridge DLL, digesting the bundled bytes while
+            // copying so the extracted file can be re-verified below.
             String bridgeDll = platform.libraryFileName();
             String resourcePath = "/natives/" + platform.resourceDirectory() + "/" + bridgeDll;
+            String bundledDigest;
             try (InputStream input = NativeLoader.class.getResourceAsStream(resourcePath)) {
                 if (input != null) {
                     Path targetPath = extractedDir.resolve(bridgeDll);
-                    Files.copy(input, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                    bundledDigest = extractWithDigest(input, targetPath);
                     targetPath.toFile().deleteOnExit();
                     logger.info("[DLSS FG] Extracted JNI bridge: {}", bridgeDll);
                 } else {
@@ -196,8 +198,13 @@ public final class NativeLoader {
                 }
             }
 
-            // Load the JNI bridge
+            // Load the JNI bridge. B6: the bridge is built locally, so no fixed
+            // SHA can be embedded — instead re-digest the extracted file
+            // immediately before loading and fail closed unless it still
+            // matches the bundled bytes (defeats truncation, partial writes
+            // and temp-file replacement between extraction and load).
             Path nativeBridgePath = extractedDir.resolve(bridgeDll);
+            verifyExtractedDigest(nativeBridgePath, bundledDigest, bridgeDll, logger);
             System.load(nativeBridgePath.toAbsolutePath().toString());
             logger.info("[DLSS FG] Loaded JNI bridge from {}", nativeBridgePath);
 
@@ -232,6 +239,66 @@ public final class NativeLoader {
 
     public static String getExtractedNativesDir() {
         return extractedDir != null ? extractedDir.toAbsolutePath().toString() : "";
+    }
+
+    /**
+     * B6: streaming copy that returns the SHA-256 of the bundled bytes as
+     * {@code hex:byteCount}. No fixed hash is embedded for the locally built
+     * bridge — identity is established against the JAR resource itself.
+     */
+    private static String extractWithDigest(InputStream input, Path target)
+            throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            long total = 0L;
+            byte[] buffer = new byte[8192];
+            try (var output = Files.newOutputStream(target,
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                    java.nio.file.StandardOpenOption.WRITE)) {
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    digest.update(buffer, 0, read);
+                    output.write(buffer, 0, read);
+                    total += read;
+                }
+            }
+            if (total == 0L) {
+                throw new IOException("Bundled native bridge resource is empty: " + target);
+            }
+            return HexFormat.of().formatHex(digest.digest()) + ":" + total;
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IOException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    /** B6: re-digest the extracted file immediately before loading. */
+    private static void verifyExtractedDigest(
+            Path file, String bundledDigest, String fileName, Logger logger)
+            throws IOException {
+        String actual;
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            long total = 0L;
+            try (InputStream is = Files.newInputStream(file);
+                 DigestInputStream dis = new DigestInputStream(is, digest)) {
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = dis.read(buffer)) != -1) {
+                    total += read;
+                }
+            }
+            actual = HexFormat.of().formatHex(digest.digest()) + ":" + total;
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IOException("SHA-256 is unavailable", impossible);
+        }
+        if (!bundledDigest.equals(actual)) {
+            String message = "Extracted native bridge " + fileName
+                    + " no longer matches the bundled bytes (bundled=" + bundledDigest
+                    + ", extracted=" + actual + "); refusing to load";
+            logger.error("[DLSS FG] {}", message);
+            throw new IOException(message);
+        }
     }
 
     private static void verifyTrustedRuntime(Path file, String fileName)
@@ -270,6 +337,22 @@ public final class NativeLoader {
                 stream.filter(p -> p.getFileName().toString().startsWith("dlss_fg_natives-"))
                         .forEach(p -> {
                             try {
+                                // B8: never traverse symlinks — a planted link
+                                // named like our temp dir must not redirect
+                                // deletion into foreign trees. A stale link
+                                // itself is removed; anything else must be a
+                                // real directory or it is left alone.
+                                if (Files.isSymbolicLink(p)) {
+                                    long linkTime = Files.getLastModifiedTime(
+                                            p, java.nio.file.LinkOption.NOFOLLOW_LINKS).toMillis();
+                                    if (linkTime < cutoffMillis) {
+                                        Files.deleteIfExists(p);
+                                    }
+                                    return;
+                                }
+                                if (!Files.isDirectory(p)) {
+                                    return;
+                                }
                                 long lastMod = Files.getLastModifiedTime(p).toMillis();
                                 if (lastMod < cutoffMillis) {
                                     try (Stream<Path> walk = Files.walk(p)) {

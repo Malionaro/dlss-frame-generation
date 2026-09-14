@@ -23,9 +23,14 @@ class LanguageResourcesTest {
     private static final Pattern TRANSLATION_KEY =
             Pattern.compile(
                     "dlss_fg\\.(?:video_settings|screen|section|tab|tooltip|"
-                            + "option|value|status|diagnostics|osd|motion_debug)"
+                            + "option|value|status|diagnostics|osd|motion_debug|"
+                            + "renderer_block|rt_block|presentation_block|"
+                            + "message|backend_status|category|key)"
                             + "\\.[a-zA-Z0-9_.]+"
             );
+    // D6: only %s (and escaped %%) are used; counted per key for the arity test.
+    private static final Pattern PLACEHOLDER =
+            Pattern.compile("%(\\d+\\$)?s");
 
     @Test
     void germanAndEnglishExposeTheSameKeys() throws IOException {
@@ -72,12 +77,51 @@ class LanguageResourcesTest {
         );
     }
 
+    @Test
+    void formatPlaceholdersMatchBetweenLanguages() throws IOException {
+        // D6 arity gate: a German string with fewer/more %s than its English
+        // source throws or drops arguments at runtime. Encodings were verified
+        // clean (no U+FFFD / control chars in either file).
+        var english = placeholderCounts("en_us.json");
+        var german = placeholderCounts("de_de.json");
+        assertEquals(english.keySet(), german.keySet());
+        for (String key : english.keySet()) {
+            assertEquals(
+                    english.get(key),
+                    german.get(key),
+                    () -> "Placeholder drift in " + key
+            );
+        }
+    }
+
     private static Set<String> languageKeys(String fileName)
             throws IOException {
         JsonElement root = JsonParser.parseString(
                 Files.readString(LANGUAGE_DIRECTORY.resolve(fileName))
         );
         return root.getAsJsonObject().keySet();
+    }
+
+    private static java.util.Map<String, Integer> placeholderCounts(
+            String fileName
+    ) throws IOException {
+        JsonElement root = JsonParser.parseString(
+                Files.readString(LANGUAGE_DIRECTORY.resolve(fileName))
+        );
+        var counts = new java.util.HashMap<String, Integer>();
+        root.getAsJsonObject().entrySet().forEach(entry -> {
+            int placeholders = 0;
+            if (entry.getValue().isJsonPrimitive()
+                    && entry.getValue().getAsJsonPrimitive().isString()) {
+                Matcher matcher = PLACEHOLDER.matcher(
+                        entry.getValue().getAsString());
+                while (matcher.find()) {
+                    placeholders++;
+                }
+            }
+            counts.put(entry.getKey(), placeholders);
+        });
+        return counts;
     }
 
     private static Set<String> difference(

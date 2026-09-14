@@ -1,6 +1,10 @@
 package org.malionaro.dlss_frame_generation.client.backend;
+import org.malionaro.dlss_frame_generation.client.FrameGenMod;
 import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
+import org.malionaro.dlss_frame_generation.client.render.RuntimeFallbackPolicy;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * AMD FidelityFX backend. The Vulkan proxy swapchain is integrated separately
@@ -8,6 +12,8 @@ import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
  * until the renderer supplies dense motion vectors and the remaining inputs.
  */
 public class AmdBackend implements FrameGenerationBackend {
+    // C10: see NvidiaBackend — native misses are debug-logged, not swallowed.
+    private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.backend.amd");
 
     @Override
     public GpuVendor vendor() {
@@ -33,12 +39,20 @@ public class AmdBackend implements FrameGenerationBackend {
 
         try {
             // All AMD upscaling and FG mode changes go through here. Single place, no duplicates.
+            // C3: same session-fallback path as NVIDIA — a FAILED/UNAVAILABLE
+            // provider degrades to reconstruction instead of showing FG as on.
             int supported = FrameGenerationCompatibilityLayer.queryVulkanRoute(GpuVendor.AMD).capabilities();
-            // Runtime fallback handled via capabilities check; effective mode respects auto chain
-            StreamlineBridge.nSetUpscalingMode(GpuVendor.AMD.vendorId(), config.amdFsrMode, config.amdFsrSharpness);
-            StreamlineBridge.nSetFrameGenerationMode(GpuVendor.AMD.vendorId(), config.amdFsrFgEnabled, config.amdFsrMultiplier, config.uiRecomposition);
+            ProviderLifecycle.State state = FrameGenMod.compatibilityManager() != null
+                    ? FrameGenMod.compatibilityManager().providerSnapshot().state()
+                    : ProviderLifecycle.State.UNAVAILABLE;
+            RuntimeFallbackPolicy.Decision fallback = RuntimeFallbackPolicy.resolve(
+                    GpuVendor.AMD, config.autoFallbackChainEnabled, config.amdFsrFgEnabled,
+                    config.amdFsrMode, supported, state);
+            StreamlineBridge.nSetUpscalingMode(GpuVendor.AMD.vendorId(), fallback.upscalerMode(), config.amdFsrSharpness);
+            boolean fgEnabled = fallback.frameGenerationEnabled() && config.amdFsrFgEnabled;
+            StreamlineBridge.nSetFrameGenerationMode(GpuVendor.AMD.vendorId(), fgEnabled, config.amdFsrMultiplier, config.uiRecomposition);
         } catch (UnsatisfiedLinkError e) {
-            // Fallback
+            LOGGER.debug("AMD native applyConfig unavailable: {}", e.getMessage());
         }
     }
 
@@ -47,6 +61,7 @@ public class AmdBackend implements FrameGenerationBackend {
         try {
             StreamlineBridge.nSetFrameGenerationMode(GpuVendor.AMD.vendorId(), false, 2, false);
         } catch (UnsatisfiedLinkError ignored) {
+            LOGGER.debug("AMD native call unavailable: {}", ignored.getMessage());
         }
     }
 
@@ -56,6 +71,7 @@ public class AmdBackend implements FrameGenerationBackend {
         try {
             return StreamlineBridge.nGetVramUsage(GpuVendor.AMD.vendorId());
         } catch (UnsatisfiedLinkError e) {
+            LOGGER.debug("AMD VRAM query unavailable: {}", e.getMessage());
             return 0;
         }
     }

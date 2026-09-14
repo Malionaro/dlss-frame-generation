@@ -37,11 +37,8 @@ public final class AmdSettingsPanel {
                                     value
                             );
                             config.save();
-                            try {
-                                StreamlineBridge.nSetFrameGenerationMode(FrameGenerationBackend.GpuVendor.AMD.vendorId(), value, config.amdFsrMultiplier, config.uiRecomposition);
-                            } catch (UnsatisfiedLinkError e) {
-                                // Ignore
-                            }
+                            // D1: native push only via backend.
+                            FrameGenerationBackend.applyActiveConfig(config);
                             screen.refreshSettingsWidgets();
                         });
         btnFgFsr.active = amdSupported
@@ -66,20 +63,17 @@ public final class AmdSettingsPanel {
         lblMultFixed.active = false;
         screen.addSettingsWidget(lblMultFixed, "dlss_fg.tooltip.frame_multiplier_fixed");
 
-        // Row 2 Left: FSR Mode
+        // Row 2 Left: FSR Mode. Only 0=Off and 1=Native-AA are real Vulkan
+        // modes (C2: sanitize maps anything higher to Off), so no higher
+        // values are offered.
         var btnFsrMode = CycleButton.builder((Integer value) -> {
                     return switch (value) {
                         case 0 -> Component.translatable("dlss_fg.value.off");
                         case 1 -> Component.translatable("dlss_fg.value.native_aa");
-                        case 2 -> Component.translatable("dlss_fg.value.quality");
-                        case 3 -> Component.translatable("dlss_fg.value.balanced");
-                        case 4 -> Component.translatable("dlss_fg.value.performance");
-                        case 5 -> Component.translatable("dlss_fg.value.ultra_performance");
-                        case 6 -> Component.translatable("dlss_fg.value.ultra_quality");
                         default -> Component.translatable("dlss_fg.value.unknown");
                     };
-                }, config.amdFsrMode)
-                .withValues(0, 1, 2, 3, 4, 5, 6)
+                }, Math.min(config.amdFsrMode, 1))
+                .withValues(0, 1)
                 .create(leftX, topY + 25, columnWidth, 20,
                         Component.translatable("dlss_fg.option.amd.upscaling"), (button, value) -> {
                             config.setUpscalerMode(
@@ -87,11 +81,8 @@ public final class AmdSettingsPanel {
                                     value
                             );
                             config.save();
-                            try {
-                                StreamlineBridge.nSetUpscalingMode(FrameGenerationBackend.GpuVendor.AMD.vendorId(), value, config.amdFsrSharpness);
-                            } catch (UnsatisfiedLinkError e) {
-                                // Ignore
-                            }
+                            // D1: native push only via backend.
+                            FrameGenerationBackend.applyActiveConfig(config);
                         });
         btnFsrMode.active = upscalingSupported;
         screen.addSettingsWidget(
@@ -124,14 +115,32 @@ public final class AmdSettingsPanel {
             }
             @Override
             protected void applyValue() {
-                config.amdFsrSharpness = (float) this.value;
-                config.save();
-                try {
-                    StreamlineBridge.nSetUpscalingMode(FrameGenerationBackend.GpuVendor.AMD.vendorId(), config.amdFsrMode, config.amdFsrSharpness);
-                } catch (UnsatisfiedLinkError e) {
-                    // Ignore
+                // D2/D3: cheap per-tick field update only (finite + clamped).
+                // Disk persists coalesced (C9 saveSoon, flushed on release);
+                // native apply stays throttled to avoid per-pixel JNI flapping.
+                double raw = this.value;
+                if (!Double.isFinite(raw)) {
+                    return;
                 }
+                config.amdFsrSharpness = (float) Math.max(0.0, Math.min(1.0, raw));
+                config.saveSoon();
+                long now = System.nanoTime();
+                if (now - lastSharpnessApplyNanos < 200_000_000L) {
+                    return;
+                }
+                lastSharpnessApplyNanos = now;
+                // D1: native push only via backend.
+                FrameGenerationBackend.applyActiveConfig(config);
             }
+            @Override
+            public void onRelease(net.minecraft.client.input.MouseButtonEvent event) {
+                super.onRelease(event);
+                lastSharpnessApplyNanos = 0L;
+                config.save();
+                // D1: native push only via backend.
+                FrameGenerationBackend.applyActiveConfig(config);
+            }
+            private long lastSharpnessApplyNanos;
         };
         sliderFsrSharpness.active = upscalingSupported;
         screen.addSettingsWidget(
@@ -150,11 +159,8 @@ public final class AmdSettingsPanel {
                         Component.translatable("dlss_fg.option.ui_recomposition"), (button, value) -> {
                             config.uiRecomposition = value;
                             config.save();
-                            try {
-                                StreamlineBridge.nSetFrameGenerationMode(FrameGenerationBackend.GpuVendor.AMD.vendorId(), config.amdFsrFgEnabled, config.amdFsrMultiplier, value);
-                            } catch (UnsatisfiedLinkError e) {
-                                // Ignore
-                            }
+                            // D1: native push only via backend.
+                            FrameGenerationBackend.applyActiveConfig(config);
                         });
         btnRecomp.active = amdSupported
                 && config.amdFsrFgEnabled

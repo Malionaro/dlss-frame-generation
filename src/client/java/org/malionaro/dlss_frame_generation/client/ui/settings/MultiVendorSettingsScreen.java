@@ -293,12 +293,22 @@ public class MultiVendorSettingsScreen extends Screen {
     }
 
     @Override
+    public void removed() {
+        super.removed();
+        // C9: flush any coalesced slider save so the last drag position
+        // always reaches disk when the screen closes.
+        FrameGenConfig.flushPendingSave();
+    }
+
+    @Override
     protected void rebuildWidgets() {
         // P2-02: scrollOffset bei rebuild merken - verhindert Sprung nach oben
         int savedScroll = scrollOffset;
         super.rebuildWidgets();
         // maxScroll wird erst in finishScrollableLayout berechnet; clampe hier konservativ
-        scrollOffset = Math.clamp(savedScroll, 0, Math.max(savedScroll, maxScroll));
+        // D4: obere Schranke ist maxScroll allein (max(saved,max) war ein No-Op,
+        // das scrollOffset jenseits von maxScroll überleben ließ).
+        scrollOffset = Math.clamp(savedScroll, 0, Math.max(0, maxScroll));
         if (!scrollableWidgets.isEmpty()) {
             applyScrollLayout();
         }
@@ -621,14 +631,20 @@ public class MultiVendorSettingsScreen extends Screen {
                         @Override
                         protected void applyValue() {
                             // P2-02: clamp + sanitize - verhindert NaN/Out-of-range und sichert UI-Werte 0..1
+                            // C9: coalesced persist (one write per drag, flushed on release/close).
                             double sanitized = Double.isFinite(value) ? value : 0.5;
                             sanitized = Math.clamp(sanitized, 0.0, 1.0);
                             value = sanitized;
                             float clamped = (float) Math.clamp(sanitized, 0.0, 1.0);
                             config.motionBlurIntensity = clamped;
-                            config.sanitize();
-                            config.save();
+                            config.saveSoon();
                             updateMessage();
+                        }
+
+                        @Override
+                        public void onRelease(net.minecraft.client.input.MouseButtonEvent event) {
+                            super.onRelease(event);
+                            config.save();
                         }
                     };
             motionBlurIntensity.active = btnMotionBlur.active
@@ -667,15 +683,21 @@ public class MultiVendorSettingsScreen extends Screen {
                         @Override
                         protected void applyValue() {
                             // P2-02: clamp + sanitize - value → 30..360, verhindert NaN/Out-of-range
+                            // C9: coalesced persist (one write per drag, flushed on release/close).
                             double sanitized = Double.isFinite(value) ? value : Math.clamp((config.targetFps - 30.0) / 330.0, 0.0, 1.0);
                             sanitized = Math.clamp(sanitized, 0.0, 1.0);
                             value = sanitized;
                             int fps = 30 + (int) Math.round(sanitized * 330.0);
                             fps = Math.clamp(fps, 30, 360);
                             config.targetFps = fps;
-                            config.sanitize();
-                            config.save();
+                            config.saveSoon();
                             updateMessage();
+                        }
+
+                        @Override
+                        public void onRelease(net.minecraft.client.input.MouseButtonEvent event) {
+                            super.onRelease(event);
+                            config.save();
                         }
                     };
             drsTarget.active = btnDrs.active && config.drsEnabled;

@@ -52,6 +52,33 @@ public final class OptiScalerIntegration {
             Map.entry("Licenses/XeSS_LICENSE.txt", "784be42c39a4a4d03cf85d88e15e59d75828fca773ce45b8dbfffbd7eaf208df")
     );
 
+    /**
+     * B7: native code LoadLibraryWs DLLs from the active runtime directory, so
+     * every sibling it can load must match the bundled hashes — not just
+     * OptiScaler.dll itself. Unknown or mismatching siblings reject the whole
+     * external override (fail closed to the embedded bundle).
+     */
+    private static final String[] NATIVE_LOADED_SIBLINGS = {
+            "amd_fidelityfx_vk.dll",
+            "amd_fidelityfx_dx12.dll",
+            "amd_fidelityfx_upscaler_dx12.dll",
+            "libxess.dll",
+            "D3D12_Optiscaler/D3D12Core.dll"
+    };
+
+    private static void verifyExternalOverrideSiblings(Path externalDirectory)
+            throws IOException {
+        Path normalizedBase = externalDirectory.toAbsolutePath().normalize();
+        for (String sibling : NATIVE_LOADED_SIBLINGS) {
+            Path candidate = normalizedBase.resolve(sibling).normalize();
+            if (!candidate.startsWith(normalizedBase)
+                    || !Files.isRegularFile(candidate)) {
+                continue;
+            }
+            verifyEmbeddedHash(candidate, sibling);
+        }
+    }
+
     public enum State {
         DISABLED,
         NOT_APPLICABLE_VENDOR,
@@ -203,6 +230,9 @@ public final class OptiScalerIntegration {
         if (Files.isRegularFile(externalDll) && externalDll.startsWith(externalDirectory)) {
             try {
                 verifyEmbeddedHash(externalDll, "OptiScaler.dll");
+                // B7: every sibling the native loader can pick up from this
+                // directory must match the bundle as well.
+                verifyExternalOverrideSiblings(externalDirectory);
                 logger.info(
                         "[OptiScaler] Using verified external override from {}",
                         externalDirectory
@@ -210,7 +240,7 @@ public final class OptiScalerIntegration {
                 return externalDirectory;
             } catch (IOException e) {
                 logger.warn(
-                        "[OptiScaler] External OptiScaler.dll at {} failed SHA256 verification ({}), falling back to embedded bundle",
+                        "[OptiScaler] External override at {} failed SHA256 verification ({}), falling back to embedded bundle",
                         externalDll, e.getMessage()
                 );
             }
@@ -317,6 +347,13 @@ public final class OptiScalerIntegration {
             String contents = Files.readString(ini);
             String configured = replaceAutoValue(
                     contents, "OptiDllPath", normalizedDirectory);
+            // B7 allowlist: native code LoadLibraryWs its DLLs from the
+            // runtime directory, so a foreign OptiDllPath would redirect those
+            // loads anywhere (DLL hijack). Only the active runtime directory
+            // itself is accepted; anything else is reset to it. The correction
+            // stays visible in the ini on disk.
+            configured = enforceOptiDllPathAllowlist(
+                    configured, normalizedDirectory);
             String vulkanUpscaler = switch (vendor) {
                 case AMD -> "fsr31";
                 case INTEL -> "xess";
@@ -391,5 +428,25 @@ public final class OptiScalerIntegration {
         return line.matcher(contents)
                 .replaceFirst(java.util.regex.Matcher.quoteReplacement(
                         key + "=" + value));
+    }
+
+    private static String enforceOptiDllPathAllowlist(
+            String contents,
+            String allowedDirectory
+    ) {
+        Pattern line = Pattern.compile("(?m)^(OptiDllPath)=([^\\r\\n]*)$");
+        var matcher = line.matcher(contents);
+        StringBuffer result = new StringBuffer();
+        while (matcher.find()) {
+            String value = matcher.group(2).trim();
+            String replacement = value.equals(allowedDirectory)
+                    ? matcher.group(0)
+                    : "OptiDllPath=" + allowedDirectory;
+            matcher.appendReplacement(
+                    result,
+                    java.util.regex.Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(result);
+        return result.toString();
     }
 }

@@ -60,6 +60,10 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private final int[] slotTimeline = new int[FRAME_SLOT_COUNT];
     private long nextTimelineValue = 1L;
     private long lastUniformWaitWarnNanos;
+    /** A5: last frame that ran a full BLAS/TLAS rebuild (throttle below). */
+    private long lastSceneRebuildFrame = -10L;
+    /** A5: minimum frames between full scene rebuilds (~20Hz at 60fps). */
+    private static final long SCENE_REBUILD_MIN_INTERVAL_FRAMES = 3L;
 
     private final Logger logger;
     private final VulkanDevice minecraftDevice;
@@ -148,8 +152,20 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             if (scene.blockCount() == 0) {
                 return false;
             }
-            if (scene.consumeDirty() || tlas == NULL) {
-                rebuildScene(commandBuffer);
+            // A5: full rebuilds (vkDeviceWaitIdle + BLAS/TLAS BUILD) are
+            // throttled to ~20Hz during continuous edits; deferred work is
+            // re-armed via markSceneDirty so nothing is ever dropped.
+            // First build (tlas == NULL) always runs immediately.
+            boolean sceneDirty = scene.consumeDirty();
+            if (sceneDirty || tlas == NULL) {
+                if (tlas == NULL
+                        || frameNumber - lastSceneRebuildFrame
+                                >= SCENE_REBUILD_MIN_INTERVAL_FRAMES) {
+                    rebuildScene(commandBuffer);
+                    lastSceneRebuildFrame = frameNumber;
+                } else {
+                    scene.markSceneDirty();
+                }
             }
 
             RayTracingFrameData frame = RayTracingFrameData.capture(
@@ -441,6 +457,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         if (outputImage != NULL && width == outputWidth && height == outputHeight) {
             return;
         }
+        // A5: only on actual resize/recreate — never per-frame. Required before
+        // destroying in-flight output handles (no per-resource fences exist).
         vkDeviceWaitIdle(device);
         destroyOutput();
 
@@ -563,6 +581,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     }
 
     private void rebuildScene(VkCommandBuffer commandBuffer) {
+        // A5: required before destroying acceleration-structure handles; the
+        // caller throttles full rebuilds to ~20Hz so this never runs per-frame.
         vkDeviceWaitIdle(device);
         destroyAccelerationStructureHandles();
         upload(sceneBuffer, scene.blocks());

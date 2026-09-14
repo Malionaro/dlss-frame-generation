@@ -23,6 +23,11 @@ void main() {
     vec2 motionSize = vec2(textureSize(motionVectors, 0));
     vec2 velocityUv = texture(motionVectors, uv).xy
         / max(motionSize, vec2(1.0));
+    // A10: a NaN/Inf velocity (poisoned motion history) must not smear across
+    // the frame — treat as static. isnan/isinf need no extension in GLSL 450.
+    if (any(isnan(velocityUv)) || any(isinf(velocityUv))) {
+        velocityUv = vec2(0.0);
+    }
     velocityUv *= clamp(parameters.intensity, 0.0, 1.0);
     float lengthUv = length(velocityUv);
     if (lengthUv > 0.08) {

@@ -17,9 +17,13 @@ public record RayTracingFrameData(
         Vector3f sunDirection,
         float tangentHalfFov, float aspect, float maxDistance,
         float nearPlane, float farPlane,
-        boolean reflections, int samples, int quality
+        boolean reflections, int samples, int quality,
+        // A7: explicit reflection range in meters. Previously the shader abused
+        // cameraForward.w (which carries the quality ordinal) as a range
+        // factor, silently coupling quality changes to reflection distance.
+        float reflectionRange
 ) {
-    public static final int BYTE_SIZE = 96;
+    public static final int BYTE_SIZE = 112;
 
     public static RayTracingFrameData capture(
             Minecraft minecraft,
@@ -59,6 +63,19 @@ public record RayTracingFrameData(
             sunDirection.normalize();
         }
 
+        float maxDistance = config.rayTracingMaxDistance;
+        // A7: quality selects an explicit reflection range instead of leaking
+        // the ordinal into the shader through cameraForward.w.
+        FrameGenConfig.RayTracingQuality quality = config.rayTracingQuality != null
+                ? config.rayTracingQuality
+                : FrameGenConfig.RayTracingQuality.MEDIUM;
+        float reflectionFraction = switch (quality) {
+            case LOW -> 0.25f;
+            case MEDIUM -> 0.4f;
+            case HIGH -> 0.6f;
+            case ULTRA -> 0.8f;
+        };
+
         return new RayTracingFrameData(
                 (float) position.x,
                 (float) position.y,
@@ -69,17 +86,18 @@ public record RayTracingFrameData(
                 sunDirection,
                 tangentHalfFov,
                 height > 0 ? (float) width / height : 1.0f,
-                config.rayTracingMaxDistance,
+                maxDistance,
                 0.05f,
                 Math.max(
-                        config.rayTracingMaxDistance,
+                        maxDistance,
                         minecraft.options.getEffectiveRenderDistance() * 16.0f
                 ),
                 config.rayTracingMode == FrameGenConfig.RayTracingMode.SHADOWS_AND_REFLECTIONS,
                 config.rayTracingDenoiserEnabled
                         ? Math.max(4, config.rayTracingRaysPerPixel)
                         : config.rayTracingRaysPerPixel,
-                config.rayTracingQuality.ordinal()
+                quality.ordinal(),
+                maxDistance * reflectionFraction
         );
     }
 
@@ -98,6 +116,7 @@ public record RayTracingFrameData(
                 sunDirection.z,
                 samples
         );
+        putVec4(data, reflectionRange, 0.0f, 0.0f, 0.0f);
         return data.flip();
     }
 

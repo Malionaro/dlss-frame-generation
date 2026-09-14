@@ -8,8 +8,12 @@ import org.slf4j.LoggerFactory;
 public class VramBudgetOptimizer {
     private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.vram");
     private static final double BACKPRESSURE_THRESHOLD = 0.85;
-    private static long lastFlushTime = System.currentTimeMillis();
-    private static int frameCounter = 0;
+    // D9: atomics — checkVramPressure runs on the render thread while OSD and
+    // diagnostics may read the counters; torn RMW cycles are out.
+    private static final java.util.concurrent.atomic.AtomicLong lastFlushTime =
+            new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis());
+    private static final java.util.concurrent.atomic.AtomicInteger frameCounter =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     /**
      * Samples the real VRAM budget (VK_EXT_memory_budget) roughly every 200
@@ -25,21 +29,21 @@ public class VramBudgetOptimizer {
     public static void checkVramPressure(long vkPhysicalDevice) {
         // Phase0: sample VRAM only every ~200 frames to avoid JNI overhead on hot path
         // Overflow-safe: reset after 200 instead of modulo on ever-increasing int
-        if (++frameCounter < 200) {
+        if (frameCounter.incrementAndGet() < 200) {
             return;
         }
-        frameCounter = 0;
+        frameCounter.set(0);
 
         double pressure = queryBudgetPressure(vkPhysicalDevice);
         if (pressure >= 0.0) {
             if (pressure > BACKPRESSURE_THRESHOLD
-                    && System.currentTimeMillis() - lastFlushTime > 10_000) {
+                    && System.currentTimeMillis() - lastFlushTime.get() > 10_000) {
                 LOGGER.warn(
                     "VRAM budget pressure {}% of device-local heap; applying backpressure",
                     Math.round(pressure * 100.0)
                 );
                 DynamicResolutionController.notifyVramPressure();
-                lastFlushTime = System.currentTimeMillis();
+                lastFlushTime.set(System.currentTimeMillis());
             }
         } else {
             checkLegacyDlssgVramPressure();
@@ -73,15 +77,21 @@ public class VramBudgetOptimizer {
     private static void checkLegacyDlssgVramPressure() {
         try {
             long vramBytes = StreamlineBridge.nGetDlssgVramUsage();
-            long maxVramThreshold = 6L * 1024L * 1024L * 1024L; // 6 GB threshold
+            // D9: last-resort absolute threshold for drivers without
+            // VK_EXT_memory_budget (no budget denominator exists there, so no
+            // relative threshold is computable). Unlike before, this path now
+            // actually notifies backpressure instead of only debug-logging it.
+            long maxVramThreshold = 6L * 1024L * 1024L * 1024L; // 6 GB fallback
 
-            if (vramBytes > maxVramThreshold && (System.currentTimeMillis() - lastFlushTime > 10_000)) {
-                LOGGER.debug("VRAM pressure detected ({} MB allocated). Deferring to driver budget management...", vramBytes / (1024 * 1024));
+            if (vramBytes > maxVramThreshold && (System.currentTimeMillis() - lastFlushTime.get() > 10_000)) {
+                LOGGER.warn("VRAM pressure detected ({} MB estimated DLSS-G usage over {} MB fallback threshold). Applying backpressure...",
+                        vramBytes / (1024 * 1024), maxVramThreshold / (1024 * 1024));
                 // System.gc() removed: explicit GC is a no-op for VRAM and stalls the render thread
-                lastFlushTime = System.currentTimeMillis();
+                DynamicResolutionController.notifyVramPressure();
+                lastFlushTime.set(System.currentTimeMillis());
             }
         } catch (UnsatisfiedLinkError e) {
-            // Ignore
+            LOGGER.debug("Legacy VRAM usage query unavailable: {}", e.getMessage());
         }
     }
 }

@@ -19,8 +19,11 @@ import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 
 import com.mojang.blaze3d.vulkan.VulkanDevice;
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class CompatibilityManager {
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger("dlss_fg.compat");
     private final NativeLoader.NativeLoadResult nativeLoadResult;
     private volatile RendererDetection rendererDetection;
     private volatile RendererBackendAdapter adapter;
@@ -193,10 +196,23 @@ public final class CompatibilityManager {
     public synchronized void beginProviderDrain(long generation) {
         ProviderLifecycle.State state =
                 providerLifecycle.snapshot().state();
+        if (generation <= 0L) {
+            // C6: generation 0 means "no swapchain yet" — draining is
+            // meaningless and ProviderLifecycle.draining would throw,
+            // breaking swapchain configure. Skip loudly instead.
+            LOGGER.warn(
+                    "Ignoring provider drain request with non-positive generation {}",
+                    generation);
+            return;
+        }
         if (state == ProviderLifecycle.State.READY
                 || state == ProviderLifecycle.State.ACTIVE
                 || state == ProviderLifecycle.State.DRAINING) {
             providerLifecycle.draining(generation, true);
+        } else {
+            LOGGER.debug(
+                    "Ignoring provider drain in state {} (no provider work to drain)",
+                    state);
         }
     }
 
@@ -209,6 +225,22 @@ public final class CompatibilityManager {
                     generation,
                     "Provider ready for swapchain generation " + generation
             );
+            return;
+        }
+        // C5: a transient failure (e.g. drain timeout) is retryable once the
+        // generation advanced — re-detect on the new generation instead of
+        // staying latched until an unrelated re-detection happens.
+        if (generation > 0
+                && providerLifecycle.isFailureTransient()
+                && generation != providerLifecycle.failureGeneration()) {
+            FrameGenerationCompatibilityLayer.ProviderId current =
+                    providerLifecycle.snapshot().provider();
+            if (current != FrameGenerationCompatibilityLayer.ProviderId.NONE) {
+                providerLifecycle.detected(current,
+                        "Retrying after transient failure on generation " + generation);
+                providerLifecycle.ready(generation,
+                        "Provider ready for swapchain generation " + generation);
+            }
         }
     }
 
@@ -228,6 +260,11 @@ public final class CompatibilityManager {
         providerLifecycle.failed(detail);
     }
 
+    /** Transient variant for drain/rebuild timeouts (C5: retryable, see above). */
+    public synchronized void failProviderTransient(String detail) {
+        providerLifecycle.failedTransient(detail);
+    }
+
     public synchronized void shutdownProvider() {
         providerLifecycle.shutdown(true);
     }
@@ -239,7 +276,27 @@ public final class CompatibilityManager {
         FrameGenerationBackend.GpuVendor vendor =
                 FrameGenerationBackend.GpuVendor.fromVendorId(detectedVendor);
         FrameGenConfig config = FrameGenConfig.getInstance();
-        if (config.retainFrameGenerationForVendor(vendor)) {
+        if (vendor == FrameGenerationBackend.GpuVendor.UNKNOWN) {
+            // C12: transient detection gap (e.g. device metadata not ready
+            // yet). Apply in-memory only — a valid saved config must never be
+            // destroyed by a momentary vendorId==0.
+            config.retainFrameGenerationForVendor(vendor);
+            activeBackend = new FallbackBackend();
+            return;
+        }
+        boolean changed = config.retainFrameGenerationForVendor(vendor);
+        if (!config.userHasChosenProvider
+                && config.selectedFrameGenerationVendor()
+                        == FrameGenerationBackend.GpuVendor.UNKNOWN
+                && config.selectedUpscalerVendor()
+                        == FrameGenerationBackend.GpuVendor.UNKNOWN) {
+            // C1 first-run: no choice ever made and nothing active — enable the
+            // detected vendor instead of leaving everything silently off.
+            // setFrameGenerationEnabled also records the choice, so this runs once.
+            config.setFrameGenerationEnabled(vendor, true);
+            changed = true;
+        }
+        if (changed) {
             config.save();
         }
         activeBackend = switch (vendor) {
@@ -267,6 +324,10 @@ public final class CompatibilityManager {
         if (!adapter.isFrameReadyForFG()) {
             return "Rendering backend does not support frame generation (" + adapter.getClass().getSimpleName() + ")";
         }
-        return activeRoute().status();
+        String routeStatus = activeRoute().status();
+        // C10: an active session fallback is part of the status, not just logs.
+        String fallback = org.malionaro.dlss_frame_generation.client.render.RuntimeFallbackPolicy
+                .lastDecisionDescription();
+        return fallback.isEmpty() ? routeStatus : routeStatus + " | " + fallback;
     }
 }

@@ -241,7 +241,11 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     jitterY,
                     previousJitterX,
                     previousJitterY,
+                    // D7: fast camera turns invalidate temporal matching — reset
+                    // history while the artifact corrector reports dampening
+                    // instead of smearing stale vectors across providers.
                     reset || !historyValid
+                            || OpticalFlowArtifactCorrector.dampeningFactor() < 0.99f
             );
             dispatchMotionVectors(commandBuffer, currentIndex, current);
 
@@ -1921,8 +1925,14 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private void readLatestDebugSnapshot() {
         FrameSlot newest = null;
         for (FrameSlot slot : slots) {
+            // A12: debug copy needs one EXTRA confirmed present beyond slot
+            // retirement (inUseUntil + 1): the copy was recorded into the same
+            // command buffer as the frame that filled the slot, and retirement
+            // alone only proves the GPU reached the frame's submission — the
+            // additional margin covers the copy-to-buffer tail. Debug-only
+            // path; one frame staler is preferable to torn vectors.
             if (slot != null && slot.debugReadbackPending
-                    && slot.inUseUntilPresentSerial <= completedPresentSerial
+                    && slot.inUseUntilPresentSerial + 1 <= completedPresentSerial
                     && (newest == null || slot.debugFrameNumber > newest.debugFrameNumber)) {
                 newest = slot;
             }
@@ -2009,7 +2019,13 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             target.putFloat(72, jitterX - previousJitterX);
             target.putFloat(76, jitterY - previousJitterY);
             target.putInt(80, reset ? 1 : 0);
-            target.putInt(84, 4);
+            // A8: resolution-proportional search radius — constant world-space
+            // search window (4 at 1080p, up to 8 at 4K; the shader clamps to
+            // 0..8) instead of a fixed radius that over-searches low
+            // resolutions and under-searches high ones.
+            int searchRadius = Math.max(
+                    2, Math.min(8, (Math.max(width, height) + 135) / 270));
+            target.putInt(84, searchRadius);
             target.putLong(88, 0L);
             vkUnmapMemory(device, memory);
         }

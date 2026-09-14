@@ -16,19 +16,54 @@ public class FrameGenConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.config");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static Path getConfigPath() {
+        Path override = configPathOverride;
+        if (override != null) {
+            return override;
+        }
         try {
             if (FabricLoader.getInstance() != null) {
                 return FabricLoader.getInstance().getConfigDir().resolve("frame_gen.json");
             }
         } catch (Throwable t) {
-            // Fallback for headless unit test runner
+            // Fallback for headless unit test runner. Loud on purpose (C11):
+            // silently splitting productive and test config hides divergence.
+            LOGGER.warn("Config directory unavailable, falling back to build/tmp/frame_gen.json: {}",
+                    t.toString());
         }
         return Path.of("build", "tmp", "frame_gen.json");
     }
 
     private static volatile FrameGenConfig instance;
+    /** Test-only override so unit tests never touch the real config file (D10). */
+    private static volatile Path configPathOverride;
 
-    public int configVersion = 2;
+    /** Test seam (same package): redirect the config file into a temp dir. */
+    static void overrideConfigPathForTesting(Path path) {
+        configPathOverride = path;
+    }
+
+    /** Test seam (same package): restore the regular config path. */
+    static void clearConfigPathOverrideForTesting() {
+        configPathOverride = null;
+    }
+
+    /** Test seam (same package): drop the cached singleton for isolation. */
+    static synchronized void resetInstanceForTesting() {
+        instance = null;
+    }
+
+    public int configVersion = 3;
+
+    /**
+     * True once a provider choice was ever made explicitly (UI toggle,
+     * keybinding, preset) or resolved via first-run device detection.
+     * Guards first-run auto-enable so a user who turned everything off is
+     * never force-enabled again. Files predating this flag migrate to
+     * {@code true} (existing file = preserved user intent).
+     */
+    public boolean userHasChosenProvider = false;
+    /** Re-entrancy guard: sanitize/preset internals must not mark user choice. */
+    private transient boolean internalAdjust;
 
     public enum Preset {
         CUSTOM("Custom"),
@@ -81,6 +116,7 @@ public class FrameGenConfig {
 
     public void setHybridD3D12PresentationEnabled(boolean enabled) {
         hybridD3D12PresentationEnabled = enabled;
+        markUserChoice();
         if (enabled) {
             // Until a real D3D12 FG runtime owns the DXGI swapchain, no Vulkan
             // FG proxy may compete for presentation ownership.
@@ -91,6 +127,7 @@ public class FrameGenConfig {
 
     public void applyPreset(Preset preset) {
         this.activePreset = preset;
+        markUserChoice();
         FrameGenerationBackend.GpuVendor vendor = selectedFrameGenerationVendor();
         if (vendor == FrameGenerationBackend.GpuVendor.UNKNOWN) {
             vendor = selectedUpscalerVendor();
@@ -181,10 +218,15 @@ public class FrameGenConfig {
     public boolean reflexInputMarkerEnabled = false;
     public boolean dlssRayReconstructionEnabled = false;
 
+    // A11 single source for the hybrid-RT scene radius. RayTracingScene caps
+    // effectiveDistance with the same constant; sanitize clamps to it.
+    public static final int MAX_RAY_TRACING_DISTANCE = 48;
+    public static final int MIN_RAY_TRACING_DISTANCE = 16;
+
     // Hybrid hardware ray tracing (raster frame + Vulkan ray-query pass).
     public RayTracingMode rayTracingMode = RayTracingMode.OFF;
     public RayTracingQuality rayTracingQuality = RayTracingQuality.MEDIUM;
-    public int rayTracingMaxDistance = 48;
+    public int rayTracingMaxDistance = MAX_RAY_TRACING_DISTANCE;
     public int rayTracingRaysPerPixel = 1;
     /**
      * Legacy JSON field name retained for compatibility.
@@ -196,7 +238,9 @@ public class FrameGenConfig {
 
     // NVIDIA Streamline options. The runtime-reported maximum multiplier is
     // applied before the option is sent to DLSS-G.
-    public boolean dlssFgEnabled = true;
+    // All providers default to off (C1): first-run device detection enables the
+    // detected vendor instead of shipping an ambiguous all-on state.
+    public boolean dlssFgEnabled = false;
     public int reflexMode = 1; // 0 = Off, 1 = Low Latency, 2 = Low Latency + Boost
     // 0 Off, 1 DLAA, 2 Quality, 3 Balanced, 4 Performance,
     // 5 Ultra Performance, 6 Ultra Quality.
@@ -217,14 +261,14 @@ public class FrameGenConfig {
     // the only valid Vulkan mode is a real 1:1 temporal Native-AA dispatch.
     public int amdFsrMode = 0; // 0 = Off, 1 = Native AA
     public float amdFsrSharpness = 0.5f; // 0.0 to 1.0
-    public boolean amdFsrFgEnabled = true;
+    public boolean amdFsrFgEnabled = false;
     public int amdFsrMultiplier = 2; // FSR 3.1 Vulkan supports one generated frame (2x)
 
     // Intel Vulkan route. XeSS-SR/FG stay disabled until their native modules
     // or a D3D12 renderer exist; the current FG path is an FSR 3.1 fallback.
     public int intelXessMode = 0; // 0 = Off, 1 = cross-vendor Native AA
     public float intelXessSharpness = 0.5f; // 0.0 to 1.0
-    public boolean intelXessFgEnabled = true;
+    public boolean intelXessFgEnabled = false;
     public int intelXessMfgMultiplier = 2; // FSR 3.1 fallback is 2x only
 
     /**
@@ -236,6 +280,7 @@ public class FrameGenConfig {
             FrameGenerationBackend.GpuVendor vendor,
             boolean enabled
     ) {
+        markUserChoice();
         if (enabled && hybridD3D12PresentationEnabled) {
             dlssFgEnabled = false;
             amdFsrFgEnabled = false;
@@ -282,6 +327,7 @@ public class FrameGenConfig {
             FrameGenerationBackend.GpuVendor vendor,
             int mode
     ) {
+        markUserChoice();
         int normalizedMode = Math.max(0, mode);
         if (normalizedMode != 0) {
             dlssUpscalingMode = 0;
@@ -353,6 +399,12 @@ public class FrameGenConfig {
         return selected;
     }
 
+    private void markUserChoice() {
+        if (!internalAdjust) {
+            userHasChosenProvider = true;
+        }
+    }
+
     /**
      * Once Vulkan reports the physical-device vendor, discard provider flags
      * that can never be used on that device. The selected provider's existing
@@ -414,7 +466,8 @@ public class FrameGenConfig {
         return instance;
     }
 
-    private static FrameGenConfig load() {
+    // Package-private for same-package unit tests (D10: no reflection needed).
+    static FrameGenConfig load() {
         Path path = getConfigPath();
         if (Files.exists(path)) {
             try (var reader = Files.newBufferedReader(path)) {
@@ -445,9 +498,26 @@ public class FrameGenConfig {
             // Migration stub for configVersion 2: sanitize will clamp/normalize new fields
             configVersion = 2;
         }
+        if (configVersion < 3) {
+            // C1: files predating userHasChosenProvider keep their flags exactly
+            // as-is and count as an explicit choice, so first-run auto-enable
+            // never overrides preserved user intent.
+            userHasChosenProvider = true;
+            configVersion = 3;
+        }
     }
 
     public void sanitize() {
+        boolean previousAdjust = internalAdjust;
+        internalAdjust = true;
+        try {
+            sanitizeInner();
+        } finally {
+            internalAdjust = previousAdjust;
+        }
+    }
+
+    private void sanitizeInner() {
         if (activePreset == null) {
             LOGGER.warn("Sanitize: activePreset was null, resetting to CUSTOM");
             activePreset = Preset.CUSTOM;
@@ -517,14 +587,16 @@ public class FrameGenConfig {
             LOGGER.warn("Sanitize: dlssUpscalingMode clamped from {} to {}", oldDlssMode, dlssUpscalingMode);
         }
         int oldAmdMode = amdFsrMode;
-        amdFsrMode = clamp(amdFsrMode, 0, 6);
+        // C2: only 0=Off and 1=Native-AA are real Vulkan modes; anything higher
+        // is silently unusable natively, so fail closed to Off with a warning.
+        amdFsrMode = amdFsrMode > 1 ? 0 : clamp(amdFsrMode, 0, 1);
         if (oldAmdMode != amdFsrMode) {
-            LOGGER.warn("Sanitize: amdFsrMode clamped from {} to {}", oldAmdMode, amdFsrMode);
+            LOGGER.warn("Sanitize: amdFsrMode clamped from {} to {} (Vulkan supports 0=Off, 1=Native-AA)", oldAmdMode, amdFsrMode);
         }
         int oldIntelMode = intelXessMode;
-        intelXessMode = clamp(intelXessMode, 0, 6);
+        intelXessMode = intelXessMode > 1 ? 0 : clamp(intelXessMode, 0, 1);
         if (oldIntelMode != intelXessMode) {
-            LOGGER.warn("Sanitize: intelXessMode clamped from {} to {}", oldIntelMode, intelXessMode);
+            LOGGER.warn("Sanitize: intelXessMode clamped from {} to {} (Vulkan supports 0=Off, 1=Native-AA)", oldIntelMode, intelXessMode);
         }
         int enabledUpscalers = (dlssUpscalingMode == 0 ? 0 : 1)
                 + (amdFsrMode == 0 ? 0 : 1)
@@ -647,7 +719,7 @@ public class FrameGenConfig {
             targetFps = 30;
         }
         int oldMaxDist = rayTracingMaxDistance;
-        rayTracingMaxDistance = clamp(rayTracingMaxDistance, 16, 48);
+        rayTracingMaxDistance = clamp(rayTracingMaxDistance, MIN_RAY_TRACING_DISTANCE, MAX_RAY_TRACING_DISTANCE);
         if (oldMaxDist != rayTracingMaxDistance) {
             LOGGER.warn("Sanitize: rayTracingMaxDistance clamped from {} to {}", oldMaxDist, rayTracingMaxDistance);
         }
@@ -691,6 +763,55 @@ public class FrameGenConfig {
             }
         } catch (IOException e) {
             LOGGER.error("Failed to save Frame Generation config", e);
+        }
+    }
+
+    // C9: coalesced persistence for per-tick writers (sliders). Discrete
+    // clicks keep using synchronous save() (crash-safe); high-frequency
+    // applyValue paths use saveSoon() and flush on release/close, so dragging
+    // a slider performs one disk write instead of one per pixel. Daemon thread:
+    // dies with the JVM, no shutdown hook required.
+    private static final java.util.concurrent.ScheduledExecutorService SAVE_DEBOUNCER =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "dlss-fg-config-save");
+                thread.setDaemon(true);
+                return thread;
+            });
+    private static final long SAVE_DEBOUNCE_MILLIS = 300L;
+    private static volatile java.util.concurrent.ScheduledFuture<?> pendingSave;
+
+    /** Coalesced save: persists ~300ms after the last call. Never throws. */
+    public void saveSoon() {
+        try {
+            synchronized (FrameGenConfig.class) {
+                java.util.concurrent.ScheduledFuture<?> previous = pendingSave;
+                if (previous != null) {
+                    previous.cancel(false);
+                }
+                pendingSave = SAVE_DEBOUNCER.schedule(() -> {
+                    try {
+                        save();
+                    } catch (Throwable ignored) {
+                    }
+                }, SAVE_DEBOUNCE_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
+            }
+        } catch (Throwable ignored) {
+            save();
+        }
+    }
+
+    /** Cancels a pending coalesced save and persists synchronously. Never throws. */
+    public static void flushPendingSave() {
+        try {
+            synchronized (FrameGenConfig.class) {
+                java.util.concurrent.ScheduledFuture<?> previous = pendingSave;
+                pendingSave = null;
+                if (previous != null) {
+                    previous.cancel(false);
+                }
+            }
+            getInstance().save();
+        } catch (Throwable ignored) {
         }
     }
 }

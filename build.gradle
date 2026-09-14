@@ -1,5 +1,5 @@
 plugins {
-    id 'net.fabricmc.fabric-loom' version '1.17.16'
+    id 'net.fabricmc.fabric-loom' version '1.17.20'
     id 'maven-publish'
 }
 
@@ -23,6 +23,10 @@ loom {
             // requires Mojang's VulkanDevice, and the in-game setting can silently
             // reset to OpenGL after an unexpected shutdown.
             programArgs "--graphicsBackend", "vulkan"
+            // Silence LWJGL's restricted native-access warnings on modern JDKs
+            // (System::load / Unsafe) and future-proof the dev client: without
+            // this, restricted methods will be blocked in a future release.
+            vmArgs "--enable-native-access=ALL-UNNAMED"
         }
     }
 
@@ -58,15 +62,18 @@ dependencies {
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-    clientCompileOnly "com.terraformersmc:modmenu:20.0.1"
+    clientCompileOnly "com.terraformersmc:modmenu:20.0.2"
 
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.14.4'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.14.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.14.4'
 }
 
 test {
     useJUnitPlatform()
+    // Same LWJGL native-access rationale as the loom client run above:
+    // tests touch LWJGL classes, keep the warnings out of the log.
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
 }
 
 def nativeSourceDirectory = layout.projectDirectory.dir("native")
@@ -102,6 +109,21 @@ tasks.register("buildNative", Exec) {
     description = "Builds the JNI bridge when its source and SDK files are present."
     dependsOn("configureNative")
     onlyIf(nativeBridgeSourcesPresent)
+    // D11: declared inputs (bridge sources + CMakeLists) and outputs so the
+    // Exec re-runs exactly when sources change and skips otherwise. The output
+    // overlap with configureNative is covered by the explicit dependsOn.
+    inputs.file(nativeSourceDirectory.file("CMakeLists.txt"))
+    inputs.dir(nativeSourceDirectory.dir("bridge"))
+    // D11: declared outputs so Gradle can skip the Exec when nothing changed
+    // (dependency on configureNative makes the overlap with its output dir explicit).
+    outputs.files(
+        layout.buildDirectory.file("native/Release/dlss_fg_native.dll"),
+        layout.buildDirectory.file("native/dlss_fg_native.dll"),
+        layout.buildDirectory.file("native/libdlss_fg_native.so"),
+        layout.buildDirectory.file("native/Release/libdlss_fg_native.so"),
+        layout.buildDirectory.file("native/libdlss_fg_native.dylib"),
+        layout.buildDirectory.file("native/Release/libdlss_fg_native.dylib")
+    )
     doFirst {
         if (cmakeExecutable == null) {
             throw new GradleException("CMake is required to build the JNI bridge. Install CMake or add it to PATH.")
@@ -131,8 +153,12 @@ tasks.register("copyNative") {
     description = "Copies the JNI native library into resource folder."
     dependsOn("buildNative")
     onlyIf(nativeBridgeSourcesPresent)
+    // D11: declared inputs/outputs for correct incrementality and caching.
+    def nativeOutBase = layout.buildDirectory.dir("native-resources/natives")
+    inputs.dir(nativeBuildDirectory)
+    outputs.dir(nativeOutBase)
     doLast {
-        def outBase = layout.buildDirectory.dir("native-resources/natives").get().asFile
+        def outBase = nativeOutBase.get().asFile
         def candidates = [
             [file: new File(nativeBuildDirectory.get().asFile, "Release/dlss_fg_native.dll"), sub: "windows"],
             [file: new File(nativeBuildDirectory.get().asFile, "dlss_fg_native.dll"), sub: "windows"],
@@ -299,8 +325,32 @@ tasks.register("compileShaders") {
             return
         }
 
+        // Find spirv-val executable for SPIR-V validation (D11: fail build on invalid SPIR-V)
+        def spirvValPath = null
+        if (vulkanSdk != null) {
+            def osName = System.getProperty("os.name").toLowerCase(Locale.ROOT)
+            def exeExtension = osName.contains("win") ? ".exe" : ""
+            def sdkSpirvVal = new File(vulkanSdk, "bin/spirv-val${exeExtension}")
+            if (sdkSpirvVal.exists()) {
+                spirvValPath = sdkSpirvVal.absolutePath
+            }
+        }
+        if (spirvValPath == null) {
+            try {
+                def versionCheck = "spirv-val --version".execute()
+                versionCheck.waitFor()
+                if (versionCheck.exitValue() == 0) {
+                    spirvValPath = "spirv-val"
+                }
+            } catch (Exception ignored) {}
+        }
+
         if (glslcPath == null) {
-            logger.lifecycle("Standalone glslc not found; runtime shaderc will compile active Vulkan shaders.")
+            // D11: loud instead of silently green — the jar still ships shader
+            // sources for the runtime shaderc fallback, but no offline SPIR-V
+            // was produced or validated in this build.
+            logger.warn("Standalone glslc not found; runtime shaderc will compile active Vulkan shaders. "
+                    + "No offline SPIR-V artifacts or spirv-val results were produced by compileShaders.")
             return
         }
 
@@ -318,6 +368,15 @@ tasks.register("compileShaders") {
             process.waitFor()
             if (process.exitValue() != 0) {
                 throw new GradleException("Failed to compile shader ${relativePath}:\n${process.errorStream.text}")
+            }
+            if (spirvValPath != null) {
+                def validate = [spirvValPath, outputFile.absolutePath].execute()
+                validate.waitFor()
+                if (validate.exitValue() != 0) {
+                    throw new GradleException("spirv-val rejected shader ${relativePath}:\n${validate.errorStream.text}")
+                }
+            } else {
+                logger.warn("spirv-val not found; SPIR-V validation skipped for ${relativePath}")
             }
         }
     }
@@ -364,12 +423,21 @@ processResources {
     inputs.property "version", project.version
     inputs.property "minecraft_version", project.minecraft_version
     inputs.property "loader_version", project.loader_version
-    filteringCharset "UTF-8"
+    inputs.property "fabric_version", project.fabric_version
+    filteringCharset = "UTF-8"
 
+    // Resolve project properties at configuration time: Task.project access
+    // inside the filesMatching closure runs at execution time and is
+    // deprecated (breaks in Gradle 10 / with the configuration cache).
+    def modVersion = project.version
+    def mcVersion = project.minecraft_version
+    def loaderVersion = project.loader_version
+    def fabricVersion = project.fabric_version
     filesMatching("fabric.mod.json") {
-        expand "version": project.version,
-                "minecraft_version": project.minecraft_version,
-                "loader_version": project.loader_version
+        expand "version": modVersion,
+                "minecraft_version": mcVersion,
+                "loader_version": loaderVersion,
+                "fabric_version": fabricVersion
     }
 }
 

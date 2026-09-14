@@ -57,16 +57,9 @@ public final class NvidiaSettingsPanel {
                                 config.reflexMode = 1;
                             }
                             config.save();
-                            try {
-                                if (value) {
-                                    StreamlineBridge.nSetReflexMode(
-                                            config.reflexMode, config.targetFps
-                                    );
-                                }
-                                StreamlineBridge.nSetFgMode(value, config.frameMultiplier, config.uiRecomposition);
-                            } catch (UnsatisfiedLinkError e) {
-                                // Ignore
-                            }
+                            // D1: native push only via backend (reflex forcing
+                            // etc. live there exactly once).
+                            FrameGenerationBackend.applyActiveConfig(config);
                             screen.refreshSettingsWidgets();
                         });
         btnFg.active = fgSupported
@@ -100,20 +93,8 @@ public final class NvidiaSettingsPanel {
                                 );
                             }
                             config.save();
-                            try {
-                                if (value == 0) {
-                                    StreamlineBridge.nSetFgMode(
-                                            false,
-                                            config.frameMultiplier,
-                                            config.uiRecomposition
-                                    );
-                                }
-                                StreamlineBridge.nSetReflexMode(
-                                        value, config.targetFps
-                                );
-                            } catch (UnsatisfiedLinkError e) {
-                                // Ignore
-                            }
+                            // D1: native push only via backend.
+                            FrameGenerationBackend.applyActiveConfig(config);
                             screen.refreshSettingsWidgets();
                         });
         btnReflex.active = reflexSupported;
@@ -153,11 +134,8 @@ public final class NvidiaSettingsPanel {
                                 config.dlssRayReconstructionEnabled = false;
                             }
                             config.save();
-                            try {
-                                StreamlineBridge.nSetDlssMode(value, 0.0f);
-                            } catch (UnsatisfiedLinkError e) {
-                                // Ignore
-                            }
+                            // D1: native push only via backend.
+                            FrameGenerationBackend.applyActiveConfig(config);
                         });
         btnDlssMode.active = upscalingSupported;
         screen.addSettingsWidget(
@@ -200,11 +178,8 @@ public final class NvidiaSettingsPanel {
                         Component.translatable("dlss_fg.option.nvidia.fg_multiplier"), (button, value) -> {
                             config.frameMultiplier = value;
                             config.save();
-                            try {
-                                StreamlineBridge.nSetFgMode(config.dlssFgEnabled, value, config.uiRecomposition);
-                            } catch (UnsatisfiedLinkError e) {
-                                // Ignore
-                            }
+                            // D1: native push only via backend.
+                            FrameGenerationBackend.applyActiveConfig(config);
                         });
         btnMultiplier.active = fgSupported
                 && config.dlssFgEnabled

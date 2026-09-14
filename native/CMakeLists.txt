@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.24)
 project(dlss_fg_native LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -27,6 +27,7 @@ FetchContent_Declare(
     VulkanHeaders
     URL https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.313.zip
     URL_HASH SHA256=debf13bfeba3b365f9d95d50c7cc7f1e21d93d241e7980ed1d16d67f065e73d5
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(VulkanHeaders)
 

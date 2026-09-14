@@ -1,12 +1,17 @@
 package org.malionaro.dlss_frame_generation.client.backend;
 import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * NVIDIA Streamline backend. Hardware support is exposed separately from
  * per-frame input readiness so the UI can explain both states truthfully.
  */
 public class NvidiaBackend implements FrameGenerationBackend {
+    // C10: native misses are debug-logged instead of swallowed, so a missing
+    // entry point is distinguishable from "applied and idle".
+    private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.backend.nvidia");
 
     @Override
     public GpuVendor vendor() {
@@ -57,7 +62,7 @@ public class NvidiaBackend implements FrameGenerationBackend {
             StreamlineBridge.nSetFgMode(fgEnabled, config.frameMultiplier, config.uiRecomposition);
             StreamlineBridge.nSetReflexMode(config.reflexMode, config.targetFps);
         } catch (UnsatisfiedLinkError e) {
-            // Native bridge call failed fallback
+            LOGGER.debug("NVIDIA native applyConfig unavailable: {}", e.getMessage());
         }
     }
 
@@ -68,17 +73,15 @@ public class NvidiaBackend implements FrameGenerationBackend {
             // Pause still goes through the backend, not a direct call from VulkanRegistry.
             StreamlineBridge.nSetFgMode(false, FrameGenConfig.getInstance().frameMultiplier, FrameGenConfig.getInstance().uiRecomposition);
         } catch (UnsatisfiedLinkError ignored) {
+            LOGGER.debug("NVIDIA native call unavailable: {}", ignored.getMessage());
         }
     }
 
     @Override
     public void restoreAfterSwapchainRecreation(FrameGenConfig config) {
-        if (!isSupported()) return;
-        try {
-            // Restore after swapchain recreate. Streamline needs the flag set again.
-            StreamlineBridge.nSetFgMode(config.dlssFgEnabled, config.frameMultiplier, config.uiRecomposition);
-        } catch (UnsatisfiedLinkError ignored) {
-        }
+        // C4: restore through the same filtered path as applyConfig so a
+        // FAILED/unsupported session is never silently re-enabled on rebuild.
+        applyConfig(config);
     }
 
     @Override
@@ -87,6 +90,7 @@ public class NvidiaBackend implements FrameGenerationBackend {
             // Keep pause handling in the backend.
             StreamlineBridge.nSetFrameGenerationMode(GpuVendor.NVIDIA.vendorId(), false, config.frameMultiplier, false);
         } catch (UnsatisfiedLinkError ignored) {
+            LOGGER.debug("NVIDIA native call unavailable: {}", ignored.getMessage());
         }
     }
 
@@ -96,6 +100,7 @@ public class NvidiaBackend implements FrameGenerationBackend {
         try {
             return StreamlineBridge.nGetDlssgVramUsage();
         } catch (UnsatisfiedLinkError e) {
+            LOGGER.debug("NVIDIA VRAM query unavailable: {}", e.getMessage());
             return 0;
         }
     }

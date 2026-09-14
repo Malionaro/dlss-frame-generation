@@ -6,20 +6,29 @@ import org.malionaro.dlss_frame_generation.client.FrameGenMod;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 
 public class ReflexPacer {
-    private static volatile long lastFrameTimeNano = System.nanoTime();
-    private static volatile long smoothedFrameDurationNano = 16_666_666L; // 60 FPS default (16.6ms)
-    private static int configuredNvidiaTargetFps = -1;
+    // C8: atomic read-modify-write cycles (EMA + last-frame delta). Readers
+    // (OSD metrics) and writers (present path) must never see torn values.
+    private static final java.util.concurrent.atomic.AtomicLong lastFrameTimeNano =
+            new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+    private static final java.util.concurrent.atomic.AtomicLong smoothedFrameDurationNano =
+            new java.util.concurrent.atomic.AtomicLong(16_666_666L); // 60 FPS default (16.6ms)
+    private static final java.util.concurrent.atomic.AtomicInteger configuredNvidiaTargetFps =
+            new java.util.concurrent.atomic.AtomicInteger(-1);
 
     public static void paceFrame() {
         FrameGenConfig config = FrameGenConfig.getInstance();
         if (!config.reflexPacingEnabled) return;
 
         long now = System.nanoTime();
-        long frameDurationNano = now - lastFrameTimeNano;
-        lastFrameTimeNano = now;
+        long frameDurationNano = now - lastFrameTimeNano.getAndSet(now);
 
         // Exponential moving average for smooth frame duration tracking
-        smoothedFrameDurationNano = (long) (smoothedFrameDurationNano * 0.9 + frameDurationNano * 0.1);
+        long previous;
+        long next;
+        do {
+            previous = smoothedFrameDurationNano.get();
+            next = (long) (previous * 0.9 + frameDurationNano * 0.1);
+        } while (!smoothedFrameDurationNano.compareAndSet(previous, next));
 
         int targetFps = Math.max(30, config.targetFps);
         CompatibilityManager compatibility = FrameGenMod.compatibilityManager();
@@ -31,10 +40,10 @@ public class ReflexPacer {
             // NVIDIA pacing is performed by slReflexSleep at simulation start.
             // Keep its driver-side limiter synchronized without adding a
             // second host sleep at presentation time.
-            if (configuredNvidiaTargetFps != targetFps) {
+            if (configuredNvidiaTargetFps.get() != targetFps) {
                 try {
                     StreamlineBridge.nSetReflexMode(config.reflexMode, targetFps);
-                    configuredNvidiaTargetFps = targetFps;
+                    configuredNvidiaTargetFps.set(targetFps);
                 } catch (UnsatisfiedLinkError ignored) {
                     // The normal non-NVIDIA fallback below remains available.
                 }
@@ -56,6 +65,6 @@ public class ReflexPacer {
     }
 
     public static double getAverageFrameTimeMs() {
-        return (double) smoothedFrameDurationNano / 1_000_000.0;
+        return (double) smoothedFrameDurationNano.get() / 1_000_000.0;
     }
 }

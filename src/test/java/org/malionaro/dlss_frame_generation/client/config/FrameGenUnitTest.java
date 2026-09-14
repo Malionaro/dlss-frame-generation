@@ -1,6 +1,7 @@
 package org.malionaro.dlss_frame_generation.client.config;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.malionaro.dlss_frame_generation.client.diagnostics.BackendStatusFormatter;
 import org.malionaro.dlss_frame_generation.client.diagnostics.FrameGenTestRunner;
 import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
@@ -28,6 +29,10 @@ public class FrameGenUnitTest {
         );
     }
 
+    // dlssSharpness is @Deprecated on purpose: old config files still carry
+    // the field, so sanitize() must keep clamping it. Suppress the javac
+    // deprecation warning exactly here instead of removing the coverage.
+    @SuppressWarnings("deprecation")
     @Test
     public void sanitizesUnsafeNativeConfigurationValues() {
         FrameGenConfig config = new FrameGenConfig();
@@ -251,36 +256,86 @@ public class FrameGenUnitTest {
     }
 
     @Test
-    public void configRoundtripHandlesCorruptJsonWithBackup() throws Exception {
-        Path configPath = Path.of("build", "tmp", "frame_gen.json");
-        Path backupPath = Path.of("build", "tmp", "frame_gen.json.bak");
-        Files.createDirectories(configPath.getParent());
-        // Ensure clean prior state
-        Files.deleteIfExists(backupPath);
-        // Write corrupt JSON
-        Files.writeString(configPath, "{ invalid json ::: }");
-        // Invoke private load() via reflection to trigger corrupt handling
-        var loadMethod = FrameGenConfig.class.getDeclaredMethod("load");
-        loadMethod.setAccessible(true);
-        Object loaded = loadMethod.invoke(null);
-        assertNotNull(loaded, "Corrupt config should fallback to default instance");
-        assertTrue(loaded instanceof FrameGenConfig);
-        FrameGenConfig cfg = (FrameGenConfig) loaded;
-        // Defaults must be sanitized
-        assertEquals(2, cfg.configVersion);
-        assertEquals(FrameGenConfig.Preset.CUSTOM, cfg.activePreset);
-        // Backup should exist (or at least config was rewritten to valid JSON)
-        assertTrue(Files.exists(configPath), "Config path should be rewritten to valid JSON after corrupt recovery");
-        // If backup was created, verify it contains the corrupt payload
-        if (Files.exists(backupPath)) {
+    public void configRoundtripHandlesCorruptJsonWithBackup(
+            @TempDir Path tempDir) throws Exception {
+        Path configPath = tempDir.resolve("frame_gen.json");
+        Path backupPath = tempDir.resolve("frame_gen.json.bak");
+        FrameGenConfig.overrideConfigPathForTesting(configPath);
+        FrameGenConfig.resetInstanceForTesting();
+        try {
+            // Write corrupt JSON
+            Files.writeString(configPath, "{ invalid json ::: }");
+            // Direct call, no reflection (load is package-visible for tests)
+            FrameGenConfig loaded = FrameGenConfig.load();
+            assertNotNull(loaded, "Corrupt config should fallback to default instance");
+            // Defaults must be sanitized (schema v3: explicit provider-choice flag)
+            assertEquals(3, loaded.configVersion);
+            assertEquals(FrameGenConfig.Preset.CUSTOM, loaded.activePreset);
+            // Backup must preserve the corrupt payload next to the rewritten file
+            assertTrue(Files.exists(configPath), "Config path should be rewritten to valid JSON after corrupt recovery");
+            assertTrue(Files.exists(backupPath), "Corrupt payload must be backed up");
             String backup = Files.readString(backupPath);
             assertTrue(backup.contains("invalid json"), "Backup should preserve corrupt payload");
+        } finally {
+            FrameGenConfig.clearConfigPathOverrideForTesting();
+            FrameGenConfig.resetInstanceForTesting();
         }
-        // Cleanup: restore valid state for other tests
-        cfg.save();
-        // Reset singleton via reflection for isolation
-        var instanceField = FrameGenConfig.class.getDeclaredField("instance");
-        instanceField.setAccessible(true);
-        instanceField.set(null, null);
+    }
+
+    @Test
+    public void freshConfigHasAllProvidersOffUntilDetectionChooses() {
+        // C1: no ambiguous all-on state on fresh installs.
+        FrameGenConfig config = new FrameGenConfig();
+        assertFalse(config.dlssFgEnabled);
+        assertFalse(config.amdFsrFgEnabled);
+        assertFalse(config.intelXessFgEnabled);
+        assertFalse(config.userHasChosenProvider);
+        assertEquals(
+                FrameGenerationBackend.GpuVendor.UNKNOWN,
+                config.selectedFrameGenerationVendor()
+        );
+    }
+
+    @Test
+    public void explicitChoiceMarksProviderChosen() {
+        FrameGenConfig config = new FrameGenConfig();
+        config.setFrameGenerationEnabled(
+                FrameGenerationBackend.GpuVendor.AMD, true
+        );
+        assertTrue(config.userHasChosenProvider);
+        assertTrue(config.amdFsrFgEnabled);
+    }
+
+    @Test
+    public void sanitizeKeepsChoiceMarkerUnset() {
+        // Internal conflict resolution must not look like a user choice,
+        // otherwise first-run auto-enable would never fire.
+        FrameGenConfig config = new FrameGenConfig();
+        config.amdFsrMode = 4;
+        config.sanitize();
+        assertFalse(config.userHasChosenProvider);
+    }
+
+    @Test
+    public void vulkanUpscalerModesAboveNativeAaFailClosedToOff() {
+        // C2: only 0=Off and 1=Native-AA are real Vulkan modes.
+        FrameGenConfig config = new FrameGenConfig();
+        config.amdFsrMode = 4;
+        config.intelXessMode = 3;
+        config.sanitize();
+        assertEquals(0, config.amdFsrMode);
+        assertEquals(0, config.intelXessMode);
+
+        config.amdFsrMode = 1;
+        config.intelXessMode = 0;
+        config.sanitize();
+        assertEquals(1, config.amdFsrMode);
+        assertEquals(0, config.intelXessMode);
+
+        config.amdFsrMode = 0;
+        config.intelXessMode = 1;
+        config.sanitize();
+        assertEquals(0, config.amdFsrMode);
+        assertEquals(1, config.intelXessMode);
     }
 }

@@ -52,6 +52,13 @@ void main() {
 
     vec2 currentUv = (vec2(pixel) + vec2(0.5)) / renderSize;
     float depth = texelFetch(currentDepth, pixel, 0).r;
+    // A10: poisoned depth (NaN/Inf from a torn history image) must never reach
+    // DLSS-FG, and sky/near-plane edge pixels (reversed depth: far = 0.0,
+    // near = 1.0) carry no meaningful reprojection — emit a static vector.
+    if (isnan(depth) || isinf(depth) || depth <= 0.0 || depth >= 1.0) {
+        imageStore(motionOutput, pixel, vec4(0.0));
+        return;
+    }
     // Texture/GUI Y grows downwards, while the JOML camera projection used by
     // the renderer has clip-space Y growing upwards. Convert both directions
     // explicitly; treating Y like X mirrors vertical and diagonal motion.
@@ -61,7 +68,9 @@ void main() {
     );
     vec4 previousClip = frame.clipToPreviousClip * vec4(currentNdc, depth, 1.0);
 
-    if (abs(previousClip.w) < 1.0e-6) {
+    // A10: a non-finite w (NaN projection after a torn uniform upload) would
+    // spray infinite vectors across providers — fail closed to static.
+    if (abs(previousClip.w) < 1.0e-6 || isnan(previousClip.w) || isinf(previousClip.w)) {
         imageStore(motionOutput, pixel, vec4(0.0));
         return;
     }

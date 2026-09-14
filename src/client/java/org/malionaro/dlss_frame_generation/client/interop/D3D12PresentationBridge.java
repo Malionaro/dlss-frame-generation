@@ -238,12 +238,27 @@ public final class D3D12PresentationBridge {
     }
 
     private static void refresh() {
+        // B10: native string getters return null on JNI OOM/invalid UTF (see
+        // StreamlineBridge NewStringUTF handling) — never let a null detail
+        // or LUID escape into contains()/adapter matchers as an NPE.
+        String adapterLuid = orEmpty(
+                StreamlineBridge.nGetD3D12AdapterLuid());
+        String detail = orEmpty(
+                StreamlineBridge.nGetD3D12PresentationStatus());
+        if (detail.isEmpty()) {
+            detail = "D3D12 presentation status unavailable "
+                    + "(native string query failed)";
+        }
         status = new Status(
                 Stage.fromNative(
                         StreamlineBridge.nGetD3D12PresentationStage()),
                 StreamlineBridge.nGetD3D12PresentationCapabilities(),
-                StreamlineBridge.nGetD3D12AdapterLuid(),
-                StreamlineBridge.nGetD3D12PresentationStatus()
+                adapterLuid,
+                detail
         );
+    }
+
+    private static String orEmpty(String value) {
+        return value != null ? value : "";
     }
 }

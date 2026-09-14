@@ -5,6 +5,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 import org.malionaro.dlss_frame_generation.client.diagnostics.FrameGenTestRunner;
 
@@ -63,13 +64,55 @@ public final class DiagnosticsScreen extends Screen {
         addRenderableWidget(runAgainButton);
 
         addRenderableWidget(Button.builder(Component.translatable("gui.done"), button -> {
-            minecraft.setScreenAndShow(parent);
+            // D13: minecraft is null in headless/edge cases; parent null means close.
+            if (minecraft != null) {
+                minecraft.setScreenAndShow(parent);
+            }
         }).bounds(left + buttonWidth + gap, footerY, buttonWidth, 20).build());
+
+        // D13: content height up front (init runs on resize too), so scrolling
+        // works before the first render instead of starting at maxScroll 0.
+        recomputeContentHeight();
     }
 
     @Override
     public void onClose() {
-        minecraft.setScreenAndShow(parent);
+        // D13: see above.
+        if (minecraft != null) {
+            minecraft.setScreenAndShow(parent);
+        }
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        // D4: keyboard scrolling mirrors MultiVendorSettingsScreen
+        // (UP/DOWN = 24px, PgUp/PgDn = 120px); ESC keeps default handling.
+        int key = event.key();
+        int amount = key == 265 || event.isUp() ? -24
+                : key == 264 || event.isDown() ? 24
+                : key == 266 ? -120
+                : key == 267 ? 120 : 0;
+        if (amount != 0) {
+            int maxScroll = maxScroll();
+            int oldOffset = scrollOffset;
+            scrollOffset = Math.clamp(scrollOffset + amount, 0, maxScroll);
+            return scrollOffset != oldOffset;
+        }
+        return super.keyPressed(event);
+    }
+
+    private void recomputeContentHeight() {
+        if (font == null) {
+            return;
+        }
+        int contentWidth = Math.min(520, Math.max(140, width - 24));
+        int textWidth = Math.max(40, contentWidth - 16);
+        int total = 0;
+        for (FrameGenTestRunner.TestResult result : results) {
+            total += 20 + detailLines(result, textWidth).size() * LINE_HEIGHT + CARD_GAP;
+        }
+        contentHeight = Math.max(0, total);
+        scrollOffset = Math.clamp(scrollOffset, 0, maxScroll());
     }
 
     @Override

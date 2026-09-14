@@ -35,6 +35,12 @@ jobs:
           java-version: "25"
           cache: gradle
 
+      - name: Install Vulkan SDK (glslc + spirv-val for compileShaders)
+        run: |
+          winget install -e --id KhronosGroup.VulkanSDK --silent --accept-package-agreements --accept-source-agreements
+          $sdk = (Get-ChildItem C:\VulkanSDK | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build native bridge, shaders, tests and mod JAR
         run: .\gradlew.bat build --no-daemon --stacktrace
 

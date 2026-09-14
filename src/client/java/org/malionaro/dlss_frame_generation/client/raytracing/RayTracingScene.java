@@ -11,6 +11,10 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 
 import net.minecraft.world.level.ChunkPos;
 
+import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.HashSet;
@@ -20,6 +24,7 @@ import java.util.Set;
  * Compact block-world representation consumed by the Vulkan AABB BLAS.
  */
 public final class RayTracingScene {
+    private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.raytracing.scene");
     public static final int BYTES_PER_BLOCK = 32;
     public static final int MAX_BLOCKS = 65_536;
 
@@ -38,6 +43,12 @@ public final class RayTracingScene {
     private boolean dirty;
     private boolean invalidated;
     private int framesSinceRebuild;
+    // A11: budget-overflow accounting. appendVisibleBlock funnels every capped
+    // write through one choke point (below); scans that dropped geometry are
+    // counted and reported throttled instead of silently popping far geometry.
+    private boolean overflowedThisScan;
+    private long overflowScanCount;
+    private long lastOverflowLogMillis;
 
     private final ByteBuffer lightBuffer = ByteBuffer.allocateDirect(LIGHT_BUFFER_BYTES)
             .order(ByteOrder.nativeOrder());
@@ -74,7 +85,9 @@ public final class RayTracingScene {
         int x = minecraft.player.getBlockX();
         int y = minecraft.player.getBlockY();
         int z = minecraft.player.getBlockZ();
-        int effectiveDistance = Math.min(requestedDistance, 48);
+        int effectiveDistance = Math.min(
+                requestedDistance,
+                FrameGenConfig.MAX_RAY_TRACING_DISTANCE);
 
         // M1: Wenn dirtyChunks vorhanden sind, nur diese Chunks budgetiert neu scannen
         // (max. VOXELS_PER_FRAME_BUDGET pro Frame). Das vermeidet den 460k-Voxel
@@ -85,6 +98,7 @@ public final class RayTracingScene {
                 // Budget erschöpft - verbleibende Chunks im nächsten Frame fortsetzen
                 framesSinceRebuild = 0;
             }
+            reportBudgetOverflowIfNeeded();
             return result;
         }
 
@@ -164,6 +178,7 @@ public final class RayTracingScene {
         framesSinceRebuild = 0;
         invalidated = false;
         dirty = true;
+        reportBudgetOverflowIfNeeded();
         return true;
     }
 
@@ -437,6 +452,7 @@ public final class RayTracingScene {
         }
         for (AABB bounds : shape.toAabbs()) {
             if (blockCount >= MAX_BLOCKS) {
+                overflowedThisScan = true;
                 return true;
             }
             putBlock(
@@ -600,5 +616,34 @@ public final class RayTracingScene {
         boolean result = dirty;
         dirty = false;
         return result;
+    }
+
+    /**
+     * Re-arms a consumed dirty flag when the renderer deliberately deferred a
+     * rebuild (A5 throttle). No scan state changes; the next update/rebuild
+     * simply runs one frame later.
+     */
+    public void markSceneDirty() {
+        dirty = true;
+    }
+
+    /**
+     * A11: reports scans that dropped far geometry at MAX_BLOCKS, throttled to
+     * one warning per 10s. Far geometry popping without any log was the
+     * silent failure this replaces.
+     */
+    private void reportBudgetOverflowIfNeeded() {
+        if (!overflowedThisScan) {
+            return;
+        }
+        overflowedThisScan = false;
+        overflowScanCount++;
+        long now = System.currentTimeMillis();
+        if (now - lastOverflowLogMillis >= 10_000L) {
+            lastOverflowLogMillis = now;
+            LOGGER.warn("RT scene budget exceeded ({} scans dropped far geometry at {} blocks); "
+                            + "reduce RT Distance or block density in range",
+                    overflowScanCount, MAX_BLOCKS);
+        }
     }
 }

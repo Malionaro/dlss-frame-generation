@@ -39,9 +39,16 @@ public final class VulkanRegistry {
     private static volatile VulkanGpuSurface activeSurface;
     private static volatile VulkanCommandEncoder activeEncoder;
     private static volatile VulkanFrameGenerationPipeline frameGenerationPipeline;
-    private static long swapchainGeneration;
-    private static long currentFrameSerial;
-    private static int physicalDeviceVendorId;
+    // C8: cross-thread counters as atomics (render thread writes, mixin and
+    // present threads read). The camera matrix/float block below stays
+    // render-thread confined (single writer: updateCameraState on the render
+    // thread); see the confinement note at updateCameraState.
+    private static final java.util.concurrent.atomic.AtomicLong swapchainGeneration =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong currentFrameSerial =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicInteger physicalDeviceVendorId =
+            new java.util.concurrent.atomic.AtomicInteger();
     private static volatile long activePhysicalDeviceHandle;
     private static String physicalDeviceName = "No Vulkan device";
     private static int physicalDeviceApiVersion;
@@ -61,7 +68,7 @@ public final class VulkanRegistry {
             new MotionVectorValidator();
     private static long previousCaptureNanos;
     private static Boolean lastProviderFrameAccepted;
-    private static NvidiaDlssRenderResolution.Resolution activeResolution =
+    private static volatile NvidiaDlssRenderResolution.Resolution activeResolution =
             new NvidiaDlssRenderResolution.Resolution(1, 1, 1, 1, 0, false);
     private static final DynamicResolutionController DYNAMIC_RESOLUTION =
             new DynamicResolutionController();
@@ -104,13 +111,13 @@ public final class VulkanRegistry {
                 && access.dlss_fg$getPhysicalDevice() != null) {
             var properties = access.dlss_fg$getPhysicalDevice()
                     .vkPhysicalDeviceProperties();
-            physicalDeviceVendorId = properties.vendorID();
+            physicalDeviceVendorId.set(properties.vendorID());
             physicalDeviceName = properties.deviceNameString();
             physicalDeviceApiVersion = properties.apiVersion();
             enabledDeviceExtensions =
                     java.util.Set.copyOf(access.dlss_fg$getEnabledExtensions());
         } else {
-            physicalDeviceVendorId = 0;
+            physicalDeviceVendorId.set(0);
             physicalDeviceName = "Vulkan device metadata unavailable";
             physicalDeviceApiVersion = 0;
             enabledDeviceExtensions = java.util.Set.of();
@@ -372,7 +379,7 @@ public final class VulkanRegistry {
                 "Swapchain reconfiguration is in progress";
         CompatibilityManager comp = FrameGenMod.compatibilityManager();
         if (comp != null) {
-            comp.beginProviderDrain(swapchainGeneration);
+            comp.beginProviderDrain(swapchainGeneration.get());
         }
         try {
             StreamlineBridge.nBeginProviderDrain();
@@ -401,16 +408,16 @@ public final class VulkanRegistry {
     }
 
     public static void notifySwapchainRecreated() {
-        swapchainGeneration++;
+        long generation = swapchainGeneration.incrementAndGet();
         currentFrameResources = null;
         lastAcceptedFrameIdentity = FrameIdentity.INVALID;
         lastCapturedFrameIdentity = FrameIdentity.INVALID;
         lastFrameResourceRejection =
                 "Waiting for the first frame of swapchain generation "
-                        + swapchainGeneration;
+                        + generation;
         if (frameGenerationPipeline != null) {
             frameGenerationPipeline.onSwapchainGenerationChanged(
-                    swapchainGeneration
+                    generation
             );
         }
         CompatibilityManager comp = FrameGenMod.compatibilityManager();
@@ -422,12 +429,12 @@ public final class VulkanRegistry {
                     LOGGER.info(
                             "DXGI owns swapchain generation {}; "
                                     + "skipping Vulkan provider swapchain notification",
-                            swapchainGeneration
+                            generation
                     );
                     return;
                 }
                 comp.completeProviderSwapchainRebuild(
-                        swapchainGeneration);
+                        generation);
                 LOGGER.info("Notifying JNI bridge of Vulkan Swapchain recreation: target={}, dim={}x{}",
                         Long.toHexString(adapter.getSwapchain()), adapter.getRenderWidth(), adapter.getRenderHeight());
                 try {
@@ -663,7 +670,7 @@ public final class VulkanRegistry {
         FrameGenerationBackend.GpuVendor vendor = backend != null
                 ? backend.vendor()
                 : FrameGenerationBackend.GpuVendor.fromVendorId(
-                        physicalDeviceVendorId
+                        physicalDeviceVendorId.get()
                 );
         int supportedCapabilities = supportedCapabilities(vendor);
         boolean upscalingSupported = (supportedCapabilities
@@ -765,7 +772,7 @@ public final class VulkanRegistry {
         FrameGenerationBackend.GpuVendor vendor = backend != null
                 ? backend.vendor()
                 : FrameGenerationBackend.GpuVendor.fromVendorId(
-                        physicalDeviceVendorId
+                        physicalDeviceVendorId.get()
                 );
         return fallbackDecision(
                 config,
@@ -775,7 +782,7 @@ public final class VulkanRegistry {
     }
 
     public static void beginWorldFrame(GameRenderState gameRenderState) {
-        currentFrameSerial++;
+        currentFrameSerial.incrementAndGet();
         currentFrameResources = null;
         updateCameraState(gameRenderState);
         // H2: jitter must only be reported when projection is actually mutated; otherwise keep 0
@@ -927,8 +934,8 @@ public final class VulkanRegistry {
                 ? adapter.getCurrentFrameIndex()
                 : -1;
         FrameIdentity identity = new FrameIdentity(
-                currentFrameSerial,
-                swapchainGeneration,
+                currentFrameSerial.get(),
+                swapchainGeneration.get(),
                 imageIndex
         );
         FrameResourceSet resources = adapter == null
@@ -1198,11 +1205,11 @@ public final class VulkanRegistry {
     }
 
     public static long getSwapchainGeneration() {
-        return swapchainGeneration;
+        return swapchainGeneration.get();
     }
 
     public static int getPhysicalDeviceVendorId() {
-        return physicalDeviceVendorId;
+        return physicalDeviceVendorId.get();
     }
 
     public static String getPhysicalDeviceName() {
@@ -1251,7 +1258,7 @@ public final class VulkanRegistry {
         lastCapturedFrameIdentity = FrameIdentity.INVALID;
         lastGuideConventions = null;
         lastFrameResourceRejection = "Renderer has shut down";
-        physicalDeviceVendorId = 0;
+        physicalDeviceVendorId.set(0);
         activePhysicalDeviceHandle = 0;
         physicalDeviceName = "No Vulkan device";
         physicalDeviceApiVersion = 0;

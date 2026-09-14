@@ -187,9 +187,32 @@ public final class StreamlineVulkanRequirements {
         try {
             String[] requirements =
                     StreamlineBridge.nGetVulkanRequirements(kind);
-            return requirements != null ? requirements : new String[0];
+            if (requirements == null) {
+                warnRequirementsUnknownOnce(
+                        "native bridge returned null requirements");
+                return new String[0];
+            }
+            return requirements;
         } catch (UnsatisfiedLinkError error) {
+            // B10: an empty array here used to silently mean "no requirements".
+            // Say loudly (once) that requirements are UNKNOWN so missing
+            // extension/feature gates stay visible instead of fail-open quiet.
+            warnRequirementsUnknownOnce(
+                    "native bridge unavailable: " + error.getMessage());
             return new String[0];
+        }
+    }
+
+    private static volatile boolean requirementsUnknownWarned;
+
+    private static void warnRequirementsUnknownOnce(String reason) {
+        if (!requirementsUnknownWarned) {
+            requirementsUnknownWarned = true;
+            LOGGER.warn(
+                    "Streamline Vulkan requirements unknown ({}); "
+                            + "continuing without provider requirements — "
+                            + "frame generation stays gated on capabilities",
+                    reason);
         }
     }
 

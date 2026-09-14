@@ -54,6 +54,28 @@ public interface FrameGenerationBackend {
     void applyConfig(FrameGenConfig config);
 
     /**
+     * D1: sole UI-to-native push path. Settings panels mutate
+     * {@link FrameGenConfig} and call this — never
+     * {@code StreamlineBridge.nSet*} directly — so backend rules (reflex
+     * forcing, MFG clamps, conflict gates, session fallback) cannot drift
+     * between UI and backend. Never throws.
+     */
+    static void applyActiveConfig(FrameGenConfig config) {
+        try {
+            var compatibility =
+                    org.malionaro.dlss_frame_generation.client.FrameGenMod
+                            .compatibilityManager();
+            FrameGenerationBackend backend = compatibility != null
+                    ? compatibility.activeVendorBackend()
+                    : null;
+            if (backend != null) {
+                backend.applyConfig(config);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
      * D1 lifecycle helper – disables frame generation before swapchain reconfiguration.
      * This is a lifecycle-driven native toggle, not a persistent config change; it
      * still funnels through the backend so VulkanRegistry has no direct nSet* path.

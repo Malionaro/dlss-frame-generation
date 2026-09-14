@@ -20,6 +20,9 @@ namespace dxgipresenter {
 namespace {
 
 constexpr int32_t kNotHandled = INT32_MIN;
+// B5: upper bound for JNI-supplied present wait-semaphore counts. Bounds the
+// under-lock allocation in submitVulkanReady against corrupt/huge counts.
+constexpr uint32_t kMaxPresentWaitSemaphores = 16;
 
 std::mutex g_mutex;
 Stage g_stage = Stage::Unavailable;
@@ -37,6 +40,11 @@ uint64_t g_lastSubmittedDone = 0;
 uint32_t g_nextAcquire = 0;
 int32_t g_currentImageIndex = -1;
 bool g_sessionDisabled = false;
+// B1: ownership epoch. Bumped whenever presentation ownership changes
+// (swapchain created/destroyed, shutdown). releasePresentationLocked captures
+// it before unlocking for GPU idle and aborts if it changed meanwhile, so a
+// stale teardown never runs on a newer owner's state (TOCTOU/double-reset).
+uint64_t g_presentationEpoch = 0;
 
 PFN_vkGetMemoryWin32HandlePropertiesKHR
     g_getMemoryWin32HandleProperties = nullptr;
@@ -47,6 +55,16 @@ PFN_vkQueueSubmit2 g_queueSubmit2 = nullptr;
 struct SwapchainToken {};
 std::unique_ptr<SwapchainToken> g_swapchainToken;
 VkSwapchainKHR g_retiredSwapchain = VK_NULL_HANDLE;
+// B4: handles handed to the renderer are monotonic ids, never recycled token
+// addresses. A freed unique_ptr address can be reused by the next make_unique
+// (ABA), letting a stale handle compare equal again; ids grow forever
+// (0 = null), so a retired handle can never become valid again.
+uint64_t g_activeSwapchainId = 0;
+uint64_t g_nextSwapchainId = 0;
+VkSwapchainKHR idToHandle(uint64_t id) {
+    return reinterpret_cast<VkSwapchainKHR>(
+        static_cast<uintptr_t>(id));
+}
 
 #if defined(_WIN32)
 using Microsoft::WRL::ComPtr;
@@ -303,6 +321,10 @@ void abandonPresentationLocked() {
 
 void releasePresentationLocked(std::unique_lock<std::mutex>& lock) {
     // Deadlock fix: do not hold g_mutex while blocking on GPU idle.
+    // B1: capture the ownership epoch first; a concurrent create/destroy
+    // bumps it while unlocked, in which case the newer owner is responsible
+    // for teardown and this stale invocation must stop after re-locking.
+    const uint64_t releaseEpoch = g_presentationEpoch;
     g_stage = Stage::Unavailable;
     lock.unlock();
     VkResult vulkanIdle = VK_SUCCESS;
@@ -312,6 +334,9 @@ void releasePresentationLocked(std::unique_lock<std::mutex>& lock) {
     std::string idleError;
     bool d3d12Idle = waitForD3D12QueueIdle(idleError);
     lock.lock();
+    if (releaseEpoch != g_presentationEpoch) {
+        return;
+    }
     if (vulkanIdle != VK_SUCCESS
         || !d3d12Idle) {
         if (idleError.empty()) {
@@ -364,9 +389,9 @@ void releasePresentationLocked(std::unique_lock<std::mutex>& lock) {
     g_vulkanReadyFence.Reset();
     g_d3d12DoneFence.Reset();
     if (g_swapchainToken != nullptr) {
-        g_retiredSwapchain =
-            reinterpret_cast<VkSwapchainKHR>(
-                g_swapchainToken.get());
+        // B4: retire the id, not the token address (see globals).
+        g_retiredSwapchain = idToHandle(g_activeSwapchainId);
+        g_activeSwapchainId = 0;
         g_swapchainToken.reset();
     }
     g_window = nullptr;
@@ -1033,9 +1058,10 @@ bool canCreatePresentationSwapchain() {
 
 bool ownsSwapchain(VkSwapchainKHR swapchain) {
     std::lock_guard lock(g_mutex);
-    return g_swapchainToken != nullptr
-        && swapchain == reinterpret_cast<VkSwapchainKHR>(
-            g_swapchainToken.get())
+    // B4: id comparison (no ABA) with explicit parentheses for the || chain.
+    return (g_swapchainToken != nullptr
+        && g_activeSwapchainId != 0
+        && swapchain == idToHandle(g_activeSwapchainId))
         || (g_retiredSwapchain != VK_NULL_HANDLE
             && swapchain == g_retiredSwapchain);
 }
@@ -1076,6 +1102,14 @@ int32_t createSwapchain(
     }
 
     g_window = static_cast<HWND>(window);
+    // B13: zero-area extents must be rejected before any committed resource
+    // or DXGI swapchain is created from them.
+    if (createInfo->imageExtent.width == 0
+        || createInfo->imageExtent.height == 0) {
+        fail("DXGI bridge received a zero-area swapchain extent");
+        g_sessionDisabled = true;
+        return kNotHandled;
+    }
     g_width = createInfo->imageExtent.width;
     g_height = createInfo->imageExtent.height;
     g_bufferCount = std::clamp(
@@ -1183,9 +1217,12 @@ int32_t createSwapchain(
     }
 
     g_swapchainToken = std::make_unique<SwapchainToken>();
-    *swapchain = reinterpret_cast<VkSwapchainKHR>(
-        g_swapchainToken.get());
+    // B4: hand out a fresh monotonic id (never a recyclable address).
+    g_activeSwapchainId = ++g_nextSwapchainId;
+    *swapchain = idToHandle(g_activeSwapchainId);
     g_stage = Stage::PresentationReady;
+    // B1: new ownership generation takes over teardown responsibility.
+    ++g_presentationEpoch;
     g_capabilities |=
         kCapDxgiSwapchain | kCapZeroCopyFrames;
     g_status =
@@ -1199,9 +1236,12 @@ void destroySwapchain(VkSwapchainKHR swapchain) {
     std::unique_lock<std::mutex> lock(g_mutex);
 #if defined(_WIN32)
     if (g_swapchainToken != nullptr
-        && swapchain == reinterpret_cast<VkSwapchainKHR>(
-            g_swapchainToken.get())) {
+        && g_activeSwapchainId != 0
+        && swapchain == idToHandle(g_activeSwapchainId)) {
         releasePresentationLocked(lock);
+        // B1: ownership ended; any stale teardown still in its idle wait
+        // observes this bump and aborts instead of double-resetting.
+        ++g_presentationEpoch;
     } else if (swapchain == g_retiredSwapchain) {
         g_retiredSwapchain = VK_NULL_HANDLE;
     }
@@ -1220,8 +1260,8 @@ int32_t getSwapchainImages(
     return kNotHandled;
 #else
     if (g_swapchainToken == nullptr
-        || swapchain != reinterpret_cast<VkSwapchainKHR>(
-            g_swapchainToken.get())
+        || g_activeSwapchainId == 0
+        || swapchain != idToHandle(g_activeSwapchainId)
         || count == nullptr) {
         return kNotHandled;
     }
@@ -1252,8 +1292,8 @@ int32_t acquireNextImage(
 #else
     if (g_stage != Stage::PresentationReady
         || g_swapchainToken == nullptr
-        || swapchain != reinterpret_cast<VkSwapchainKHR>(
-            g_swapchainToken.get())
+        || g_activeSwapchainId == 0
+        || swapchain != idToHandle(g_activeSwapchainId)
         || acquireSemaphore == VK_NULL_HANDLE
         || imageIndex == nullptr
         || g_sharedFrames.empty()) {
@@ -1278,9 +1318,11 @@ int32_t acquireNextImage(
         }
     }
     if (!found) {
-        // All frames busy; fall back to round-robin but ensure fence will gate present.
-        index = start;
-        g_nextAcquire = start + 1;
+        // B2: every frame is still in flight. Report instead of falling back
+        // to round-robin on a busy texture — reusing it would overwrite a
+        // shared image the GPU is still reading. The renderer retries on the
+        // next frame (standard VK_NOT_READY handling, no session damage).
+        return VK_NOT_READY;
     }
     VkResult result = submitAcquireSignal(
         g_sharedFrames[index], acquireSemaphore);
@@ -1310,15 +1352,25 @@ int32_t queuePresent(
         || presentInfo->pSwapchains == nullptr
         || presentInfo->pImageIndices == nullptr
         || g_swapchainToken == nullptr
+        || g_activeSwapchainId == 0
         || presentInfo->pSwapchains[0]
-            != reinterpret_cast<VkSwapchainKHR>(
-                g_swapchainToken.get())) {
+            != idToHandle(g_activeSwapchainId)) {
         return kNotHandled;
     }
     if (queue != g_vkGraphicsQueue) {
         fail("DXGI bridge received a different Vulkan presentation queue");
         g_sessionDisabled = true;
         return VK_ERROR_DEVICE_LOST;
+    }
+    // B5: bound the JNI-supplied wait-semaphore block before submitVulkanReady
+    // allocates from it under lock. A corrupt count or a non-null count with a
+    // null pointer would otherwise OOM or crash the JVM.
+    if (presentInfo->waitSemaphoreCount > kMaxPresentWaitSemaphores
+        || (presentInfo->waitSemaphoreCount > 0
+            && presentInfo->pWaitSemaphores == nullptr)) {
+        fail("DXGI bridge received an invalid present wait-semaphore block");
+        g_sessionDisabled = true;
+        return VK_ERROR_OUT_OF_DATE_KHR;
     }
     uint32_t sourceIndex = presentInfo->pImageIndices[0];
     if (sourceIndex >= g_sharedFrames.size()
@@ -1329,6 +1381,13 @@ int32_t queuePresent(
         return VK_ERROR_OUT_OF_DATE_KHR;
     }
 
+    // B3: the submit/wait/copy/signal sequence below intentionally stays under
+    // g_mutex: teardown (destroySwapchain/shutdown) takes the same lock, so
+    // releasing mid-sequence would let it free copy commands and shared frames
+    // still referenced below. The only unbounded under-lock work was the
+    // wait-semaphore vector, now capped by kMaxPresentWaitSemaphores (B5).
+    // Present() itself already runs unlocked. No blocking wait holds the lock:
+    // submits and fence waits only enqueue; teardown idles after unlocking.
     uint64_t readyValue = ++g_readyValue;
     VkResult vkResult = submitVulkanReady(
         presentInfo, readyValue);
@@ -1341,14 +1400,25 @@ int32_t queuePresent(
     HRESULT result = g_d3d12Queue->Wait(
         g_vulkanReadyFence.Get(), readyValue);
     if (FAILED(result)) {
+        // B12: a bare HRESULT hex code never explains a dead queue — attach
+        // the device-removed reason like the Present path below does.
+        HRESULT removed = g_d3d12Device->GetDeviceRemovedReason();
         fail("D3D12 queue wait for Vulkan failed: "
-            + hresultText(result));
+            + hresultText(result)
+            + ", device=" + hresultText(removed));
         g_sessionDisabled = true;
         return VK_ERROR_DEVICE_LOST;
     }
 
     uint32_t destinationIndex =
         g_dxgiSwapchain->GetCurrentBackBufferIndex();
+    // B13: the driver-owned back-buffer index is untrusted input for the
+    // copy-command lookup below — bound it before indexing.
+    if (destinationIndex >= g_bufferCount) {
+        fail("DXGI bridge reported an out-of-range back-buffer index");
+        g_sessionDisabled = true;
+        return VK_ERROR_OUT_OF_DATE_KHR;
+    }
     CopyCommand& command =
         g_copyCommands[
             static_cast<size_t>(sourceIndex) * g_bufferCount
@@ -1358,8 +1428,11 @@ int32_t queuePresent(
     result = g_d3d12Queue->Signal(
         g_d3d12DoneFence.Get(), readyValue);
     if (FAILED(result)) {
+        // B12: see the queue-wait path above.
+        HRESULT removed = g_d3d12Device->GetDeviceRemovedReason();
         fail("D3D12 completion fence signal failed: "
-            + hresultText(result));
+            + hresultText(result)
+            + ", device=" + hresultText(removed));
         g_sessionDisabled = true;
         return VK_ERROR_DEVICE_LOST;
     }
@@ -1421,6 +1494,8 @@ void shutdown() {
     std::unique_lock<std::mutex> lock(g_mutex);
 #if defined(_WIN32)
     releasePresentationLocked(lock);
+    // B1: see destroySwapchain — ownership ended here as well.
+    ++g_presentationEpoch;
     g_d3d12Queue.Reset();
     g_d3d12Device.Reset();
     g_infoQueue.Reset();

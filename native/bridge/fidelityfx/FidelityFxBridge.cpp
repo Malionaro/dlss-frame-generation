@@ -411,6 +411,42 @@ void setUpscalingMode(int mode, float sharpness) {
 }
 
 bool submitUpscalingInputs(const UpscalingInputs& inputs) {
+    // B12: pure descriptor math hoisted above the lock (see
+    // submitFrameGenerationInputs); validation, context ensure and the
+    // dispatch stay under it.
+    const FfxApiResource colorRes = makeImageResource(
+        inputs.color,
+        inputs.colorFormat,
+        inputs.renderWidth,
+        inputs.renderHeight,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        FFX_API_RESOURCE_STATE_COMPUTE_READ
+    );
+    const FfxApiResource depthRes = makeImageResource(
+        inputs.depth,
+        inputs.depthFormat,
+        inputs.renderWidth,
+        inputs.renderHeight,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        FFX_API_RESOURCE_STATE_COMPUTE_READ
+    );
+    const FfxApiResource motionRes = makeImageResource(
+        inputs.motionVectors,
+        inputs.motionVectorsFormat,
+        inputs.renderWidth,
+        inputs.renderHeight,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+            VK_IMAGE_USAGE_STORAGE_BIT,
+        FFX_API_RESOURCE_STATE_COMPUTE_READ
+    );
+    const FfxApiResource outputRes = makeImageResource(
+        inputs.output,
+        inputs.outputFormat,
+        inputs.outputWidth,
+        inputs.outputHeight,
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        FFX_API_RESOURCE_STATE_UNORDERED_ACCESS
+    );
     std::lock_guard lock(g_mutex);
     if (g_upscaleMode == 0) {
         g_upscalingInputsReady = false;
@@ -440,39 +476,10 @@ bool submitUpscalingInputs(const UpscalingInputs& inputs) {
     ffxDispatchDescUpscale dispatch{};
     dispatch.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
     dispatch.commandList = reinterpret_cast<void*>(inputs.commandBuffer);
-    dispatch.color = makeImageResource(
-        inputs.color,
-        inputs.colorFormat,
-        inputs.renderWidth,
-        inputs.renderHeight,
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        FFX_API_RESOURCE_STATE_COMPUTE_READ
-    );
-    dispatch.depth = makeImageResource(
-        inputs.depth,
-        inputs.depthFormat,
-        inputs.renderWidth,
-        inputs.renderHeight,
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        FFX_API_RESOURCE_STATE_COMPUTE_READ
-    );
-    dispatch.motionVectors = makeImageResource(
-        inputs.motionVectors,
-        inputs.motionVectorsFormat,
-        inputs.renderWidth,
-        inputs.renderHeight,
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-            VK_IMAGE_USAGE_STORAGE_BIT,
-        FFX_API_RESOURCE_STATE_COMPUTE_READ
-    );
-    dispatch.output = makeImageResource(
-        inputs.output,
-        inputs.outputFormat,
-        inputs.outputWidth,
-        inputs.outputHeight,
-        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-        FFX_API_RESOURCE_STATE_UNORDERED_ACCESS
-    );
+    dispatch.color = colorRes;
+    dispatch.depth = depthRes;
+    dispatch.motionVectors = motionRes;
+    dispatch.output = outputRes;
     dispatch.jitterOffset = { inputs.jitterX, inputs.jitterY };
     dispatch.motionVectorScale = { 1.0f, 1.0f };
     dispatch.renderSize = { inputs.renderWidth, inputs.renderHeight };
@@ -510,29 +517,9 @@ const std::string& status() {
 }
 
 bool submitFrameGenerationInputs(const FrameGenerationInputs& inputs) {
-    std::lock_guard lock(g_mutex);
-    if (!g_runtimeReady || g_swapchainContext == nullptr ||
-        g_createContext == nullptr || g_configure == nullptr ||
-        g_dispatch == nullptr || inputs.commandBuffer == VK_NULL_HANDLE ||
-        inputs.backbuffer == VK_NULL_HANDLE ||
-        inputs.backbufferFormat == VK_FORMAT_UNDEFINED ||
-        inputs.hudlessColor == VK_NULL_HANDLE ||
-        inputs.hudlessColorFormat == VK_FORMAT_UNDEFINED ||
-        inputs.depth == VK_NULL_HANDLE ||
-        inputs.depthFormat == VK_FORMAT_UNDEFINED ||
-        inputs.motionVectors == VK_NULL_HANDLE ||
-        inputs.motionVectorsFormat == VK_FORMAT_UNDEFINED ||
-        inputs.renderWidth == 0 || inputs.renderHeight == 0 ||
-        inputs.displayWidth == 0 || inputs.displayHeight == 0) {
-        g_frameGenerationInputsReady = false;
-        g_status = "FidelityFX frame generation is waiting for complete renderer resources";
-        return false;
-    }
-
-    if (!ensureFrameGenerationContext(inputs)) {
-        return false;
-    }
-
+    // B12: pure-local descriptor/camera prep runs before the lock (no globals
+    // involved). Validation, context ensure and both dispatches stay under it:
+    // they touch g_ state that teardown under the same mutex may destroy.
     const FfxApiResource hudlessColor = makeImageResource(
         inputs.hudlessColor,
         inputs.hudlessColorFormat,
@@ -558,6 +545,33 @@ bool submitFrameGenerationInputs(const FrameGenerationInputs& inputs) {
             VK_IMAGE_USAGE_STORAGE_BIT,
         FFX_API_RESOURCE_STATE_COMPUTE_READ
     );
+    float cameraPosition[3], cameraUp[3], cameraRight[3], cameraForward[3];
+    std::copy_n(inputs.cameraPosition, 3, cameraPosition);
+    std::copy_n(inputs.cameraUp, 3, cameraUp);
+    std::copy_n(inputs.cameraRight, 3, cameraRight);
+    std::copy_n(inputs.cameraForward, 3, cameraForward);
+    std::lock_guard lock(g_mutex);
+    if (!g_runtimeReady || g_swapchainContext == nullptr ||
+        g_createContext == nullptr || g_configure == nullptr ||
+        g_dispatch == nullptr || inputs.commandBuffer == VK_NULL_HANDLE ||
+        inputs.backbuffer == VK_NULL_HANDLE ||
+        inputs.backbufferFormat == VK_FORMAT_UNDEFINED ||
+        inputs.hudlessColor == VK_NULL_HANDLE ||
+        inputs.hudlessColorFormat == VK_FORMAT_UNDEFINED ||
+        inputs.depth == VK_NULL_HANDLE ||
+        inputs.depthFormat == VK_FORMAT_UNDEFINED ||
+        inputs.motionVectors == VK_NULL_HANDLE ||
+        inputs.motionVectorsFormat == VK_FORMAT_UNDEFINED ||
+        inputs.renderWidth == 0 || inputs.renderHeight == 0 ||
+        inputs.displayWidth == 0 || inputs.displayHeight == 0) {
+        g_frameGenerationInputsReady = false;
+        g_status = "FidelityFX frame generation is waiting for complete renderer resources";
+        return false;
+    }
+
+    if (!ensureFrameGenerationContext(inputs)) {
+        return false;
+    }
 
     ffxConfigureDescFrameGeneration configure{};
     configure.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION;
@@ -586,10 +600,10 @@ bool submitFrameGenerationInputs(const FrameGenerationInputs& inputs) {
     ffxDispatchDescFrameGenerationPrepareCameraInfo camera{};
     camera.header.type =
         FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE_CAMERAINFO;
-    std::copy_n(inputs.cameraPosition, 3, camera.cameraPosition);
-    std::copy_n(inputs.cameraUp, 3, camera.cameraUp);
-    std::copy_n(inputs.cameraRight, 3, camera.cameraRight);
-    std::copy_n(inputs.cameraForward, 3, camera.cameraForward);
+    std::copy_n(cameraPosition, 3, camera.cameraPosition);
+    std::copy_n(cameraUp, 3, camera.cameraUp);
+    std::copy_n(cameraRight, 3, camera.cameraRight);
+    std::copy_n(cameraForward, 3, camera.cameraForward);
 
     ffxDispatchDescFrameGenerationPrepare prepare{};
     prepare.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE;

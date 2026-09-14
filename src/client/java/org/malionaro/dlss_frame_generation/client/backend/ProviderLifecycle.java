@@ -35,6 +35,10 @@ public final class ProviderLifecycle {
     private long swapchainGeneration;
     private FrameIdentity lastAcceptedFrame = FrameIdentity.INVALID;
     private String detail = "No provider detected";
+    // C5: transient failures (e.g. swapchain drain timeouts) are retryable on
+    // the next swapchain generation; hard failures latch until re-detection.
+    private boolean failureTransient;
+    private long failureGeneration = -1L;
 
     public synchronized void detected(
             FrameGenerationCompatibilityLayer.ProviderId detectedProvider,
@@ -61,6 +65,8 @@ public final class ProviderLifecycle {
         state = State.DETECTED;
         detail = nonBlank(detectionDetail, "Provider detected");
         lastAcceptedFrame = FrameIdentity.INVALID;
+        failureTransient = false;
+        failureGeneration = -1L;
     }
 
     public synchronized void initializing() {
@@ -159,7 +165,35 @@ public final class ProviderLifecycle {
             return;
         }
         state = State.FAILED;
+        failureTransient = false;
+        failureGeneration = -1L;
         detail = nonBlank(failureDetail, "Provider failed");
+    }
+
+    /**
+     * Transient failure (C5): latched as FAILED like {@link #failed}, but
+     * marked retryable once the swapchain generation advances (e.g. a drain
+     * timeout during rebuild). See
+     * {@link org.malionaro.dlss_frame_generation.client.compat.CompatibilityManager#completeProviderSwapchainRebuild(long)}.
+     */
+    public synchronized void failedTransient(String failureDetail) {
+        if (state == State.SHUTDOWN) {
+            return;
+        }
+        state = State.FAILED;
+        failureTransient = true;
+        failureGeneration = swapchainGeneration;
+        detail = nonBlank(failureDetail, "Provider failed (transient)");
+    }
+
+    /** True only for a FAILED state that may be retried on a new generation. */
+    public synchronized boolean isFailureTransient() {
+        return state == State.FAILED && failureTransient;
+    }
+
+    /** Swapchain generation at which the transient failure was recorded. */
+    public synchronized long failureGeneration() {
+        return failureGeneration;
     }
 
     public synchronized void shutdown(boolean safeFrameBoundary) {

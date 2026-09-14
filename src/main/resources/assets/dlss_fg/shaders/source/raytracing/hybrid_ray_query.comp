@@ -22,11 +22,12 @@ layout(std430, set = 0, binding = 2) readonly buffer BlockBuffer {
 
 layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 cameraPosition;
-    vec4 cameraForward;
+    vec4 cameraForward; // xyz = forward; w = quality ordinal (informational, do NOT use for ranges — see reflectionParams)
     vec4 cameraRight;
     vec4 cameraUp;
     vec4 renderParameters; // tanHalfFov, aspect, maxDistance, reflection enabled
     vec4 sunDirectionAndSamples;
+    vec4 reflectionParams; // x = reflection range in meters (A7: explicit, quality-decoupled)
 } frame;
 layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D noisyColorImage;
 layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D diffuseAlbedoImage;
@@ -208,6 +209,10 @@ vec3 rayDirectionForPixel(ivec2 pixel, ivec2 size) {
 }
 
 float rayDistanceForDepth(float hardwareDepth, vec3 direction) {
+    // A9: reversed-Z contract (FrameGuideConventions.REVERSED_ZERO_TO_ONE):
+    // hardwareDepth 0.0 = far/sky, 1.0 = near plane. The formula below is the
+    // reversed linearization z = n*f/(n+d*(f-n)) — d=0 yields far, d=1 yields
+    // near — so it agrees with the convention and with the 0.0 history clear.
     if (hardwareDepth <= 0.0) {
         return frame.cameraUp.w;
     }
@@ -256,6 +261,12 @@ vec3 reconstructRasterNormal(
     return normal;
 }
 
+// A9: raster-vs-RT rejection tolerance in meters. A raster hit closer than
+// the RT hit minus this tolerance wins (depth precision + AABB vs. raster
+// rasterization differences); larger values punch RT-shaped holes, smaller
+// values z-fight at grazing angles.
+const float RASTER_DEPTH_TOLERANCE_METERS = 0.15;
+
 void main() {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(targetImage);
@@ -278,7 +289,7 @@ void main() {
         rayDistanceForDepth(hardwareDepth, direction);
     bool rasterGeometryIsCloser = hardwareDepth > 0.0
         && primary.valid
-        && rasterRayDistance + 0.15 < primary.distance;
+        && rasterRayDistance + RASTER_DEPTH_TOLERANCE_METERS < primary.distance;
     if (rasterGeometryIsCloser) {
         primary.valid = false;
     }
@@ -443,12 +454,15 @@ void main() {
             point + primary.normal * 0.04,
             reflectionDirection,
             0.04,
-            frame.renderParameters.z * (0.25 + 0.12 * frame.cameraForward.w)
+            frame.reflectionParams.x
         );
         vec3 reflectionColor = reflection.valid
             ? srgbToLinear(unpackColor(
                     blocks[reflection.primitive].maximumYZColorFlags.z))
-            : srgbToLinear(vec3(0.32, 0.48, 0.72));
+            // A11: reflection miss = escaped ray. Use the pixel's own raster
+            // color (which already holds sky/fog) instead of a fixed sky blue
+            // that tinted every grazing angle.
+            : linearRaster;
         
         float reflectivity = 0.08;
         if (isWater) {
@@ -462,8 +476,10 @@ void main() {
             reflectivity = 0.38;
         }
         result = mix(result, reflectionColor, reflectivity) + pointLightSpecular * specularAlbedo;
-        // M6: on reflection miss use maxDistance instead of 0 for stable hit-distance signal
-        specularHitDistance = reflection.valid ? reflection.distance : frame.renderParameters.z * (0.25 + 0.12 * frame.cameraForward.w);
+        // M6 (refined A7): on reflection miss report the searched range instead
+        // of 0 — the ray found nothing within [0.04, reflectionRange], so the
+        // range itself is the truthful lower bound for the hit distance.
+        specularHitDistance = reflection.valid ? reflection.distance : frame.reflectionParams.x;
     }
 
     imageStore(
