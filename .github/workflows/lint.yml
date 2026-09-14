@@ -55,8 +55,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - name: Install glslang and spirv-tools
-        run: sudo apt-get update && sudo apt-get install -y glslang-tools spirv-tools
+      - name: Install glslc (shaderc), glslang and spirv-tools
+        run: sudo apt-get update && sudo apt-get install -y glslang-tools spirv-tools shaderc
       - name: Validate GLSL shaders compile to SPIR-V
         # D12: same compiler as build.gradle compileShaders (glslc) so lint
         # and build can never disagree; spirv-val runs in both places.
