@@ -55,11 +55,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - name: Install glslc (shaderc), glslang and spirv-tools
-        run: sudo apt-get update && sudo apt-get install -y glslang-tools spirv-tools shaderc
+      - name: Install glslang and spirv-tools
+        run: sudo apt-get update && sudo apt-get install -y glslang-tools spirv-tools
       - name: Validate GLSL shaders compile to SPIR-V
-        # D12: same compiler as build.gradle compileShaders (glslc) so lint
-        # and build can never disagree; spirv-val runs in both places.
+        # glslangValidator (not glslc): Ubuntu 24.04 has no shaderc package,
+        # so glslc is unavailable here. The Gradle build prefers glslc with a
+        # runtime shaderc fallback; lint guarantees the sources are valid
+        # GLSL and produce spirv-val-clean SPIR-V either way.
         run: |
           set -e
           shopt -s globstar
@@ -68,7 +70,7 @@ jobs:
             [ -e "$f" ] || continue
             found=1
             echo "Compiling $f"
-            glslc "$f" -o /tmp/out.spv
+            glslangValidator -V "$f" -o /tmp/out.spv
             spirv-val /tmp/out.spv
           done
           if [ "$found" -eq 0 ]; then echo "No shaders found"; fi
