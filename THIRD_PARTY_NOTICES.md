@@ -1,8 +1,8 @@
 # Third-party notices
 
-## NVIDIA Streamline 2.12
+## NVIDIA Streamline 2.14.1
 
-This project includes NVIDIA Streamline 2.12 runtime components for DLSS Super
+This project includes NVIDIA Streamline 2.14.1 runtime components for DLSS Super
 Resolution, DLSS Frame Generation, DLSS Ray Reconstruction, Reflex and Vulkan
 interposition. The distribution JAR stores Streamline's license,
 third-party notices, NGX DLSS license and Reflex license under

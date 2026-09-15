@@ -104,7 +104,9 @@ debug layers can be enabled for development diagnostics.
 
 The bundled Streamline SDK supports Vulkan present interception. The bridge
 loads `sl.interposer.dll` before LWJGL initializes Vulkan, requests Vulkan 1.3
-when the loader supports it, supplies the Vulkan device, checks DLSS/DLSS-G/
+when the loader supports it, enables `VK_EXT_debug_utils` when available for
+Nsight/RenderDoc markers, offers `VK_NV_low_latency2` on NVIDIA devices so
+Reflex can use the extension transport, supplies the Vulkan device, checks DLSS/DLSS-G/
 Reflex support, clamps the multiplier to the driver-reported maximum and uses
 frame-based constants/tags.
 
@@ -122,7 +124,8 @@ a separate transparent full-resolution target tagged as
 `kBufferTypeUIColorAndAlpha`.
 
 DLSS Ray Reconstruction uses Streamline's `kFeatureDLSS_RR` and the bundled
-signed `sl.dlss_d.dll`/`nvngx_dlssd.dll`. The hybrid RT pass supplies
+signed `sl.dlss_d.dll`/`nvngx_dlssd.dll` on transformer preset F (the
+Streamline 2.14 default). The hybrid RT pass supplies
 low-resolution RGBA16F noisy colour, diffuse/specular albedo,
 normal/roughness, depth, dense motion and specular hit distance with the
 required world/view matrices. Its RGBA16F output is tone-mapped into the SDR

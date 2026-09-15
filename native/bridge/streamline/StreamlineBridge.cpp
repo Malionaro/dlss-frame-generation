@@ -1708,12 +1708,14 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
     options.colorBuffersHDR = sl::Boolean::eTrue;
     options.normalRoughnessMode =
         sl::DLSSDNormalRoughnessMode::ePacked;
-    options.dlaaPreset = sl::DLSSDPreset::ePresetD;
-    options.qualityPreset = sl::DLSSDPreset::ePresetD;
-    options.balancedPreset = sl::DLSSDPreset::ePresetD;
-    options.performancePreset = sl::DLSSDPreset::ePresetD;
-    options.ultraPerformancePreset = sl::DLSSDPreset::ePresetD;
-    options.ultraQualityPreset = sl::DLSSDPreset::ePresetD;
+    // Streamline 2.14: ePresetF is the latest default transformer model
+    // (ePresetD/E are previous transformer generations).
+    options.dlaaPreset = sl::DLSSDPreset::ePresetF;
+    options.qualityPreset = sl::DLSSDPreset::ePresetF;
+    options.balancedPreset = sl::DLSSDPreset::ePresetF;
+    options.performancePreset = sl::DLSSDPreset::ePresetF;
+    options.ultraPerformancePreset = sl::DLSSDPreset::ePresetF;
+    options.ultraQualityPreset = sl::DLSSDPreset::ePresetF;
     for (int row = 0; row < 4; ++row) {
         options.worldToCameraView[row] = {
             w2v[row], w2v[4 + row], w2v[8 + row], w2v[12 + row]

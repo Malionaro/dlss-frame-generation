@@ -79,7 +79,7 @@ Primary sources:
 - [Iris ShaderDoc](https://github.com/IrisShaders/ShaderDoc/tree/ddf473726710c6504422d192784c1652f8aece98)
 - [Iris ShaderDoc: Entity motion vectors](https://github.com/IrisShaders/ShaderDoc/blob/ddf473726710c6504422d192784c1652f8aece98/unsupported-features.md)
 - [Iris 26.2 reversed-Z issue report](https://github.com/IrisShaders/Iris/issues/3241)
-- [NVIDIA Streamline](https://github.com/NVIDIAGameWorks/Streamline)
+- [NVIDIA Streamline](https://github.com/NVIDIA-RTX/Streamline)
 - [AMD FidelityFX FSR 3.1](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK)
 
 ## 3. Short verdict

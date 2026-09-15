@@ -37,7 +37,7 @@ Implemented checks and calls:
   stays at display resolution.
 - The UI exposes Off, DLAA, Quality, Balanced, Performance, Ultra Performance
   and Ultra Quality. Transformer presets K/M/L are selected according to the
-  Streamline 2.12 recommendations.
+   Streamline 2.14 recommendations.
 - DLSS-G receives HUD-less color, depth, motion vectors and per-frame
   constants. The full-screen backbuffer is left to Streamline's Vulkan present
   interception, as required by the guide.
@@ -57,13 +57,15 @@ Important runtime requirements:
 - Streamline reports the supported frame multiplier; RTX 40 hardware normally
   exposes 2x Frame Generation, while Multi Frame Generation depends on newer
   supported hardware/runtime.
-- The Vulkan DLSS-G guide does not support the same VSync path as D3D12.
+- Since Streamline 2.14 the Vulkan DLSS-G guide supports VSync in Dynamic
+  Multi Frame Generation mode; the static on/off path used here keeps the
+  previous conservative VSync handling until dynamic mode is wired up.
 - A driver reporting Vulkan 1.4 is not proof that an application created a
   Vulkan 1.4 instance/device. The old RTX log showed a 1.4-capable driver while
   Minecraft itself requested a 1.2 path. The integration now explicitly
   requests Vulkan 1.3 when available.
 
-Streamline 2.12's own `sl.common` JSON still lists three legacy command-state
+Streamline 2.14.1's own `sl.common` JSON still lists three legacy command-state
 tracking hooks which are not present in that release's public
 `FunctionHookID` table. It consequently prints generic “hook not supported”
 warnings for `CmdBindPipeline`, `CmdBindDescriptorSets` and

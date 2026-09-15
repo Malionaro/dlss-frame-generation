@@ -60,6 +60,18 @@ public final class StreamlineVulkanRequirements {
                 );
             }
         }
+        OptionalVulkanExtensions.applyInstanceOptionals(
+                availableExtensions, enabledExtensions);
+    }
+
+    /** Optional instance extensions enabled during the last instance setup. */
+    public static Set<String> lastOptionalInstanceExtensions() {
+        return OptionalVulkanExtensions.lastInstanceOptionals();
+    }
+
+    /** Optional device extensions enabled during the last device selection. */
+    public static Set<String> lastOptionalDeviceExtensions() {
+        return OptionalVulkanExtensions.lastDeviceOptionals();
     }
 
     public static int preferredInstanceApiVersion(int minecraftVersion) {
@@ -121,6 +133,19 @@ public final class StreamlineVulkanRequirements {
                 );
             }
         }
+
+        // NVIDIA-only: offer VK_NV_low_latency2 when the driver exposes it so
+        // Streamline 2.14 can drive Reflex through the extension instead of
+        // NvAPI. Availability-gated; duplicates with native requirements are
+        // absorbed by the set.
+        LinkedHashSet<String> supportedOptionals = new LinkedHashSet<>();
+        for (String extension : OptionalVulkanExtensions.NVIDIA_DEVICE_EXTENSIONS) {
+            if (physicalDevice.hasDeviceExtension(extension)) {
+                supportedOptionals.add(extension);
+            }
+        }
+        OptionalVulkanExtensions.applyNvidiaDeviceOptionals(
+                supportedOptionals, extensions);
 
         for (String featureName : nativeRequirements(
                 StreamlineBridge.VULKAN_REQUIREMENT_FEATURES_12)) {
