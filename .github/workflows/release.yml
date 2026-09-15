@@ -63,6 +63,9 @@ jobs:
           jar tf "$jar" | Select-String "dlss_fg_native|sl.interposer" | ForEach-Object { Write-Host $_ }
           if (-not (jar tf "$jar" | Select-String "dlss_fg_native.dll")) { throw "JAR missing dlss_fg_native.dll - copyNative failed" }
 
+      - name: Drop sources JAR from release assets
+        run: Remove-Item build/libs/*-sources.jar -ErrorAction SilentlyContinue
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -71,5 +74,4 @@ jobs:
           generate_release_notes: true
           files: |
             build/libs/dlss-frame-generation-*.jar
-            !build/libs/*-sources.jar
           fail_on_unmatched_files: true
