@@ -6,11 +6,20 @@
 
 ## English
 
-Fabric client mod for Minecraft 26.2. It hooks Minecraft's Vulkan renderer into NVIDIA Streamline and exposes DLSS, FSR and XeSS behind a settings screen that only enables what your hardware can actually do.
+Fabric client mod for Minecraft 26.3. It hooks Minecraft's Vulkan renderer into NVIDIA Streamline and exposes DLSS, FSR and XeSS behind a settings screen that only enables what your hardware can actually do.
 
 I built it because the new Vulkan renderer finally makes this kind of thing possible. It is still experimental. Expect rough edges. Back up a world before you test it.
 
 > A backend stays off unless its runtime, GPU and renderer inputs are all present. I route AMD and Intel calls away from Streamline on purpose.
+
+> **Ported to 26.3.** Minecraft 26.3 moved its renderer into a new
+> `com.mojang.renderpearl` library, turned the core GPU types into interfaces and
+> replaced GLFW with SDL. Every hook is mapped onto its 26.3 equivalent, including
+> the device-extension request, which now hands Minecraft a `FeatureSet` instead of
+> mutating two method arguments. The full old-to-new mapping is in
+> [the feature status](docs/status/FEATURE_STATUS.md). This build compiles and all
+> 57 mixin points are verified against the 26.3 jar, but it has **not** been run
+> on 26.3 hardware — Minecraft 26.2 is still the last fully validated target.
 
 ### What works right now
 

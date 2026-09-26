@@ -1,15 +1,16 @@
 package org.malionaro.dlss_frame_generation.client.mixin;
 import org.malionaro.dlss_frame_generation.client.compat.CompatibilityManager;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
-import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
-import com.mojang.blaze3d.vulkan.VulkanGpuSurface;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuSurface;
 import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationCompatibilityLayer;
 import org.malionaro.dlss_frame_generation.client.FrameGenMod;
 import org.malionaro.dlss_frame_generation.client.interop.D3D12PresentationBridge;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
-import org.lwjgl.glfw.GLFWNativeWin32;
+import org.lwjgl.sdl.SDLProperties;
+import org.lwjgl.sdl.SDLVideo;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.system.Platform;
 import org.lwjgl.vulkan.KHRSwapchain;
@@ -55,6 +56,36 @@ public class VulkanGpuSurfaceMixin {
         return FrameGenerationCompatibilityLayer.proxySwapchainAvailable();
     }
 
+    /**
+     * Resolves the native Win32 HWND for the given SDL window.
+     *
+     * <p>Minecraft 26.3 replaced GLFW with SDL, so {@code Window#handle()} is now an
+     * {@code SDL_Window*} and {@code GLFWNativeWin32.glfwGetWin32Window} is gone. SDL3
+     * exposes the platform handle as a window property instead. Returns 0 on any
+     * non-Windows host or if SDL has not been initialised, which keeps the caller on
+     * the normal Vulkan present path.
+     */
+    @Unique
+    private static long resolveWin32Window(long sdlWindow) {
+        if (Platform.get() != Platform.WINDOWS || sdlWindow == 0L) {
+            return 0L;
+        }
+        try {
+            int properties = SDLVideo.SDL_GetWindowProperties(sdlWindow);
+            if (properties == 0) {
+                return 0L;
+            }
+            return SDLProperties.SDL_GetPointerProperty(
+                    properties,
+                    SDLVideo.SDL_PROP_WINDOW_WIN32_HWND_POINTER,
+                    0L
+            );
+        } catch (Throwable ignored) {
+            // SDL not initialised or property unsupported: stay on the normal path.
+            return 0L;
+        }
+    }
+
     @Redirect(
         method = "configure",
         at = @At(
@@ -70,10 +101,8 @@ public class VulkanGpuSurfaceMixin {
     ) {
         if (D3D12PresentationBridge.canCreateProxySwapchain()) {
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-            long glfwWindow = (mc != null && mc.getWindow() != null) ? mc.getWindow().handle() : 0L;
-            long nativeWindow = (Platform.get() == Platform.WINDOWS && glfwWindow != 0L)
-                    ? GLFWNativeWin32.glfwGetWin32Window(glfwWindow)
-                    : 0L;
+            long sdlWindow = (mc != null && mc.getWindow() != null) ? mc.getWindow().handle() : 0L;
+            long nativeWindow = resolveWin32Window(sdlWindow);
             int result = D3D12PresentationBridge.createSwapchain(
                     nativeWindow,
                     createInfo.address(),
@@ -286,7 +315,7 @@ public class VulkanGpuSurfaceMixin {
 
     @Inject(method = "configure", at = @At("HEAD"))
     private void beforeConfigure(
-            com.mojang.blaze3d.systems.GpuSurface.Configuration configuration,
+            com.mojang.renderpearl.api.device.GpuSurface.Configuration configuration,
             CallbackInfo ci
     ) {
         dlss_fg$drainStartNanos = System.nanoTime();
@@ -298,7 +327,7 @@ public class VulkanGpuSurfaceMixin {
     }
 
     @Inject(method = "configure", at = @At("RETURN"))
-    private void onConfigure(com.mojang.blaze3d.systems.GpuSurface.Configuration configuration, CallbackInfo ci) {
+    private void onConfigure(com.mojang.renderpearl.api.device.GpuSurface.Configuration configuration, CallbackInfo ci) {
         try {
             VulkanRegistry.notifySwapchainRecreated();
         } finally {

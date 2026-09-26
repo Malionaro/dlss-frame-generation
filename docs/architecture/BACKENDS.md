@@ -213,5 +213,6 @@ the explicitly named cross-vendor FSR 3.1 proxy described above.
 4. Validate the named FSR 3.1 fallback on Intel hardware.
 5. Obtain and license-check official FSR 4 FG or XeSS-FG/XeLL runtimes before
    implementing either provider on top of the completed hybrid presenter.
-6. Create separate, version-guarded Minecraft 26.3 hooks if its renderer classes
-   or frame boundaries differ; the current compiled and tested target is 26.2.
+6. Minecraft 26.3 is the compiled target and the hooks are ported onto the
+   `renderpearl` API; the current hardware-tested target is still 26.2. Validate
+   the 26.3 build on RTX, AMD and Intel hardware.

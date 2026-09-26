@@ -1,7 +1,7 @@
 package org.malionaro.dlss_frame_generation.client.raytracing;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import org.lwjgl.PointerBuffer;

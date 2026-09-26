@@ -60,7 +60,7 @@ jobs:
           version: ${{ github.event.release.tag_name || github.ref_name }}
           changelog: ${{ github.event.release.body || 'Automated publish' }}
           loaders: fabric
-          game-versions: "26.2"
+          game-versions: "26.3"
           dependencies: |
             fabric-api | depends | *
             fabricloader | depends | >=0.19.5
@@ -77,7 +77,7 @@ jobs:
           version: ${{ github.event.release.tag_name || github.ref_name }}
           changelog: ${{ github.event.release.body || 'Automated publish' }}
           loaders: fabric
-          game-versions: "26.2"
+          game-versions: "26.3"
           fail-mode: fail
 
       - name: No publish configured

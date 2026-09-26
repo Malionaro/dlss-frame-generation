@@ -1,9 +1,10 @@
 package org.malionaro.dlss_frame_generation.client.mixin;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
-import com.mojang.blaze3d.vulkan.VulkanInstance;
-import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
-import com.mojang.blaze3d.vulkan.checkpoints.CheckpointExtension;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanInstance;
+import com.mojang.renderpearl.backend.vulkan.VulkanPhysicalDevice;
+import com.mojang.renderpearl.backend.vulkan.checkpoints.CheckpointExtension;
+import com.mojang.renderpearl.backend.vulkan.init.FeatureSet;
 import org.lwjgl.vulkan.VkDevice;
 import org.malionaro.dlss_frame_generation.client.interop.NativeLoader;
 import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
@@ -14,7 +15,6 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import com.mojang.blaze3d.shaders.ShaderSource;
 import java.util.Set;
 
 @Mixin(value = VulkanDevice.class, remap = false)
@@ -24,9 +24,12 @@ public class VulkanDeviceMixin implements VulkanDeviceAccess {
     @Unique
     private Set<String> dlss_fg$enabledExtensions = Set.of();
 
+    // 26.3 signature:
+    //   VulkanDevice(VulkanInstance, VulkanPhysicalDevice, FeatureSet, VkDevice, long, CheckpointExtension)
+    // ShaderSource is gone and the extension set moved into the FeatureSet record.
     @Inject(method = "<init>", at = @At("HEAD"))
-    private static void onInitHead(ShaderSource shaderSource, VulkanInstance instance, VulkanPhysicalDevice physicalDevice,
-                        Set<String> enabledExtensions, VkDevice vkDevice, long vma, CheckpointExtension checkpointExtension, CallbackInfo ci) {
+    private static void onInitHead(VulkanInstance instance, VulkanPhysicalDevice physicalDevice,
+                        FeatureSet enabledFeatures, VkDevice vkDevice, long vma, CheckpointExtension checkpointExtension, CallbackInfo ci) {
         // Load the Streamline interposer before VulkanDevice finishes. Streamline
         // needs to see the Vulkan calls, otherwise frame generation misses them.
         // This runs before super(), so there is no `this` yet. That is why Mixin
@@ -39,10 +42,12 @@ public class VulkanDeviceMixin implements VulkanDeviceAccess {
     }
 
     @Inject(method = "<init>", at = @At("RETURN"))
-    private void onInit(ShaderSource shaderSource, VulkanInstance instance, VulkanPhysicalDevice physicalDevice,
-                        Set<String> enabledExtensions, VkDevice vkDevice, long vma, CheckpointExtension checkpointExtension, CallbackInfo ci) {
+    private void onInit(VulkanInstance instance, VulkanPhysicalDevice physicalDevice,
+                        FeatureSet enabledFeatures, VkDevice vkDevice, long vma, CheckpointExtension checkpointExtension, CallbackInfo ci) {
         this.dlss_fg$physicalDevice = physicalDevice;
-        this.dlss_fg$enabledExtensions = Set.copyOf(enabledExtensions);
+        this.dlss_fg$enabledExtensions = (enabledFeatures == null || enabledFeatures.extensions() == null)
+                ? Set.of()
+                : Set.copyOf(enabledFeatures.extensions());
         VulkanRegistry.registerDevice((VulkanDevice) (Object) this);
     }
 

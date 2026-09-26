@@ -7,7 +7,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
-import org.lwjgl.glfw.GLFW;
+import org.lwjgl.sdl.SDLScancode;
 import org.malionaro.dlss_frame_generation.client.FrameGenMod;
 import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend;
 import org.malionaro.dlss_frame_generation.client.compat.CompatibilityManager;
@@ -26,24 +26,26 @@ public final class KeyBindings {
     }
 
     public static void register() {
+        // 26.3 replaced GLFW with SDL and dropped InputConstants.Type.SCANCODE,
+        // so the only keyboard type left is KEYBOARD. Its codes are SDL scancodes.
         toggleOsdKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.dlss_fg.toggle_osd",
-                InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_F8,
+                InputConstants.Type.KEYBOARD,
+                SDLScancode.SDL_SCANCODE_F8,
                 CATEGORY
         ));
 
         toggleFrameGenKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.dlss_fg.toggle_fg",
-                InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_F7,
+                InputConstants.Type.KEYBOARD,
+                SDLScancode.SDL_SCANCODE_F7,
                 CATEGORY
         ));
 
         openSettingsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.dlss_fg.open_settings",
-                InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_END,
+                InputConstants.Type.KEYBOARD,
+                SDLScancode.SDL_SCANCODE_END,
                 CATEGORY
         ));
 

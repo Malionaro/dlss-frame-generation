@@ -1,7 +1,7 @@
 package org.malionaro.dlss_frame_generation.client.raytracing;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
-import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanPhysicalDevice;
 import org.malionaro.dlss_frame_generation.client.access.VulkanDeviceAccess;
 
 import java.util.LinkedHashSet;

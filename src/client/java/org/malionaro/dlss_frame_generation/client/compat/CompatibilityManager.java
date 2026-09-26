@@ -17,7 +17,7 @@ import org.malionaro.dlss_frame_generation.client.render.adapter.VanillaVulkanAd
 import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

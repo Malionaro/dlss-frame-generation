@@ -1,9 +1,8 @@
 package org.malionaro.dlss_frame_generation.client.raytracing;
 
-import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
-import com.mojang.blaze3d.vulkan.VulkanBackend;
-import com.mojang.blaze3d.vulkan.init.VulkanFeature;
-import com.mojang.blaze3d.vulkan.init.VulkanPNextStruct;
+import com.mojang.renderpearl.backend.vulkan.VulkanPhysicalDevice;
+import com.mojang.renderpearl.backend.vulkan.init.VulkanFeature;
+import com.mojang.renderpearl.backend.vulkan.init.VulkanPNextStruct;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkPhysicalDeviceAccelerationStructureFeaturesKHR;
 import org.lwjgl.vulkan.VkPhysicalDeviceFeatures2;
@@ -26,16 +25,15 @@ import static org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2;
  * ray tracing must still be able to create Minecraft's normal Vulkan device.</p>
  */
 public final class RayTracingDeviceRequirements {
+    // 26.3 takes the LWJGL Struct subclass instead of (sType, sizeof) and derives
+    // both from it. The Vulkan 1.2 struct moved from VulkanBackend to
+    // VulkanFeatureSets, so the official one is reused.
     private static final VulkanPNextStruct ACCELERATION_STRUCTURE_FEATURES =
-            new VulkanPNextStruct(
-                    VkPhysicalDeviceAccelerationStructureFeaturesKHR.STYPE,
-                    VkPhysicalDeviceAccelerationStructureFeaturesKHR.SIZEOF
-            );
+            new VulkanPNextStruct(VkPhysicalDeviceAccelerationStructureFeaturesKHR.class);
     private static final VulkanPNextStruct RAY_QUERY_FEATURES =
-            new VulkanPNextStruct(
-                    VkPhysicalDeviceRayQueryFeaturesKHR.STYPE,
-                    VkPhysicalDeviceRayQueryFeaturesKHR.SIZEOF
-            );
+            new VulkanPNextStruct(VkPhysicalDeviceRayQueryFeaturesKHR.class);
+    private static final VulkanPNextStruct VK12_FEATURES_STRUCT =
+            com.mojang.renderpearl.backend.vulkan.VulkanFeatureSets.VK12_FEATURES_STRUCT;
 
     private static final VulkanFeature ACCELERATION_STRUCTURE =
             new VulkanFeature(
@@ -51,7 +49,7 @@ public final class RayTracingDeviceRequirements {
             );
     private static final VulkanFeature BUFFER_DEVICE_ADDRESS =
             new VulkanFeature(
-                    VulkanBackend.VK12_FEATURES_STRUCT,
+                    VK12_FEATURES_STRUCT,
                     "bufferDeviceAddress",
                     VkPhysicalDeviceVulkan12Features.BUFFERDEVICEADDRESS
             );

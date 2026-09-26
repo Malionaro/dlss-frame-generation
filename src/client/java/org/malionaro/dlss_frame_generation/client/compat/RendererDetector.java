@@ -2,7 +2,7 @@ package org.malionaro.dlss_frame_generation.client.compat;
 import org.malionaro.dlss_frame_generation.client.render.adapter.RendererBackend;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
 import net.fabricmc.loader.api.FabricLoader;
 import org.malionaro.dlss_frame_generation.client.mixin.GpuDeviceAccessor;
 
@@ -19,7 +19,7 @@ public final class RendererDetector {
 
     public static RendererDetection detect() {
         String description = readBackendDescription();
-        com.mojang.blaze3d.systems.GpuDevice device =
+        com.mojang.renderpearl.api.device.GpuDevice device =
                 RenderSystem.tryGetDevice();
         if (device instanceof GpuDeviceAccessor access
                 && access.dlss_fg$getBackend()

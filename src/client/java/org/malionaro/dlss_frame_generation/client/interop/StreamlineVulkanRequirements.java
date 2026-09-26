@@ -2,10 +2,11 @@ package org.malionaro.dlss_frame_generation.client.interop;
 import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 
-import com.mojang.blaze3d.vulkan.VulkanBackend;
-import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
-import com.mojang.blaze3d.vulkan.init.VulkanFeature;
-import com.mojang.blaze3d.vulkan.init.VulkanPNextStruct;
+import com.mojang.renderpearl.backend.vulkan.VulkanBackend;
+import com.mojang.renderpearl.backend.vulkan.VulkanPhysicalDevice;
+import com.mojang.renderpearl.backend.vulkan.init.VulkanFeature;
+import com.mojang.renderpearl.backend.vulkan.VulkanFeatureSets;
+import com.mojang.renderpearl.backend.vulkan.init.VulkanPNextStruct;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK;
 import org.lwjgl.vulkan.VkPhysicalDeviceFeatures2;
@@ -34,13 +35,14 @@ import static org.lwjgl.vulkan.VK13.VK_API_VERSION_1_3;
 public final class StreamlineVulkanRequirements {
     private static final Logger LOGGER =
             LoggerFactory.getLogger("dlss_fg.streamline");
-    private static final ThreadLocal<Set<String>> SELECTED_DEVICE_EXTENSIONS =
-            new ThreadLocal<>();
+    // 26.3 takes the LWJGL Struct subclass instead of (sType, sizeof) and
+    // derives both from it.
     private static final VulkanPNextStruct VK13_FEATURES_STRUCT =
-            new VulkanPNextStruct(
-                    VkPhysicalDeviceVulkan13Features.STYPE,
-                    VkPhysicalDeviceVulkan13Features.SIZEOF
-            );
+            new VulkanPNextStruct(VkPhysicalDeviceVulkan13Features.class);
+    // 26.3 moved the public feature-struct constants from VulkanBackend to
+    // VulkanFeatureSets, so the official struct is used instead of a local one.
+    private static final VulkanPNextStruct VK12_FEATURES_STRUCT =
+            VulkanFeatureSets.VK12_FEATURES_STRUCT;
 
     private StreamlineVulkanRequirements() {
     }
@@ -194,20 +196,6 @@ public final class StreamlineVulkanRequirements {
         return new Selection(Set.copyOf(extensions), Set.copyOf(features));
     }
 
-    public static void rememberSelectedDeviceExtensions(
-            Collection<String> extensions
-    ) {
-        SELECTED_DEVICE_EXTENSIONS.set(Set.copyOf(extensions));
-    }
-
-    public static Set<String> consumeSelectedDeviceExtensions(
-            Set<String> fallback
-    ) {
-        Set<String> selected = SELECTED_DEVICE_EXTENSIONS.get();
-        SELECTED_DEVICE_EXTENSIONS.remove();
-        return selected != null ? selected : Set.copyOf(fallback);
-    }
-
     private static String[] nativeRequirements(int kind) {
         try {
             String[] requirements =
@@ -245,7 +233,7 @@ public final class StreamlineVulkanRequirements {
         return feature(
                 featureName,
                 VkPhysicalDeviceVulkan12Features.class,
-                VulkanBackend.VK12_FEATURES_STRUCT
+                VK12_FEATURES_STRUCT
         );
     }
 

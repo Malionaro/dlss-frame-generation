@@ -12,14 +12,15 @@
 | **GPU** | Vulkan 1.3 Compatible GPU | Development/testing hardware; see backend status below |
 | **VRAM** | 4 GB VRAM | 8+ GB VRAM |
 | **Java** | Java 25 | Java 25 (Corretto / Temurin) |
-| **Minecraft** | 26.2 | 26.2 |
-| **Fabric** | 0.155.2+ | 0.155.2+ |
+| **Minecraft** | 26.3 | 26.3 |
+| **Fabric Loader** | 0.19.5+ | 0.19.5+ |
+| **Fabric API** | 0.161.0+26.3 | 0.161.0+26.3 |
 
 ### Step-by-Step Installation
 
 #### Step 1: Install Fabric Loader & API
-1. Install **Fabric Loader 0.155.2** (or newer) for Minecraft 26.2.
-2. Download **Fabric API 0.155.2+** (or newer) and place it into your `.minecraft/mods` directory.
+1. Install **Fabric Loader 0.19.5** (or newer) for Minecraft 26.3.
+2. Download **Fabric API 0.161.0+26.3** (or newer) and place it into your `.minecraft/mods` directory.
 
 #### Step 2: Download Mod Artifacts
 1. Build or download `dlss-frame-generation-1.0.0.jar`.
@@ -27,7 +28,7 @@
 3. **Automated DLL Extraction:** All native Streamline SDK DLLs (`sl.interposer.dll`, `sl.dlss_g.dll`, etc.) and FidelityFX/OptiScaler runtimes are bundled directly inside the `.jar` and extract automatically upon launching the game!
 
 #### Step 3: In-Game Settings and Controls
-1. Launch Minecraft 26.2.
+1. Launch Minecraft 26.3.
 2. Open menu: **Options... -> Video Settings... -> Frame Generation...**
    (or via **ModMenu**, or press **End** in game).
 3. Use shortcuts while playing:

@@ -1,13 +1,49 @@
 # Feature status and roadmap
 
-Status: September 2, 2026  
-Tested Minecraft target: **26.2**
+Status: September 26, 2026  
+Compiled Minecraft target: **26.3**  
+Hardware-validated Minecraft target: **26.2**
 
 This overview shows which features have already been proven to work,
 which still need real hardware tests and which are only prepared or
 planned. A visible setting is not automatically available on every GPU:
 The mod only enables features when GPU, driver, renderer,
 native runtime and all required frame data have been accepted.
+
+## 26.3 port notes
+
+Minecraft 26.3 replaced the renderer abstraction this mod hooks into.
+`com.mojang.blaze3d.systems` and `com.mojang.blaze3d.vulkan` were extracted into
+a new `com.mojang.renderpearl` library, several core GPU types became
+interfaces, and the windowing layer moved from GLFW to SDL. The port maps every
+hook onto its 26.3 equivalent:
+
+| 26.2 hook | 26.3 equivalent |
+|---|---|
+| `com.mojang.blaze3d.vulkan.*` | `com.mojang.renderpearl.backend.vulkan.*` |
+| `blaze3d.systems.GpuDevice` (class, `backend` field) | `renderpearl.frontend.FrontendGpuDevice` (the `backend` field moved to the implementation) |
+| `blaze3d.systems.GpuDeviceBackend` | `renderpearl.backend.api.GpuDeviceBackend` |
+| `blaze3d.systems.CommandEncoder`, `textures.GpuTexture(View)`, `shaders.ShaderSource` | `renderpearl.api.commands` / `.api.textures` / `.api.pipeline` |
+| `VulkanBackend.createDevice(Collection<String>, VulkanPhysicalDevice, Set<VulkanFeature>)` | private `createDevice(FeatureSet, VulkanPhysicalDevice)`, hooked at its call site inside `createDevice(GpuDebugOptions)`; the selection result is handed over as a `FeatureSet` |
+| `VulkanBackend.REQUIRED_DEVICE_EXTENSIONS`, `VulkanBackend.VK12_FEATURES_STRUCT` | `VulkanFeatureSets` (the constants moved there, they were not removed) |
+| `VulkanDevice(ShaderSource, …, Set<String>, …)` | `VulkanDevice(VulkanInstance, …, FeatureSet, …)` |
+| `GLFWNativeWin32.glfwGetWin32Window` | `SDLVideo.SDL_GetWindowProperties` + `SDLProperties.SDL_GetPointerProperty(…, SDL_PROP_WINDOW_WIN32_HWND_POINTER)` |
+| `InputConstants.Type.KEYSYM` + `GLFW_KEY_*` | `InputConstants.Type.KEYBOARD` + `SDL_SCANCODE_*` |
+| `GameRenderer.render(DeltaTracker, boolean)` | `GameRenderer.render()` |
+| `GameRenderer.renderLevel(DeltaTracker)` | `GameRenderer.renderLevel()` |
+
+`VulkanGpuSurface` is structurally unchanged: all seven accessed fields, the
+five hooked methods and all six LWJGL redirect points are identical in 26.3.
+`VulkanCommandEncoder.currentCommandBuffer` also survived; 26.3 only added a
+separate `currentInitCommandBuffer` and renamed `textureInitCommandBuffer()` to
+`objectInitCommandBuffer()`. Frame timing is self-measured with
+`System.nanoTime()`, so the loss of the `DeltaTracker` parameter in
+`GameRenderer.render` does not affect it.
+
+The port is compile-verified and all 57 mixin injection points, accessors and
+redirects were checked against the 26.3 jar. It has **not** been run on 26.3
+hardware yet, so the tables below still describe 26.2-validated behaviour and
+nothing here should be read as 26.3-validated.
 
 ## Status legend
 
@@ -102,12 +138,14 @@ native runtime and all required frame data have been accepted.
 
 | Combination | Status | Current state | Still to do |
 |---|---|---|---|
-| Vanilla Minecraft 26.2 + Vulkan | ✅ Tested target architecture | Currently compiled and tested main path | Test broader GPU/driver matrix |
+| Vanilla Minecraft 26.3 + Vulkan | 🧩 Compiled, not yet run | Current build target; boots through the Vulkan detection and swapchain hooks | Launch on 26.3 hardware and confirm the render path |
+| Vanilla Minecraft 26.2 + Vulkan | ✅ Tested | Last fully validated main path | Keep as the fallback until 26.3 is validated |
 | Sodium 0.9.1 + Vulkan | 🟡 Experimental | Uses public Mojang Vulkan resources instead of unstable private Sodium classes | Complete real mod JAR run with resize, reload and Vulkan validation |
 | Iris installed + Vulkan, shader pack off | 🟡 Experimental | Should use the same Vulkan path as Sodium; Iris state is detected | Validate real Iris 1.11.2 mod JAR run |
 | Active Iris shader pack / OpenGL | 🔒 Not available | Required final images are OpenGL resources instead of Vulkan resources | Only possible with a separate OpenGL/Iris resource integration |
 | Aperture material data | 🧩 Foundation present | `RendererIntegration` and `MaterialProvider` define a frame-atomic contract | Implement a real Aperture provider and its material/synchronization path |
-| Minecraft 26.3 | 🧩 Foundation present | Documented as the next target, but not claimed as currently tested | Check and version renderer classes, mixins, frame boundaries and ABI separately |
+| Minecraft 26.3 | 🧩 Compiled, not yet run | Fully ported onto the `renderpearl` API and the SDL windowing layer; all 57 mixin points verified against the 26.3 jar | Launch on 26.3 hardware and validate the full feature matrix |
+| Minecraft 26.2 | ✅ Tested | Last fully validated target, including RTX and AMD sessions | Keep as the fallback until 26.3 is validated |
 
 ## 2026-09-02 Fix round (P0, P1, P2)
 
@@ -142,15 +180,18 @@ native runtime and all required frame data have been accepted.
 
 ## Recommended next steps
 
-1. Validate NVIDIA DLSS-G, DLSS-RR, Reflex and the D3D12 path on an RTX 40 GPU
+1. Launch the 26.3 build on a Vulkan machine and confirm the game boots, the
+   renderer is detected as Vulkan, and frame generation, ray tracing and the
+   D3D12 transport still come up on an RTX or AMD GPU.
+2. Validate NVIDIA DLSS-G, DLSS-RR, Reflex and the D3D12 path on an RTX 40 GPU
    with resize, VSync, tearing and fullscreen.
-2. Validate FSR 3.1 Frame Generation and pacing on an AMD GPU.
-3. Validate XeSS Native AA and the named FSR 3.1 fallback on Intel Arc.
-4. Check Sodium 0.9.1 and Iris 1.11.2 as real mod JARs in a reproducible
+3. Validate FSR 3.1 Frame Generation and pacing on an AMD GPU.
+4. Validate XeSS Native AA and the named FSR 3.1 fallback on Intel Arc.
+5. Check Sodium 0.9.1 and Iris 1.11.2 as real mod JARs in a reproducible
    test instance.
-5. Tune dynamic resolution and motion blur on NVIDIA, AMD and Intel hardware.
-6. Create separate, version-protected Minecraft 26.3 hooks.
-7. Implement FSR 4 FG or XeSS FG only after receiving and checking the license for the official vendor files.
+6. Tune dynamic resolution and motion blur on NVIDIA, AMD and Intel hardware.
+7. Implement FSR 4 FG or XeSS FG only after receiving and checking the license
+   for the official vendor files.
 
 Further technical details are in
 [BACKENDS.md](../architecture/BACKENDS.md),

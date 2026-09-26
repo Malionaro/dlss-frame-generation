@@ -15,9 +15,9 @@ import org.malionaro.dlss_frame_generation.client.interop.OptiScalerIntegration;
 import org.malionaro.dlss_frame_generation.client.render.adapter.RendererBackendAdapter;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
-import com.mojang.blaze3d.vulkan.VulkanGpuSurface;
-import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuSurface;
+import com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.state.GameRenderState;
 import org.joml.Matrix4f;
@@ -879,11 +879,11 @@ public final class VulkanRegistry {
                 || frameGenerationPipeline == null || renderTarget == null
                 || outputTarget == null
                 || !(renderTarget.getColorTextureView() instanceof
-                        com.mojang.blaze3d.vulkan.VulkanGpuTextureView colorView)
+                        com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView colorView)
                 || !(renderTarget.getDepthTextureView() instanceof
-                        com.mojang.blaze3d.vulkan.VulkanGpuTextureView depthView)
+                        com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView depthView)
                 || !(outputTarget.getColorTextureView() instanceof
-                        com.mojang.blaze3d.vulkan.VulkanGpuTextureView outputView)
+                        com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView outputView)
                 || !(activeEncoder instanceof
                         org.malionaro.dlss_frame_generation.client.mixin.VulkanCommandEncoderAccessor
                         encoderAccess)) {
@@ -921,7 +921,7 @@ public final class VulkanRegistry {
         boolean paused = minecraft.isPaused();
         if (paused) {
             try {
-                // D1: lifecycle – delegate to backend so VulkanRegistry has no direct nSet* path
+                // D1: lifecycle ÔÇô delegate to backend so VulkanRegistry has no direct nSet* path
                 backend.disableForPause(config);
             } catch (UnsatisfiedLinkError ignored) {
                 // The normal unsupported-provider path remains fail-closed.
@@ -1121,7 +1121,7 @@ public final class VulkanRegistry {
                 || backend == null
                 || currentFrameResources == null
                 || !(uiTarget.getColorTextureView() instanceof
-                        com.mojang.blaze3d.vulkan.VulkanGpuTextureView uiView)
+                        com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView uiView)
                 || !(activeEncoder instanceof
                         org.malionaro.dlss_frame_generation.client.mixin.VulkanCommandEncoderAccessor
                         encoderAccess)) {

@@ -3,7 +3,6 @@ package org.malionaro.dlss_frame_generation.client.mixin;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.MainTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
-import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.state.GameRenderState;
 import org.joml.Vector4f;
@@ -33,8 +32,11 @@ public class GameRendererMixin {
     @Unique private RenderTarget dlss_fg$worldTargetForFrame;
     @Unique private boolean dlss_fg$separateUiForFrame;
 
+    // 26.3 changed GameRenderer#render from (DeltaTracker, boolean) to (), so every
+    // handler below takes only the CallbackInfo. The DeltaTracker that used to be
+    // passed here is obtained from RenderSystem where a frame delta is needed.
     @Inject(method = "render", at = @At("HEAD"))
-    private void onRenderStart(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
+    private void onRenderStart(CallbackInfo ci) {
         if (dlss_fg$displayTarget != null) {
             // A previous frame always hands control back to Minecraft with the
             // display target active. Enforce that invariant before vanilla's
@@ -51,7 +53,7 @@ public class GameRendererMixin {
     }
 
     @Inject(method = "render", at = @At("RETURN"))
-    private void onRenderEnd(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
+    private void onRenderEnd(CallbackInfo ci) {
         if (dlss_fg$displayTarget != null) {
             mainRenderTarget = dlss_fg$displayTarget;
         }
@@ -66,10 +68,10 @@ public class GameRendererMixin {
         method = "render",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel(Lnet/minecraft/client/DeltaTracker;)V"
+            target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel()V"
         )
     )
-    private void prepareReducedResolutionWorld(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
+    private void prepareReducedResolutionWorld(CallbackInfo ci) {
         dlss_fg$displayTarget = mainRenderTarget;
         NvidiaDlssRenderResolution.Resolution resolution =
                 VulkanRegistry.resolveWorldResolution(
@@ -123,10 +125,10 @@ public class GameRendererMixin {
         method = "render",
         at = @At(
             value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/systems/CommandEncoder;clearDepthTexture(Lcom/mojang/blaze3d/textures/GpuTexture;D)V"
+            target = "Lcom/mojang/renderpearl/api/commands/CommandEncoder;clearDepthTexture(Lcom/mojang/renderpearl/api/textures/GpuTexture;D)V"
         )
     )
-    private void captureSceneBeforeHud(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
+    private void captureSceneBeforeHud(CallbackInfo ci) {
         RenderTarget worldTarget = dlss_fg$worldTargetForFrame != null
                 ? dlss_fg$worldTargetForFrame
                 : mainRenderTarget;
@@ -182,7 +184,7 @@ public class GameRendererMixin {
             shift = At.Shift.AFTER
         )
     )
-    private void compositeFullResolutionUi(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
+    private void compositeFullResolutionUi(CallbackInfo ci) {
         if (!dlss_fg$separateUiForFrame
                 || dlss_fg$uiTarget == null
                 || dlss_fg$displayTarget == null) {

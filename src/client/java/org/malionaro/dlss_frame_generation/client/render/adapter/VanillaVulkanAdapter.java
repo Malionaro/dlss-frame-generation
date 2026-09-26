@@ -3,9 +3,9 @@ import org.malionaro.dlss_frame_generation.client.frame.FrameIdentity;
 import org.malionaro.dlss_frame_generation.client.frame.FrameResourceSet;
 import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
-import com.mojang.blaze3d.vulkan.VulkanGpuSurface;
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuSurface;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import net.minecraft.client.Minecraft;
 import org.malionaro.dlss_frame_generation.client.access.VulkanDeviceAccess;
@@ -180,14 +180,14 @@ public final class VanillaVulkanAdapter implements RendererBackendAdapter {
 
     @Override
     public long getCurrentCommandBuffer() {
-        com.mojang.blaze3d.vulkan.VulkanCommandEncoder encoder = VulkanRegistry.getActiveEncoder();
-        if (encoder instanceof org.malionaro.dlss_frame_generation.client.mixin.VulkanCommandEncoderAccessor accessor) {
-            org.lwjgl.vulkan.VkCommandBuffer buffer = accessor.dlss_fg$getCurrentCommandBuffer();
+        com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder encoder = VulkanRegistry.getActiveEncoder();
+        if (encoder instanceof VulkanCommandEncoderAccessor accessor) {
+            VkCommandBuffer buffer = accessor.dlss_fg$getCurrentCommandBuffer();
             if (buffer != null) {
                 return buffer.address();
             }
         }
-        return 0;
+        return 0L;
     }
 
     @Override

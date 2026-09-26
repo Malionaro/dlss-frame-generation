@@ -1,6 +1,6 @@
 package org.malionaro.dlss_frame_generation.client.access;
 
-import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanPhysicalDevice;
 
 import java.util.Set;
 
