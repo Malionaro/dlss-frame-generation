@@ -25,16 +25,17 @@ jobs:
           distribution: corretto
           java-version: "25"
           cache: gradle
-      - name: Run Gradle check (tests + any spotless/checkstyle if configured)
-        # 'test' instead of 'check': the JNI bridge is Windows-only
-        # (unconditional D3D12/dxgipresenter usage, Streamline .lib/.dll) and
-        # is covered by the Windows build job. Ubuntu lint validates Java.
+      - name: Run Gradle tests
+        # The JNI bridge is Windows-only (d3d12/dxgi + the Streamline import
+        # library) and is covered by the Windows build job. build.gradle gates
+        # buildNative/copyNative/copyStreamlineRuntime on a Windows host, so the
+        # native steps are skipped here instead of failing the compile.
+        # Keep the chmod: it is a no-op once the executable bit is committed and
+        # the only thing standing between a mode regression and "Permission
+        # denied" on the runner.
         run: |
           chmod +x ./gradlew
-          ./gradlew test --no-daemon --stacktrace || {
-            echo "::warning::Gradle check failed or not fully configured - see logs"
-            exit 1
-          }
+          ./gradlew test --no-daemon --stacktrace
 
   cpp-format:
     name: C++ clang-format

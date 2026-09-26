@@ -7,3 +7,8 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
+
+// Without this Gradle derives the project name from the checkout directory,
+// which here is "DLSS Frame Generation" (spaces + capitals). Pin it so the name
+// is stable across machines and IDE checkouts.
+rootProject.name = 'dlss-frame-generation'

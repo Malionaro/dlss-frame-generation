@@ -44,16 +44,23 @@ jobs:
       - name: Build native bridge, shaders, tests and mod JAR
         run: .\gradlew.bat build --no-daemon --stacktrace
 
+      # actions/upload-artifact does not support "!pattern" negation entries in
+      # `path`; the sources JAR has to be removed before the upload.
+      - name: Drop sources JAR from the artifact
+        run: Remove-Item build/libs/*-sources.jar -ErrorAction SilentlyContinue
+
       - name: Upload mod JAR
         uses: actions/upload-artifact@v7
         with:
           name: dlss-frame-generation-${{ github.sha }}
-          path: |
-            build/libs/dlss-frame-generation-*.jar
-            !build/libs/*-sources.jar
+          path: build/libs/dlss-frame-generation-*.jar
           if-no-files-found: error
           compression-level: 0
-          retention-days: 14
+          # The mod JAR is ~141 MB and this workflow runs on every push. The
+          # org artifact quota is shared with every other workflow in the repo,
+          # so a long retention window fills it and every later run fails with
+          # "Artifact storage quota has been hit". Keep the window short.
+          retention-days: 3
 
       - name: Upload test reports on failure
         if: failure()
@@ -65,4 +72,4 @@ jobs:
             build/test-results/
             build/native/**/*.log
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 3

@@ -1,5 +1,5 @@
 plugins {
-    id 'net.fabricmc.fabric-loom' version '1.17.20'
+    id 'net.fabricmc.fabric-loom' version '1.18.2'
     id 'maven-publish'
 }
 
@@ -62,11 +62,12 @@ dependencies {
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-    clientCompileOnly "com.terraformersmc:modmenu:20.0.2"
+    // 21.x is the first ModMenu line that supports Minecraft 26.3.
+    clientCompileOnly "com.terraformersmc:modmenu:20.0.3"
 
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.14.4'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.14.4'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.14.4'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:6.1.3'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.3'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.3'
 }
 
 test {
@@ -79,10 +80,21 @@ test {
 def nativeSourceDirectory = layout.projectDirectory.dir("native")
 def nativeBuildDirectory = layout.buildDirectory.dir("native")
 
+// The JNI bridge is Windows-only: it links d3d12/dxgi, uses the Streamline
+// import library and calls into the DXGI presenter. CMake's non-Windows branch
+// only exists so `cmake -S native -B ...` configures, it cannot compile these
+// translation units. Without this gate every `test` run on Linux/macOS fails in
+// `buildNative`, because `test` -> `processTestResources` -> `classes` ->
+// `processResources` -> `copyNative` -> `buildNative`.
+def nativeHostIsWindows =
+        System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win")
+def nativeBuildSupported = {
+    nativeHostIsWindows && nativeSourceDirectory.file("CMakeLists.txt").asFile.isFile()
+            && file("native/streamline").isDirectory()
+}
+
 def findCMakeExecutable = {
-    def executableName = System.getProperty("os.name").toLowerCase().contains("windows")
-            ? "cmake.exe"
-            : "cmake"
+    def executableName = nativeHostIsWindows ? "cmake.exe" : "cmake"
     def candidates = []
     def pathValue = System.getenv("PATH")
     if (pathValue) {
@@ -99,16 +111,12 @@ def findCMakeExecutable = {
 }
 
 def cmakeExecutable = findCMakeExecutable()
-def nativeBridgeSourcesPresent = {
-    nativeSourceDirectory.file("CMakeLists.txt").asFile.isFile()
-            && file("native/streamline").isDirectory()
-}
 
 tasks.register("buildNative", Exec) {
     group = "build"
     description = "Builds the JNI bridge when its source and SDK files are present."
     dependsOn("configureNative")
-    onlyIf(nativeBridgeSourcesPresent)
+    onlyIf(nativeBuildSupported)
     // D11: declared inputs (bridge sources + CMakeLists) and outputs so the
     // Exec re-runs exactly when sources change and skips otherwise. The output
     // overlap with configureNative is covered by the explicit dependsOn.
@@ -139,7 +147,7 @@ tasks.register("configureNative", Exec) {
     inputs.dir(nativeSourceDirectory.dir("bridge"))
     inputs.property("cmakeExecutable", cmakeExecutable ?: "cmake")
     outputs.dir(nativeBuildDirectory)
-    onlyIf(nativeBridgeSourcesPresent)
+    onlyIf(nativeBuildSupported)
     doFirst {
         if (cmakeExecutable == null) {
             throw new GradleException("CMake is required to build the JNI bridge. Install CMake or add it to PATH.")
@@ -152,7 +160,7 @@ tasks.register("copyNative") {
     group = "build"
     description = "Copies the JNI native library into resource folder."
     dependsOn("buildNative")
-    onlyIf(nativeBridgeSourcesPresent)
+    onlyIf(nativeBuildSupported)
     // D11: declared inputs/outputs for correct incrementality and caching.
     def nativeOutBase = layout.buildDirectory.dir("native-resources/natives")
     inputs.dir(nativeBuildDirectory)
@@ -183,7 +191,8 @@ tasks.register("copyNative") {
 tasks.register("copyStreamlineRuntime", Copy) {
     group = "build"
     description = "Copies NVIDIA Streamline SDK runtime DLLs into native resource folder."
-    onlyIf { file("native/streamline/bin/x64").isDirectory() }
+    // These are Windows DLLs; a Linux/macOS JAR would only carry dead weight.
+    onlyIf { nativeHostIsWindows && file("native/streamline/bin/x64").isDirectory() }
 
     from("native/streamline/bin/x64") {
         include "sl.interposer.dll"
@@ -465,8 +474,12 @@ java {
 }
 
 jar {
+    // Resolve at configuration time: Task.project access inside the rename
+    // closure runs at execution time, which is deprecated in Gradle 9 and a hard
+    // error in Gradle 10 (it also blocks the configuration cache).
+    def licenseFileName = "LICENSE.txt_${project.archives_base_name}"
     from("LICENSE.txt") {
-        rename { "${it}_${project.archives_base_name}" }
+        rename { licenseFileName }
     }
     from("THIRD_PARTY_NOTICES.md")
 }
