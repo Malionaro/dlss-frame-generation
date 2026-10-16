@@ -8,6 +8,7 @@ import org.malionaro.dlss_frame_generation.client.compat.CompatibilityManager;
 import org.malionaro.dlss_frame_generation.client.compat.RendererDetection;
 import org.malionaro.dlss_frame_generation.client.compat.ShaderPipelineState;
 import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
+import org.malionaro.dlss_frame_generation.client.diagnostics.FrameGenerationUiStatus;
 import org.malionaro.dlss_frame_generation.client.diagnostics.BackendStatusFormatter;
 import org.malionaro.dlss_frame_generation.client.diagnostics.FrameGenTestRunner;
 import org.malionaro.dlss_frame_generation.client.FrameGenMod;
@@ -17,6 +18,7 @@ import org.malionaro.dlss_frame_generation.client.interop.OptiScalerIntegration;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 import org.malionaro.dlss_frame_generation.client.ui.diagnostics.DiagnosticsScreen;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
@@ -43,6 +45,18 @@ public class MultiVendorSettingsScreen extends Screen {
     private final List<AbstractWidget> scrollableWidgets = new ArrayList<>();
     private final Map<AbstractWidget, Integer> widgetBaseY = new IdentityHashMap<>();
     private long vramBytes = 0;
+    // DLSS-G reports 0 whenever it is not running, so a raw zero cannot be
+    // told apart from "no measurement". Keep the last real reading so the
+    // menu does not show a misleading 0.00 MB after the game paused.
+    private long lastKnownVramBytes = 0;
+    private FrameGenerationUiStatus.Kind fgStatus = FrameGenerationUiStatus.Kind.UNSUPPORTED;
+    // Measured present rate. Frame-generation output frames are presented
+    // inside the Streamline interposer, below this mod's present hook, so
+    // they cannot be counted here - only the input rate is measurable.
+    private double presentsPerSecond;
+    private long lastPresentSampleNanos;
+    private long lastPresentSampleCount;
+    private int fgMultiplier = 1;
     private int tickCount = 0;
     private int activeSection = 0; // 0 = Frame Generation, 1 = Graphics
     private int activeTab = 0; // 0 = NVIDIA DLSS, 1 = AMD FSR, 2 = Intel XeSS
@@ -60,18 +74,93 @@ public class MultiVendorSettingsScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
-        if (tickCount++ % 20 == 0) {
-            if (activeSection != 0) {
-                vramBytes = 0;
-                return;
-            }
-            try {
-                FrameGenerationBackend backend = backendForTab();
-                vramBytes = backend != null ? backend.estimatedVramUsageBytes() : 0;
-            } catch (UnsatisfiedLinkError e) {
-                vramBytes = 0;
-            }
+        // Sample every tick, not every 20: the status itself must react to the
+        // menu being closed, otherwise it keeps claiming "no world loaded".
+        sampleStatus();
+    }
+
+    private void sampleStatus() {
+        if (activeSection != 0) {
+            return;
         }
+        FrameGenerationBackend backend = backendForTab();
+        Minecraft minecraft = Minecraft.getInstance();
+        boolean levelLoaded = minecraft != null && minecraft.level != null;
+        boolean paused = minecraft != null && minecraft.isPaused();
+        boolean nativeActive = false;
+        boolean supported = false;
+        String nativeStatus = "";
+        try {
+            supported = backend != null && backend.isSupported();
+            nativeStatus = backend != null ? backend.statusDescription() : "";
+            nativeActive = backend != null && backend.isFrameGenerationActive();
+        } catch (UnsatisfiedLinkError ignored) {
+            // Treat a missing native entry point as unsupported.
+        }
+        FrameGenConfig config = FrameGenConfig.getInstance();
+        boolean enabledInSettings = backend != null
+                && config.isFrameGenerationEnabled(backend.vendor());
+        fgStatus = FrameGenerationUiStatus.resolve(
+                supported,
+                levelLoaded,
+                paused,
+                enabledInSettings,
+                nativeStatus,
+                nativeActive
+        );
+        fgMultiplier = samplePresentRate();
+        if (backend == null) {
+            return;
+        }
+        // slDLSSGGetState is the expensive call, so keep it at ~1 Hz. The
+        // status above stays per-tick so it reacts to the menu closing.
+        if (tickCount++ % 20 != 0) {
+            return;
+        }
+        try {
+            long sampled = backend.estimatedVramUsageBytes();
+            if (sampled > 0L) {
+                lastKnownVramBytes = sampled;
+            }
+            vramBytes = FrameGenerationUiStatus.vramReadingIsMeaningful(
+                    fgStatus, sampled
+            ) ? sampled : lastKnownVramBytes;
+        } catch (UnsatisfiedLinkError e) {
+            vramBytes = lastKnownVramBytes;
+        }
+    }
+
+    /**
+     * Measures completed presents per second and returns the configured
+     * frame-generation multiplier.
+     *
+     * <p>Only the input present rate is measurable from here: generated
+     * frames are presented by the Streamline interposer beneath this mod's
+     * present hook, so the displayed total is explicitly derived, not
+     * counted.</p>
+     */
+    private int samplePresentRate() {
+        long now = System.nanoTime();
+        long count = org.malionaro.dlss_frame_generation.client.render
+                .VulkanRegistry.getCompletedPresentCount();
+        if (lastPresentSampleNanos != 0L) {
+            double seconds = (now - lastPresentSampleNanos) / 1_000_000_000.0;
+            if (seconds >= 0.4) {
+                presentsPerSecond = (count - lastPresentSampleCount) / seconds;
+                lastPresentSampleNanos = now;
+                lastPresentSampleCount = count;
+            }
+        } else {
+            lastPresentSampleNanos = now;
+            lastPresentSampleCount = count;
+        }
+        int multiplier = 1;
+        try {
+            multiplier = Math.max(1, FrameGenConfig.getInstance().frameMultiplier);
+        } catch (RuntimeException ignored) {
+            multiplier = 1;
+        }
+        return multiplier;
     }
 
     public <T extends AbstractWidget> T addSettingsWidget(T widget) {
@@ -455,6 +544,14 @@ public class MultiVendorSettingsScreen extends Screen {
                     .create(leftX, presetY, columnWidth, 20,
                             Component.translatable("dlss_fg.option.preset"), (button, value) -> {
                                 config.applyPreset(value);
+                                // D1: presets mutate the config directly, so they
+                                // must push it to native like every other panel.
+                                // Without this the render target resizes on the
+                                // next frame (resolveWorldResolution reads the
+                                // config) while g_dlssMode keeps the old value —
+                                // e.g. DLAA stays configured for a reduced render
+                                // target and Streamline produces no output.
+                                FrameGenerationBackend.applyActiveConfig(config);
                                 scrollOffset = 0;
                                 this.rebuildWidgets();
                             });
@@ -875,50 +972,92 @@ public class MultiVendorSettingsScreen extends Screen {
             );
         } else {
             FrameGenerationBackend backend = backendForTab();
-            boolean active = backend != null && backend.isFrameGenerationActive();
+            FrameGenerationUiStatus.Kind status = fgStatus;
+            boolean active = status == FrameGenerationUiStatus.Kind.ACTIVE;
             if (backend != null) {
-                int statusColor = active ? 0xFF00C000 : 0xFFFFAA00;
-                double vramMb = (double) vramBytes / (1024.0 * 1024.0);
-                String nativeStatus = backend.statusDescription();
-                Component readableStatus = BackendStatusFormatter.description(
-                        nativeStatus,
-                        backend.isSupported(),
-                        active
-                );
+                int statusColor = switch (status) {
+                    case ACTIVE -> 0xFF00C000;
+                    case WAITING_FOR_INPUTS -> 0xFFFFAA00;
+                    // Menu / pause / switched off are all expected states, not
+                    // faults, so they must not look like an error.
+                    case NO_WORLD, PAUSED, DISABLED_IN_SETTINGS -> 0xFFB0B0B0;
+                    case UNSUPPORTED -> 0xFFFF5555;
+                };
                 extractor.centeredText(
                         this.font,
                         Component.literal(fitHeaderLine(
                                 Component.translatable(
                                         "dlss_fg.status.header.backend",
                                         backend.vendor().displayName(),
-                                        readableStatus
+                                        Component.translatable(
+                                                status.translationKey()
+                                        )
                                 ).getString()
                         )),
                         this.width / 2,
                         STATUS_PRIMARY_Y,
                         statusColor
                 );
+                boolean vramKnown = vramBytes > 0L;
+                double measuredFps = presentsPerSecond;
+                // Derived, not measured: generated frames are presented inside
+                // the interposer and cannot be observed from this mod.
+                double derivedTotal = active && fgMultiplier > 1
+                        ? measuredFps * fgMultiplier
+                        : measuredFps;
+                Component metrics = vramKnown
+                        ? Component.translatable(
+                                "dlss_fg.status.header.frame_metrics",
+                                Component.translatable(
+                                        active
+                                                ? "dlss_fg.value.yes"
+                                                : "dlss_fg.value.no"
+                                ),
+                                String.format(
+                                        java.util.Locale.ROOT,
+                                        "%.2f",
+                                        (double) vramBytes / (1024.0 * 1024.0)
+                                )
+                        )
+                        : Component.translatable(
+                                "dlss_fg.status.header.frame_metrics.no_vram",
+                                Component.translatable(
+                                        active
+                                                ? "dlss_fg.value.yes"
+                                                : "dlss_fg.value.no"
+                                )
+                        );
                 extractor.centeredText(
                         this.font,
-                        Component.literal(fitHeaderLine(
-                                Component.translatable(
-                                        "dlss_fg.status.header.frame_metrics",
-                                        Component.translatable(
-                                                active
-                                                        ? "dlss_fg.value.yes"
-                                                        : "dlss_fg.value.no"
-                                        ),
-                                        String.format(
-                                                java.util.Locale.ROOT,
-                                                "%.2f",
-                                                vramMb
-                                        )
-                                ).getString()
-                        )),
+                        Component.literal(fitHeaderLine(metrics.getString())),
                         this.width / 2,
                         STATUS_SECONDARY_Y,
                         0xFFB0B0B0
                 );
+                if (measuredFps > 1.0) {
+                    extractor.centeredText(
+                            this.font,
+                            Component.literal(fitHeaderLine(
+                                    Component.translatable(
+                                            "dlss_fg.status.header.present_rate",
+                                            String.format(
+                                                    java.util.Locale.ROOT,
+                                                    "%.0f",
+                                                    measuredFps
+                                            ),
+                                            fgMultiplier,
+                                            String.format(
+                                                    java.util.Locale.ROOT,
+                                                    "%.0f",
+                                                    derivedTotal
+                                            )
+                                    ).getString()
+                            )),
+                            this.width / 2,
+                            STATUS_SECONDARY_Y + 11,
+                            0xFF80C0FF
+                    );
+                }
             } else {
                 extractor.centeredText(
                         this.font,

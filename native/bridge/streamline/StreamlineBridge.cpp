@@ -4,6 +4,7 @@
 #include "FidelityFxBridge.h"
 #include <algorithm>
 #include <atomic>
+#include <filesystem>
 #include <iostream>
 #include <iterator>
 #include <mutex>
@@ -58,12 +59,28 @@ static std::atomic<VkDevice> g_streamlineDevice = VK_NULL_HANDLE;
 static sl::ViewportHandle g_viewport(0);
 static sl::FrameToken* g_currentFrameToken = nullptr;
 static bool g_frameTokenRefreshedForCurrentFrame = false;
+// Streamline rejects a second slSetConstants for the same frame token with
+// eErrorDuplicatedConstants. Upscaling, frame generation and ray
+// reconstruction all run inside one frame and share the token, so constants
+// are submitted exactly once per token.
+static bool g_constantsSetForCurrentFrameToken = false;
 static uint32_t g_frameIndex = 0;
 static std::atomic<int> g_dlssMode = 0;
 static std::vector<std::string> g_requiredInstanceExtensions;
 static std::vector<std::string> g_requiredDeviceExtensions;
 static std::vector<std::string> g_requiredFeatures12;
 static std::vector<std::string> g_requiredFeatures13;
+static std::wstring g_logsPath;
+
+static void ensureDirectory(const std::wstring& path) {
+    if (path.empty()) return;
+    std::error_code error;
+    std::filesystem::create_directories(std::filesystem::path(path), error);
+    if (error) {
+        std::cerr << "[DLSS_FG_Native] Could not create Streamline log directory: "
+                  << error.message() << std::endl;
+    }
+}
 
 static void appendUnique(
     std::vector<std::string>& destination,
@@ -208,6 +225,33 @@ static std::string dlssgStatusSummary(sl::DLSSGStatus status) {
     return result;
 }
 
+// Submits frame constants exactly once per Streamline frame token.
+//
+// The DLSS-SR, DLSS-G and DLSS-RR submit paths all execute inside a single
+// frame and intentionally share g_currentFrameToken. Calling slSetConstants a
+// second time for the same token is rejected with eErrorDuplicatedConstants,
+// which used to drop the whole frame. All three callers derive the constants
+// from the same matrices, camera and jitter, so the first submission carries
+// the authoritative values.
+static sl::Result setConstantsOnce(const sl::Constants& constants) {
+    if (g_currentFrameToken != nullptr
+        && g_constantsSetForCurrentFrameToken) {
+        return sl::Result::eOk;
+    }
+    const sl::Result result =
+        slSetConstants(constants, *g_currentFrameToken, g_viewport);
+    if (result == sl::Result::eOk) {
+        g_constantsSetForCurrentFrameToken = true;
+    }
+    return result;
+}
+
+// Marks the current token as consumed so the next frame acquires a fresh one.
+static void invalidateFrameTokenState() {
+    g_frameTokenRefreshedForCurrentFrame = false;
+    g_constantsSetForCurrentFrameToken = false;
+}
+
 static sl::Result applyDlssgOptions(
     bool enabled,
     int multiplier,
@@ -226,6 +270,20 @@ static sl::Result applyDlssgOptions(
     return slDLSSGSetOptions(g_viewport, options);
 }
 
+// DLSS-G runtime readiness is the single most important signal for frame
+// generation, but g_nvidiaStatus only reaches latest.log when the Java
+// accept/reject state happens to flip — which is rare. Mirror runtime
+// failures to stderr (Minecraft captures it as [DLSS_FG_Native]) so the
+// reason is visible instead of silently stalling at "not active".
+static std::string g_lastDlssgFailure;
+static bool g_dlssgRuntimeReported = false;
+static void reportDlssgFailure(const std::string& message) {
+    if (message == g_lastDlssgFailure) return;
+    g_lastDlssgFailure = message;
+    g_dlssgRuntimeReported = false;
+    std::cerr << "[DLSS_FG_Native] " << message << std::endl;
+}
+
 static bool finalizeDlssgFrame(
     bool enabled,
     int multiplier,
@@ -239,6 +297,7 @@ static bool finalizeDlssgFrame(
     if (optionsResult != sl::Result::eOk) {
         g_nvidiaStatus = "DLSS-G options were rejected (" +
             std::to_string(static_cast<int>(optionsResult)) + ")";
+        reportDlssgFailure(g_nvidiaStatus);
         return false;
     }
 
@@ -249,6 +308,7 @@ static bool finalizeDlssgFrame(
         if (stateResult != sl::Result::eOk) {
             g_nvidiaStatus = "DLSS-G state query failed (" +
                 std::to_string(static_cast<int>(stateResult)) + ")";
+            reportDlssgFailure(g_nvidiaStatus);
             return false;
         }
         g_maxFrameMultiplier =
@@ -260,9 +320,21 @@ static bool finalizeDlssgFrame(
                 g_nvidiaStatus += "; minimum dimension " +
                     std::to_string(state.minWidthOrHeight);
             }
+            reportDlssgFailure(g_nvidiaStatus);
             return false;
         }
         g_dlssgRuntimeReady = true;
+        // Announce the transition into runtime-ready exactly once. The
+        // previous version only spoke up after recovering from a failure, so
+        // a provider that came up cleanly on the first try stayed silent —
+        // which is indistinguishable from "never reached runtime".
+        if (!g_dlssgRuntimeReported) {
+            g_dlssgRuntimeReported = true;
+            g_lastDlssgFailure.clear();
+            std::cerr << "[DLSS_FG_Native] DLSS-G runtime ready, generates up "
+                      << "to " << g_maxFrameMultiplier
+                      << " frames per presented frame" << std::endl;
+        }
     }
 
     g_nvidiaStatus = g_dlssgEnabled
@@ -275,7 +347,7 @@ static bool finalizeDlssgFrame(
     } else {
         framegen::markProviderReady(g_nvidiaStatus);
     }
-    g_frameTokenRefreshedForCurrentFrame = false;
+    invalidateFrameTokenState();
     return true;
 }
 
@@ -350,13 +422,22 @@ static bool initializeCore(JNIEnv* env, jstring pluginsPath) {
 
     const wchar_t* paths[] = { path.c_str() };
 
+    // Logs and data must not share the plugins directory: that one is a
+    // deleteOnExit temp directory, so the SDK log would be removed together
+    // with the failure it exists to explain.
+    const std::wstring& logsAndData = g_logsPath.empty() ? path : g_logsPath;
+    ensureDirectory(logsAndData);
+
     sl::Preferences pref{};
     pref.showConsole = false;
-    pref.logLevel = sl::LogLevel::eDefault;
+    // Verbose, not Default: the reason a feature is rejected is only recorded
+    // at the verbose level, and a rejected feature cannot be diagnosed from
+    // our own log.
+    pref.logLevel = sl::LogLevel::eVerbose;
     pref.renderAPI = sl::RenderAPI::eVulkan;
     pref.pathsToPlugins = path.empty() ? nullptr : paths;
     pref.numPathsToPlugins = path.empty() ? 0 : 1;
-    pref.pathToLogsAndData = path.empty() ? nullptr : path.c_str();
+    pref.pathToLogsAndData = logsAndData.empty() ? nullptr : logsAndData.c_str();
     // NativeLoader configures LWJGL itself to resolve Vulkan through
     // sl.interposer.dll before org.lwjgl.vulkan.VK is initialized. This gives
     // Streamline the complete automatic-hooking lifecycle, including the
@@ -365,7 +446,16 @@ static bool initializeCore(JNIEnv* env, jstring pluginsPath) {
     pref.flags = pref.flags
         | sl::PreferenceFlags::eUseFrameBasedResourceTagging;
     pref.engine = sl::EngineType::eCustom;
-    pref.engineVersion = "Minecraft 26.2 Fabric Vulkan";
+    pref.engineVersion = "Minecraft Fabric Vulkan";
+    // Without an NVIDIA-issued applicationId the SDK header requires the engine
+    // identity triple, and a stable project GUID is the third half of it.
+    // Leaving projectId empty made slInit fall back to an internal placeholder
+    // appid, which NGX rejects: "Please provide correct application id when
+    // calling slInit - NGX based features will be disabled". DLSS, DLSS-G and
+    // DLSS-RR are all NGX features, so that single rejection is what made them
+    // report eErrorFeatureNotSupported while Reflex, which is not an NGX
+    // feature, kept working.
+    pref.projectId = "6b1f7c42-9d3e-4a58-8c21-0f5e7a4d9b13";
 
     static std::vector<sl::Feature> features = {
         sl::kFeatureDLSS_G,
@@ -392,6 +482,15 @@ static bool initializeCore(JNIEnv* env, jstring pluginsPath) {
         refreshVulkanRequirements();
         g_nvidiaStatus = "Streamline core initialized; waiting for Vulkan device";
         return true;
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nSetLogsPath
+  (JNIEnv* env, jclass, jstring logsPath) {
+    g_logsPath = logsPath == nullptr ? std::wstring() : toWideString(env, logsPath);
+    if (!g_logsPath.empty()) {
+        std::cout << "[DLSS_FG_Native] Streamline logs -> "
+                  << std::filesystem::path(g_logsPath).string() << std::endl;
     }
 }
 
@@ -527,6 +626,18 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
             featureSupportSummary("DLSS-SR", g_dlssSupportResult) + ", " +
             featureSupportSummary("DLSS-RR", g_dlssRrSupportResult) + ", " +
             featureSupportSummary("Reflex", g_reflexSupportResult);
+        // Reflex is not an NGX feature. DLSS, DLSS-G and DLSS-RR all are, so
+        // Reflex succeeding while exactly the NGX-backed features fail points
+        // at NGX refusing to initialize, which happens when slInit is given no
+        // usable application identity. The per-feature result codes are
+        // identical for every other cause, so say so instead of leaving the
+        // user with three identical, unactionable error codes.
+        if (g_reflexSupported) {
+            g_nvidiaStatus +=
+                " | Reflex works while all NGX-backed features are rejected:"
+                " NGX did not initialize. Check config/dlss_fg/streamline/sl.log"
+                " for the NGX startup reason.";
+        }
     }
     std::cout << "[DLSS_FG_Native] " << g_nvidiaStatus << std::endl;
     // The Streamline core can still provide DLSS-SR and Reflex even while the
@@ -630,6 +741,7 @@ extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
 
     slShutdown();
     g_currentFrameToken = nullptr;
+    g_constantsSetForCurrentFrameToken = false;
     g_frameTokenRefreshedForCurrentFrame = false;
     g_dlssgSupported = false;
     g_dlssgInputsReady = false;
@@ -832,10 +944,10 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         }
         ++g_frameIndex;
         g_frameTokenRefreshedForCurrentFrame = true;
+        g_constantsSetForCurrentFrameToken = false;
     }
 
-    const sl::Result constantsResult =
-        slSetConstants(constants, *g_currentFrameToken, g_viewport);
+    const sl::Result constantsResult = setConstantsOnce(constants);
     if (constantsResult != sl::Result::eOk) {
         g_nvidiaStatus = "DLSS-G constants were rejected (" +
             std::to_string(static_cast<int>(constantsResult)) + ")";
@@ -1013,11 +1125,13 @@ extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
     if (markerType == 0 || g_currentFrameToken == nullptr) {
         if (slGetNewFrameToken(g_currentFrameToken, &g_frameIndex) != sl::Result::eOk) {
             g_currentFrameToken = nullptr;
-            g_frameTokenRefreshedForCurrentFrame = false;
+            invalidateFrameTokenState();
             return;
         }
         ++g_frameIndex;
         g_frameTokenRefreshedForCurrentFrame = true;
+        // A fresh token has no constants yet.
+        g_constantsSetForCurrentFrameToken = false;
         // The Reflex sleep call replaces host-side Thread.sleep pacing. It
         // uses NVIDIA's render-queue timing and belongs immediately before
         // the simulation-start marker for the same frame token.
@@ -1353,6 +1467,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
             }
             ++g_frameIndex;
             g_frameTokenRefreshedForCurrentFrame = true;
+            g_constantsSetForCurrentFrameToken = false;
         }
 
         sl::Constants constants{};
@@ -1395,8 +1510,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         constants.reset =
             reset == JNI_TRUE ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 
-        const sl::Result constantsResult =
-            slSetConstants(constants, *g_currentFrameToken, g_viewport);
+        const sl::Result constantsResult = setConstantsOnce(constants);
         if (constantsResult != sl::Result::eOk) {
             g_dlssInputsReady = false;
             g_nvidiaStatus = "DLSS-SR constants were rejected (" +
@@ -1651,6 +1765,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         }
         ++g_frameIndex;
         g_frameTokenRefreshedForCurrentFrame = true;
+        g_constantsSetForCurrentFrameToken = false;
     }
 
     sl::Constants constants{};
@@ -1692,8 +1807,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
     constants.motionVectorsJittered = sl::Boolean::eFalse;
     constants.reset =
         reset == JNI_TRUE ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-    const sl::Result constantsResult =
-        slSetConstants(constants, *g_currentFrameToken, g_viewport);
+    const sl::Result constantsResult = setConstantsOnce(constants);
     if (constantsResult != sl::Result::eOk) {
         g_dlssRrInputsReady = false;
         g_nvidiaStatus = "DLSS-RR constants were rejected (" +

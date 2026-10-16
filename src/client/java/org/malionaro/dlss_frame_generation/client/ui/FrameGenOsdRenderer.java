@@ -42,6 +42,28 @@ public class FrameGenOsdRenderer {
         int fgMultiplier = fgActive ? configuredMultiplier(config, backend.vendor()) : 1;
         int estimatedFgFps = baseFps * fgMultiplier;
 
+        // When frame generation is off, "INACTIVE" alone is useless during
+        // debugging: the reason lives in the native status string. Show it so
+        // the overlay answers "why is this off" without opening the log.
+        Component fgState;
+        if (fgActive) {
+            fgState = Component.translatable(
+                    "dlss_fg.value.multiplier", fgMultiplier
+            );
+        } else {
+            String reason = "";
+            if (backend != null) {
+                try {
+                    reason = backend.statusDescription();
+                } catch (UnsatisfiedLinkError ignored) {
+                    reason = "";
+                }
+            }
+            fgState = reason.isBlank()
+                    ? Component.translatable("dlss_fg.osd.inactive")
+                    : Component.literal(reason);
+        }
+
         boolean showReflex = backend != null && backend.vendor() == FrameGenerationBackend.GpuVendor.NVIDIA;
         boolean showRt = config.rayTracingMode != FrameGenConfig.RayTracingMode.OFF;
 
@@ -57,11 +79,7 @@ public class FrameGenOsdRenderer {
                         "dlss_fg.osd.fps",
                         estimatedFgFps,
                         baseFps,
-                        fgActive
-                                ? Component.translatable(
-                                        "dlss_fg.value.multiplier", fgMultiplier
-                                )
-                                : Component.translatable("dlss_fg.osd.inactive")),
+                        fgState),
                 0xFFFFFFFF));
         lines.add(new OsdLine(
                 Component.translatable(

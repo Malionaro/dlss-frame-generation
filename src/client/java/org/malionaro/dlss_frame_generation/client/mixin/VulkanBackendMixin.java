@@ -33,6 +33,16 @@ import java.util.Set;
  * device before requesting anything, so a device without ray query, without the
  * Win32 interop extensions or without Streamline's requirements simply does not get
  * them and the mod keeps rendering normally.
+ *
+ * <p>{@code createDevice(GpuDebugOptions)} builds one composite FeatureSet and
+ * passes that same local to two places: the private {@code createDevice} that
+ * actually calls {@code vkCreateDevice}, and the {@code VulkanDevice} constructor
+ * that records what the device ended up with. Rewriting only the call argument
+ * would therefore make the recorded state disagree with the real device, so the
+ * constructor argument is rewritten from the same selection as well. Without that
+ * second hook the ray-tracing capability check sees Minecraft's unmodified
+ * extension list and reports EXTENSIONS_NOT_ENABLED even though the ray query
+ * extensions really are enabled on the device.
  */
 @Mixin(value = VulkanBackend.class, remap = false)
 public class VulkanBackendMixin {
@@ -40,8 +50,13 @@ public class VulkanBackendMixin {
     private static final Logger DLSS_FG$LOGGER =
             LoggerFactory.getLogger("DLSS_FG_RayTracing");
 
+    /**
+     * Result of {@link #dlss_fg$selectDeviceFeatures}, published for the
+     * constructor hook below. {@code createDevice} runs before the
+     * {@code VulkanDevice} is instantiated, so this is always set in time.
+     */
     @Unique
-    private static final String DLSS_FG$FEATURESET_NAME = "dlss_fg_optional_device_features";
+    private static FeatureSet dlss_fg$requestedFeatures;
 
     @ModifyArgs(
             method = "createDevice(Lcom/mojang/renderpearl/api/device/GpuDebugOptions;)Lcom/mojang/renderpearl/api/device/GpuDevice;",
@@ -78,11 +93,13 @@ public class VulkanBackendMixin {
         Set<String> extensions = interop.extensions();
         Set<com.mojang.renderpearl.backend.vulkan.init.VulkanFeature> features =
                 streamline.features();
-        args.set(0, new FeatureSet(
-                DLSS_FG$FEATURESET_NAME,
+        FeatureSet requested = new FeatureSet(
+                resolved.name(),
                 extensions,
                 features
-        ));
+        );
+        dlss_fg$requestedFeatures = requested;
+        args.set(0, requested);
 
         if (rayTracing.rayQueryEnabled()) {
             DLSS_FG$LOGGER.info(
@@ -107,5 +124,23 @@ public class VulkanBackendMixin {
                     interop.missingExtensions()
             );
         }
+    }
+
+    @ModifyArgs(
+            method = "createDevice(Lcom/mojang/renderpearl/api/device/GpuDebugOptions;)Lcom/mojang/renderpearl/api/device/GpuDevice;",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lcom/mojang/renderpearl/backend/vulkan/VulkanDevice;<init>(Lcom/mojang/renderpearl/backend/vulkan/VulkanInstance;Lcom/mojang/renderpearl/backend/vulkan/VulkanPhysicalDevice;Lcom/mojang/renderpearl/backend/vulkan/init/FeatureSet;Lorg/lwjgl/vulkan/VkDevice;JLcom/mojang/renderpearl/backend/vulkan/checkpoints/CheckpointExtension;)V"
+            )
+    )
+    private void dlss_fg$recordRequestedFeatures(Args args) {
+        FeatureSet requested = dlss_fg$requestedFeatures;
+        if (requested == null) {
+            return;
+        }
+        // The constructor receives the same composite that createDevice got, so
+        // replacing it with the selection keeps the recorded state identical to
+        // what vkCreateDevice was actually called with.
+        args.set(2, requested);
     }
 }

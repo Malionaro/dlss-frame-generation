@@ -421,6 +421,24 @@ public final class FrameGenTestRunner {
                 : compatibility.providerSnapshot().state();
         var fallback = VulkanRegistry.runtimeFallbackDecision();
 
+        // Inputs being accepted is NOT proof that frames are generated. Only
+        // the native runtime flag (dlssgRuntimeReady / equivalent) proves the
+        // provider actually interpolates. Without this the end-to-end check
+        // reported PASS while the provider was still READY.
+        FrameGenerationBackend backend = compatibility == null
+                ? null
+                : compatibility.activeVendorBackend();
+        boolean runtimeActive = false;
+        String runtimeDetail = "native runtime state unavailable";
+        if (backend != null) {
+            try {
+                runtimeActive = backend.isFrameGenerationActive();
+                runtimeDetail = backend.statusDescription();
+            } catch (UnsatisfiedLinkError ignored) {
+                runtimeDetail = "native bridge unavailable";
+            }
+        }
+
         Outcome outcome;
         String prefix;
         if (fallback.fallbackActive()) {
@@ -430,10 +448,19 @@ public final class FrameGenTestRunner {
             outcome = Outcome.SKIPPED;
             prefix = "Frame generation is disabled for the detected GPU";
         } else if (lifecycle == ProviderLifecycle.State.ACTIVE
-                && accepted > 0L && presented > 0L) {
+                && accepted > 0L && presented > 0L
+                && runtimeActive) {
             outcome = Outcome.PASS;
             prefix = "Real renderer inputs were accepted and presentation "
                     + "completed in this session";
+        } else if (lifecycle == ProviderLifecycle.State.ACTIVE
+                && accepted > 0L && presented > 0L
+                && !runtimeActive) {
+            // Inputs flow but the provider never reached runtime: this is the
+            // exact state that used to be reported as a green PASS.
+            outcome = Outcome.FAIL;
+            prefix = "Renderer inputs are accepted, but the provider never "
+                    + "became runtime-active, so no frames are generated";
         } else if (captured > 0L
                 && (accepted == 0L || presented == 0L)) {
             outcome = Outcome.FAIL;
@@ -450,6 +477,9 @@ public final class FrameGenTestRunner {
                         + ", captured=" + captured
                         + ", provider accepted=" + accepted
                         + ", present completed=" + presented
+                        + ", runtime="
+                        + (runtimeActive ? "ACTIVE" : "NOT ACTIVE")
+                        + ", native=\"" + runtimeDetail + "\""
                         + ", pipeline="
                         + VulkanRegistry.getFrameGenerationPipelineStatus()
         );

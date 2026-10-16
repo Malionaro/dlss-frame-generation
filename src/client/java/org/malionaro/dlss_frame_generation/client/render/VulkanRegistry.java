@@ -68,6 +68,13 @@ public final class VulkanRegistry {
             new MotionVectorValidator();
     private static long previousCaptureNanos;
     private static Boolean lastProviderFrameAccepted;
+    // Rate limit for the per-frame submission catch: a persistent failure
+    // must not write one WARN per frame.
+    private static final long SUBMISSION_FAILURE_HEARTBEAT_NANOS =
+            10_000_000_000L;
+    private static String lastSubmissionFailure = "";
+    private static long lastSubmissionFailureLogNanos;
+    private static long submissionFailureFrames;
     private static volatile NvidiaDlssRenderResolution.Resolution activeResolution =
             new NvidiaDlssRenderResolution.Resolution(1, 1, 1, 1, 0, false);
     private static final DynamicResolutionController DYNAMIC_RESOLUTION =
@@ -1075,6 +1082,13 @@ public final class VulkanRegistry {
             }
             if (lastProviderFrameAccepted == null
                     || lastProviderFrameAccepted != providerAccepted) {
+                // A non-accepted frame was usually skipped by the pipeline
+                // before it ever reached the provider (slot reuse gate,
+                // duplicate identity, resource validation). The provider
+                // status alone then reports a healthy string such as
+                // "DLSS-G inputs valid", which reads like a provider
+                // rejection that never happened. Name both.
+                String pipelineReason = frameGenerationPipeline.status();
                 String providerStatus;
                 try {
                     providerStatus = StreamlineBridge.nGetBackendStatus(
@@ -1090,15 +1104,44 @@ public final class VulkanRegistry {
                     );
                 } else {
                     LOGGER.warn(
-                            "Native provider rejected renderer-owned frame inputs: {}",
+                            "Frame skipped before frame generation ({}); "
+                                    + "provider state: {}",
+                            pipelineReason,
                             providerStatus
                     );
                 }
                 lastProviderFrameAccepted = providerAccepted;
             }
+            // Recovery: clear the rate-limit latch so a later failure of a
+            // different kind is logged immediately again.
+            lastSubmissionFailure = "";
+            submissionFailureFrames = 0L;
         } catch (Throwable error) {
-            LOGGER.warn("Native frame-generation input submission failed: {}",
-                    error.getMessage());
+            // Per-frame catch: a persistent failure would otherwise emit one
+            // WARN per frame (thousands per second) and swamp latest.log.
+            // Log on change plus a slow heartbeat instead.
+            String detail = error.getClass().getSimpleName()
+                    + ": " + error.getMessage();
+            if (!detail.equals(lastSubmissionFailure)) {
+                LOGGER.warn(
+                        "Native frame-generation input submission failed: {}",
+                        detail,
+                        error
+                );
+                lastSubmissionFailure = detail;
+                lastSubmissionFailureLogNanos = System.nanoTime();
+            } else if (System.nanoTime() - lastSubmissionFailureLogNanos
+                    > SUBMISSION_FAILURE_HEARTBEAT_NANOS) {
+                LOGGER.warn(
+                        "Native frame-generation input submission still "
+                                + "failing after {} frames: {}",
+                        submissionFailureFrames,
+                        detail
+                );
+                lastSubmissionFailureLogNanos = System.nanoTime();
+                submissionFailureFrames = 0L;
+            }
+            submissionFailureFrames++;
         }
     }
 

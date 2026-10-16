@@ -96,6 +96,16 @@ public final class ProviderLifecycle {
         detail = nonBlank(readinessDetail, "Provider initialized");
     }
 
+    /**
+     * Records a provider-accepted frame.
+     *
+     * <p>Idempotent re-entry: once ACTIVE, every subsequent accepted frame
+     * re-enters this method (see
+     * {@link org.malionaro.dlss_frame_generation.client.compat.CompatibilityManager#markProviderFrameAccepted}).
+     * ACTIVE is therefore an allowed source state and simply refreshes
+     * {@code lastAcceptedFrame}. Without it, every frame after the first
+     * throws "Illegal provider transition from ACTIVE".</p>
+     */
     public synchronized void activated(
             FrameIdentity acceptedFrame,
             boolean safeFrameBoundary,
@@ -106,7 +116,10 @@ public final class ProviderLifecycle {
                     "Provider activation requires a safe frame boundary"
             );
         }
-        requireState(State.READY, State.DRAINING);
+        // An already-ACTIVE provider re-enters here every accepted frame, and
+        // it may also outlive a swapchain rebuild that skipped the drain path.
+        boolean reentry = state == State.ACTIVE;
+        requireState(State.READY, State.DRAINING, State.ACTIVE);
         if (acceptedFrame == null || !acceptedFrame.isValid()) {
             throw new IllegalArgumentException(
                     "Provider activation requires a valid accepted frame"
@@ -119,7 +132,12 @@ public final class ProviderLifecycle {
         }
         if (swapchainGeneration != 0L
                 && acceptedFrame.swapchainGeneration()
-                        != swapchainGeneration) {
+                        != swapchainGeneration
+                // Re-entry re-binds to a newer swapchain; a strictly older
+                // generation is still a genuine stale-frame rejection.
+                && !(reentry
+                        && acceptedFrame.swapchainGeneration()
+                                > swapchainGeneration)) {
             throw new IllegalStateException(
                     "Accepted frame belongs to a stale swapchain generation"
             );

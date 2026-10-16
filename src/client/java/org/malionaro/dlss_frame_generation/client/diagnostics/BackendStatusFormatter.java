@@ -12,6 +12,7 @@ public final class BackendStatusFormatter {
     public enum StatusKind {
         ACTIVE,
         AVAILABLE,
+        DISABLED,
         NO_SUPPORTED_ADAPTER,
         D3D12_REQUIRED,
         INPUTS_PENDING,
@@ -55,6 +56,14 @@ public final class BackendStatusFormatter {
                 || normalized.contains("inactive")) {
             return StatusKind.INPUTS_PENDING;
         }
+        // The provider is deliberately off (game paused, FG off in settings).
+        // This must be reported as its own state: it used to fall through to
+        // AVAILABLE and claim the provider was "waiting for activation".
+        if (normalized.contains("disabled")
+                || normalized.contains("turned off")
+                || normalized.contains("paused")) {
+            return StatusKind.DISABLED;
+        }
         return supported ? StatusKind.AVAILABLE : StatusKind.UNAVAILABLE;
     }
 
@@ -66,6 +75,7 @@ public final class BackendStatusFormatter {
         String key = switch (classify(nativeStatus, supported, active)) {
             case ACTIVE -> "dlss_fg.backend_status.active";
             case AVAILABLE -> "dlss_fg.backend_status.available";
+            case DISABLED -> "dlss_fg.backend_status.disabled";
             case NO_SUPPORTED_ADAPTER ->
                     "dlss_fg.backend_status.no_supported_adapter";
             case D3D12_REQUIRED -> "dlss_fg.backend_status.d3d12_required";

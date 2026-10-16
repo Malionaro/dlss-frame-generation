@@ -11,8 +11,10 @@ import java.nio.file.StandardCopyOption;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -21,16 +23,16 @@ public final class NativeLoader {
     private static final String LIBRARY_BASE_NAME = "dlss_fg_native";
     private static final Map<String, String> TRUSTED_RUNTIME_SHA256 =
             Map.ofEntries(
-                    Map.entry("sl.interposer.dll", "2a79db6857ae8c75bbd871a9489c48bc6a39f7fcc88b9b02afd53d0376cbec66"),
-                    Map.entry("sl.common.dll", "c57930ef5a8a3fe9be85efdf71a61d8107c1148e8a6aed456464547128f7f4ae"),
-                    Map.entry("sl.dlss_g.dll", "1fec3f8fdfc59d78c4445c276c1a0fb798bf251985f348597dc2b44d0c995e52"),
-                    Map.entry("sl.dlss.dll", "a997022d2b93601e0eefc3ddb3067c36df386dd3163ae71e11095191fb14f8e4"),
-                    Map.entry("sl.dlss_d.dll", "35e4f8fc8396a08514a4493b87ba507445f886dad4b7c6c024d3305824236be6"),
-                    Map.entry("sl.reflex.dll", "7e6e4ccc4b561bd449fb0da90709d9b96b08c3f6f4697362caaa359e72a58a67"),
-                    Map.entry("sl.pcl.dll", "699ab461e64e95189a7fe6a21c79ad237cf56b60ea748cb6c840cd5431ba91d1"),
-                    Map.entry("nvngx_dlssg.dll", "135eaf0733c1e37381a8c28abcf7a862404a54132b81787c04e35d09efc5e36f"),
-                    Map.entry("nvngx_dlss.dll", "be6e434a94ca32499515eb62ca0e6c274526055d568d0426e4c652dcdfb6ee6e"),
-                    Map.entry("nvngx_dlssd.dll", "f4e97624f70fbb769acb11ebd751b512ecc9463d4bd6aef04896d3956e6084a0"),
+                    Map.entry("sl.interposer.dll", "8c87c9499461da561edd529aa9bf7831d67d7b94ebb1c1a5ed54ef4934e1ea4c"),
+                    Map.entry("sl.common.dll", "82924a8954dd671e09351c5de0eb87ad0eb25b944cc9f9ab955ca1d9950de15d"),
+                    Map.entry("sl.dlss_g.dll", "f4a6b2b14dcc0b1485989e430d3b4e3a44ac1800b92ba1ad74f476e64fb2b09c"),
+                    Map.entry("sl.dlss.dll", "73bf52c0cfaa5900a8f3f4a91306e4625e7cca696dfb305aae44c9f97b582e1f"),
+                    Map.entry("sl.dlss_d.dll", "026b9f4f9ea848f2f5aa0e2024fc6b1c885f57eea5d41078124dba14f873b86b"),
+                    Map.entry("sl.reflex.dll", "0ce9725e3e03ea9e7f81d008b57f33ee365973d2e349131c8b1c3e3378fe2db0"),
+                    Map.entry("sl.pcl.dll", "f13d51cfa05f4cd514df2026049e2db8adf359221713170ad386fd499915b582"),
+                    Map.entry("nvngx_dlssg.dll", "ff6e90eb78b827927dff5b4ecc6b1c870c2e9bca29ed9f48c7d348cc9e170b82"),
+                    Map.entry("nvngx_dlss.dll", "3975567b8943c53acce397f2b72380092f84f162d00b0d2c7d08a1025c563983"),
+                    Map.entry("nvngx_dlssd.dll", "4bc7ea5fcb2f32cf86bc2cb072e8d2860914a0be511cbdcb2fc206c1d9d83b80"),
                     Map.entry("NvLowLatencyVk.dll", "2a77dc3e1c724b7eea5755be0ae7423752e79a2459fae72181a9f00e3507e5d6"),
                     Map.entry("amd_fidelityfx_vk.dll", "a1624cc4238fef046f30c4d80ce3f47be63fc5f5373f49e3ee9edb9960f54c78")
             );
@@ -65,6 +67,7 @@ public final class NativeLoader {
 
             // Extract ALL Streamline DLLs needed at runtime
             // Order matters: interposer first, then common, then plugins, then NVIDIA NGX binaries
+            List<String> rejected = new ArrayList<>();
             String[] runtimeDlls = {
                 "sl.interposer.dll",   // CRITICAL: Must be present before Vulkan init
                 "sl.common.dll",       // Core Streamline runtime
@@ -86,14 +89,30 @@ public final class NativeLoader {
                     if (input != null) {
                         Path targetPath = extractedDir.resolve(dllName);
                         Files.copy(input, targetPath, StandardCopyOption.REPLACE_EXISTING);
-                        verifyTrustedRuntime(targetPath, dllName);
                         targetPath.toFile().deleteOnExit();
-
-                        logger.info("[DLSS FG] Extracted Streamline runtime: {}", dllName);
+                        try {
+                            verifyTrustedRuntime(targetPath, dllName);
+                            logger.info("[DLSS FG] Extracted Streamline runtime: {}", dllName);
+                        } catch (IOException untrusted) {
+                            // Fail closed for this file only. A rejected DLL is
+                            // deleted so nothing downstream can load it, but it
+                            // must not take the remaining runtimes with it: the
+                            // whole point of the check is to keep a single
+                            // tampered file from silently disabling the mod.
+                            Files.deleteIfExists(targetPath);
+                            rejected.add(dllName);
+                            logger.error("[DLSS FG] Rejected {}: {}",
+                                    dllName, untrusted.getMessage());
+                        }
                     } else {
                         logger.debug("[DLSS FG] Optional DLL not bundled: {}", dllName);
                     }
                 }
+            }
+            if (!rejected.isEmpty()) {
+                logger.error("[DLSS FG] {} bundled runtime file(s) failed SHA-256 "
+                                + "verification and were not loaded: {}",
+                        rejected.size(), String.join(", ", rejected));
             }
 
             // Pre-load the interposer so Streamline can hook Vulkan API calls
@@ -128,7 +147,14 @@ public final class NativeLoader {
                 System.load(interposerPath.toAbsolutePath().toString());
                 logger.info("[DLSS FG] Loaded sl.interposer.dll (Streamline Vulkan hook layer)");
             } else {
-                logger.warn("[DLSS FG] sl.interposer.dll not found! Frame Generation will NOT work.");
+                // Without the interposer Streamline never sees the Vulkan
+                // instance/device/surface lifecycle, so every feature that
+                // needs interception reports eErrorFeatureNotSupported. Reflex
+                // still reports support, which makes this look like a partial
+                // or flaky failure rather than a missing runtime file.
+                logger.error("[DLSS FG] sl.interposer.dll not available!"
+                        + " DLSS Super Resolution, Frame Generation and Ray"
+                        + " Reconstruction stay unsupported; only Reflex can work.");
             }
 
             // Pre-load sl.common.dll (core runtime needed by all plugins)

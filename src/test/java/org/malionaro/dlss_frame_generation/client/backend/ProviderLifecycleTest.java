@@ -65,6 +65,53 @@ class ProviderLifecycleTest {
         );
     }
 
+    @Test
+    void repeatedAcceptedFramesReentryIsIdempotent() {
+        ProviderLifecycle lifecycle = readyLifecycle();
+        lifecycle.activated(new FrameIdentity(1L, 1L, 0), true, "first");
+
+        // Regression: every frame after the first re-enters activated(). This
+        // used to throw "Illegal provider transition from ACTIVE" once per
+        // frame and flooded latest.log.
+        for (long serial = 2L; serial <= 500L; serial++) {
+            lifecycle.activated(
+                    new FrameIdentity(serial, 1L, 0), true, "accepted"
+            );
+        }
+
+        ProviderLifecycle.Snapshot snapshot = lifecycle.snapshot();
+        assertEquals(ProviderLifecycle.State.ACTIVE, snapshot.state());
+        assertEquals(
+                new FrameIdentity(500L, 1L, 0), snapshot.lastAcceptedFrame()
+        );
+    }
+
+    @Test
+    void activeProviderRebindsToANewerSwapchainGeneration() {
+        ProviderLifecycle lifecycle = readyLifecycle();
+        lifecycle.activated(new FrameIdentity(1L, 1L, 0), true, "first");
+
+        // A rebuild that skipped the drain path still has to re-bind.
+        lifecycle.activated(new FrameIdentity(2L, 2L, 0), true, "rebound");
+
+        ProviderLifecycle.Snapshot snapshot = lifecycle.snapshot();
+        assertEquals(ProviderLifecycle.State.ACTIVE, snapshot.state());
+        assertEquals(2L, snapshot.swapchainGeneration());
+    }
+
+    @Test
+    void activeProviderStillRejectsAStaleSwapchainGeneration() {
+        ProviderLifecycle lifecycle = readyLifecycle();
+        lifecycle.activated(new FrameIdentity(9L, 3L, 0), true, "first");
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> lifecycle.activated(
+                        new FrameIdentity(10L, 2L, 0), true, "stale"
+                )
+        );
+    }
+
     private static ProviderLifecycle readyLifecycle() {
         ProviderLifecycle lifecycle = new ProviderLifecycle();
         lifecycle.detected(

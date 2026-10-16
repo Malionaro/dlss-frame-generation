@@ -18,8 +18,13 @@ import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 
 import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 public final class CompatibilityManager {
     private static final Logger LOGGER =
@@ -38,10 +43,47 @@ public final class CompatibilityManager {
         this.activeBackend = activeBackend;
     }
 
+    /**
+     * Points Streamline's own log at a directory that outlives the process.
+     *
+     * <p>The plugins path is a {@code deleteOnExit} temp directory, so the SDK
+     * log would vanish together with the failure that produced it. When a
+     * feature is rejected, this log holds the reason and the adapter data
+     * Streamline resolved, which is the only place that appears.
+     */
+    private static void configureStreamlineLogging(Logger logger) {
+        Path logsDir;
+        try {
+            logsDir = FabricLoader.getInstance()
+                    .getConfigDir()
+                    .resolve("dlss_fg")
+                    .resolve("streamline");
+            Files.createDirectories(logsDir);
+        } catch (IOException | RuntimeException unavailable) {
+            logger.warn(
+                    "Could not create a persistent Streamline log directory,"
+                            + " falling back to the plugins path: {}",
+                    unavailable.toString()
+            );
+            return;
+        }
+        try {
+            StreamlineBridge.nSetLogsPath(logsDir.toAbsolutePath().toString());
+            logger.info("Streamline log directory: {}", logsDir);
+        } catch (UnsatisfiedLinkError stale) {
+            logger.warn(
+                    "Native bridge has no Streamline log path setter"
+                            + " (stale dlss_fg_native.dll?): {}",
+                    stale.getMessage()
+            );
+        }
+    }
+
     public static CompatibilityManager initialize(Logger logger) {
         NativeLoader.NativeLoadResult nativeLoadResult = NativeLoader.load(logger);
         if (nativeLoadResult.loaded()) {
             try {
+                configureStreamlineLogging(logger);
                 boolean coreReady = StreamlineBridge.nInitCore(NativeLoader.getExtractedNativesDir());
                 logger.info("Streamline core early initialization: {}", coreReady ? "READY" : "UNAVAILABLE");
             } catch (UnsatisfiedLinkError error) {

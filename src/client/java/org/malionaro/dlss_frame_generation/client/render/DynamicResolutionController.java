@@ -23,6 +23,17 @@ public final class DynamicResolutionController {
     private static final float DOWNSCALE_STEP = 0.07f;
     private static final float UPSCALE_STEP = 0.035f;
     private static final int SAMPLES_BEFORE_ADJUSTMENT = 6;
+    // Anti-thrash: every scale change reallocates the whole input pipeline,
+    // which costs one very slow frame. Without a cooldown that spike pushed
+    // the smoothed frame time back over budget, the controller scaled down
+    // again, and the render resolution oscillated across the whole range
+    // (visible as screen wobble and periodic FPS drops).
+    private static final long MIN_NANOS_BETWEEN_SCALE_CHANGES = 1_500_000_000L;
+    // Samples taken right after a scale change include the realloc spike and
+    // must not steer the next decision.
+    private static final long REALLOC_QUIET_NANOS = 750_000_000L;
+    // Upscaling needs real headroom, not just "slightly under budget".
+    private static final float UPSCALE_HEADROOM_RATIO = 0.60f;
     private static final float VRAM_PRESSURE_STEP = 0.05f;
     private static final long VRAM_PRESSURE_HYSTERESIS_NANOS = 10_000L * 1_000_000L;
 
@@ -30,6 +41,8 @@ public final class DynamicResolutionController {
     private float smoothedFrameTimeMs = 16.6667f;
     private int overBudgetSamples;
     private int underBudgetSamples;
+    private long lastScaleChangeNanos;
+    private long scaleChangeQuietUntilNanos;
 
     // C8: atomic check-then-act. The flag is intentionally process-wide (one
     // GPU, one active controller); the CAS loop makes concurrent notifies safe
@@ -74,7 +87,14 @@ public final class DynamicResolutionController {
         applyPendingVramPressureDrop();
 
         float clampedFrameTime = Math.max(1.0f, Math.min(250.0f, frameTimeMs));
+        // The realloc after a scale change lands here as a multi-hundred-ms
+        // outlier. Feeding it into the average is what made the controller
+        // undo its own decision and oscillate.
+        boolean quietPeriod = System.nanoTime() < scaleChangeQuietUntilNanos;
         smoothedFrameTimeMs += (clampedFrameTime - smoothedFrameTimeMs) * 0.12f;
+        if (quietPeriod) {
+            return;
+        }
         float targetFrameTimeMs = 1000.0f / Math.max(30, targetFps);
 
         if (smoothedFrameTimeMs > targetFrameTimeMs * 1.06f) {
@@ -96,16 +116,47 @@ public final class DynamicResolutionController {
             } else if (smoothedFrameTimeMs > targetFrameTimeMs * 1.35f) {
                 adaptiveDown *= 2.0f;
             }
-            scale = clampScale(scale - adaptiveDown);
+            changeScale(scale - adaptiveDown);
             overBudgetSamples = 0;
-        } else if (underBudgetSamples >= SAMPLES_BEFORE_ADJUSTMENT) {
+        } else if (underBudgetSamples >= SAMPLES_BEFORE_ADJUSTMENT
+                && smoothedFrameTimeMs < targetFrameTimeMs * UPSCALE_HEADROOM_RATIO) {
+            // Only grow with clear headroom. Scaling up towards a target that
+            // is already met just spends the margin and risks thrashing.
             float adaptiveUp = UPSCALE_STEP;
             if (smoothedFrameTimeMs < targetFrameTimeMs * 0.75f) {
                 adaptiveUp *= 1.5f;
             }
-            scale = clampScale(scale + adaptiveUp);
+            changeScale(scale + adaptiveUp);
             underBudgetSamples = 0;
         }
+    }
+
+    /**
+     * Applies a scale step, honouring the anti-thrash cooldown.
+     *
+     * <p>Refuses the change while the pipeline is still recovering from the
+     * previous reallocation, and ignores samples that land inside the quiet
+     * window so the realloc spike cannot immediately reverse the decision.</p>
+     */
+    private void changeScale(float candidate) {
+        long now = System.nanoTime();
+        if (now < scaleChangeQuietUntilNanos) {
+            return;
+        }
+        if (lastScaleChangeNanos != 0L
+                && now - lastScaleChangeNanos < MIN_NANOS_BETWEEN_SCALE_CHANGES) {
+            return;
+        }
+        float clamped = clampScale(candidate);
+        if (Math.abs(clamped - scale) < 1e-4f) {
+            return;
+        }
+        scale = clamped;
+        lastScaleChangeNanos = now;
+        scaleChangeQuietUntilNanos = now + REALLOC_QUIET_NANOS;
+        // Both counters restart so neither direction can fire immediately.
+        overBudgetSamples = 0;
+        underBudgetSamples = 0;
     }
 
     /**
@@ -168,6 +219,8 @@ public final class DynamicResolutionController {
         smoothedFrameTimeMs = 16.6667f;
         overBudgetSamples = 0;
         underBudgetSamples = 0;
+        lastScaleChangeNanos = 0L;
+        scaleChangeQuietUntilNanos = 0L;
     }
 
     private static float clampScale(float value) {

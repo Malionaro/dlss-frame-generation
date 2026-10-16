@@ -35,6 +35,16 @@ public final class StreamlineBridge {
     public static native boolean nInitCore(String pluginsPath);
 
     /**
+     * Redirects Streamline's own log to a persistent directory.
+     *
+     * <p>Must be called before {@link #nInitCore}. The plugins path is a temp
+     * directory that is deleted when the JVM exits, so a log written there
+     * cannot be inspected after a failure — and the reason a feature is
+     * rejected is exactly what is missing from our own log.
+     */
+    public static native void nSetLogsPath(String logsPath);
+
+    /**
      * Initializes the Streamline SDK with Vulkan instance, device, and graphics queue handles.
      */
     public static native boolean nInit(
