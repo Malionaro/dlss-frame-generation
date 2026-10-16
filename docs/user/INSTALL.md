@@ -14,13 +14,16 @@
 | **Java** | Java 25 | Java 25 (Corretto / Temurin) |
 | **Minecraft** | 26.3 | 26.3 |
 | **Fabric Loader** | 0.19.5+ | 0.19.5+ |
-| **Fabric API** | 0.161.0+26.3 | 0.161.0+26.3 |
+| **Fabric API** | 0.162.0+26.3 | latest for 26.3 |
+| **Graphics backend** | Vulkan | Vulkan |
 
 ### Step-by-Step Installation
 
 #### Step 1: Install Fabric Loader & API
 1. Install **Fabric Loader 0.19.5** (or newer) for Minecraft 26.3.
-2. Download **Fabric API 0.161.0+26.3** (or newer) and place it into your `.minecraft/mods` directory.
+2. Download **Fabric API 0.162.0+26.3** (or newer) and place it into your `.minecraft/mods` directory.
+3. Optional: **Sodium 0.9**, **Iris 1.12** (Vulkan build) for shader packs, **Mod Menu**.
+4. In **Options → Video Settings**, set the graphics backend to **Vulkan**.
 
 #### Step 2: Download Mod Artifacts
 1. Build or download `dlss-frame-generation-1.0.0.jar`.
@@ -32,13 +35,23 @@
 2. Open menu: **Options... -> Video Settings... -> Frame Generation...**
    (or via **ModMenu**, or press **End** in game).
 3. Use shortcuts while playing:
-   - **F3**: The vanilla debug screen shows the frame-generation FPS and an extra "Frame Gen" line.
+   - **F3**: The vanilla debug screen shows the frame-generation FPS, frame times and the upscaling resolution (`render → output`, DRS scale, mip bias).
    - **F8**: Toggle the Performance OSD HUD (FPS, latency, Reflex and RT status).
    - **F7**: Toggle Frame Generation on/off with actionbar notifications.
    - **End**: Open the Frame Generation settings screen directly.
    - Keybindings are customizable in Minecraft Controls under **"DLSS Frame Generation"**.
-4. Check the backend status shown by the settings screen. An unavailable
+4. Check the **Status** tab of the settings screen. An unavailable
    capability cannot be enabled by selecting a preset.
+5. With Sodium, the same options are on the **Frame Generation** page of
+   Sodium's video settings.
+
+#### Shader packs
+
+With Iris 1.12 on Vulkan, frame generation and Reflex run on top of the
+shader pack; the mod's ray tracing stays off and DLSS does not upscale the
+pack (Iris has no render-scale hook). When a pack starts, frame generation is
+switched on automatically; turn this off with **Graphics → Shader packs: auto
+DLSS + FG**. With Vitrail, DLSS also drives the pack's render scale.
 
 > **Backend status:** This revision is experimental. NVIDIA Streamline and its
 > Vulkan interposer are bundled; frame generation remains fail-closed until

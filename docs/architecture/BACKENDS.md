@@ -123,6 +123,14 @@ motion guides. When UI recomposition is enabled, Minecraft renders the HUD into
 a separate transparent full-resolution target tagged as
 `kBufferTypeUIColorAndAlpha`.
 
+DLSS Super Resolution uses the DLSS 4.5 transformer presets: K for DLAA,
+Quality, Balanced and Ultra Quality, M for Performance and L for Ultra
+Performance. Render sizes keep the exact window aspect ratio, the terrain
+sampler gets a mip bias of `log2(render / output)` and the Halton jitter
+sequence is `8 × (output / render)²` phases long. With a shader-pack engine
+that cannot scale (Iris), the world arrives at window size and DLSS is not
+run over it.
+
 DLSS Ray Reconstruction uses Streamline's `kFeatureDLSS_RR` and the bundled
 signed `sl.dlss_d.dll`/`nvngx_dlssd.dll` on transformer preset F (the
 Streamline 2.14 default). The hybrid RT pass supplies

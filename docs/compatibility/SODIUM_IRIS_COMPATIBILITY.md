@@ -1,8 +1,8 @@
 # Sodium and Iris compatibility
 
 > Technical research and implementation handover for humans and AI agents  
-> Research status: July 28, 2026  
-> Project goal: `dlss_fg` / Vulkan frame generation integration for Minecraft 26.2
+> Research status: July 28, 2026 · updated October 16, 2026 for Iris 1.12 (Vulkan)  
+> Project goal: `dlss_fg` / Vulkan frame generation integration for Minecraft 26.3
 
 ## 1. Purpose and binding limits
 
@@ -82,6 +82,31 @@ Primary sources:
 - [NVIDIA Streamline](https://github.com/NVIDIA-RTX/Streamline)
 - [AMD FidelityFX FSR 3.1](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK)
 
+### 1.2 Update October 2026: Iris 1.12 runs shader packs on Vulkan
+
+Iris 1.12 (snapshot for 26.3) renders shader packs on Mojang's Vulkan
+device. Sections 3 to 6 describe the earlier OpenGL-only state; where they
+disagree, this block wins.
+
+- Detection: the public `IrisApi` v0 (`isShaderPackInUse`) is queried live.
+  `ForeignShaderPipeline.ownsWorldTarget()` treats Iris as owning the world
+  target unless the API positively reports that no pack runs, including the
+  first frames before the Vulkan device is registered.
+- Cooperative path: the mod never swaps `mainRenderTarget` while a pack runs.
+  Iris sizes its colour buffers and its depth attachment from different
+  sources; a reduced world target made it crash with "invalid framebuffer
+  attachments" on world join.
+- Iris has no render-scale hook, so the world arrives at window size. DLSS
+  is not run over it (it only stacked on the pack's TAA), frame generation and
+  Reflex run on the pack's finished image, the HUD goes into the DLSS-G UI
+  layer, and motion is camera-only. The mod's own RT stays off.
+- Device features: Iris adds its optional features at the `FeatureSet`
+  constructor; this mod extends the set later at the `createDevice` call,
+  so both survive. No mixin targets overlap in a conflicting way.
+- Iris keeps reversed-Z for the main pass (`isReverseZDuringShaders`), so the
+  depth convention passed to DLSS-G is unchanged.
+- Vitrail, unlike Iris, exposes a render scale, so DLSS drives it there.
+
 ## 3. Short verdict
 
 ### 3.1 Compatibility matrix
@@ -91,10 +116,11 @@ Primary sources:
 | Vanilla + Vulkan | intended main path | The mod accesses Mojang's Vulkan device, render targets, command buffer, and swapchain directly. |
 | Sodium 0.9.1 + Vulkan | architecture hardened, real mod runtime test still open | Sodium uses Mojang's Vulkan backend. The adapter now only consumes complete atomic Mojang Vulkan resources and does not access private Sodium classes; resize/reload with the real Sodium JAR still needs validation. |
 | Sodium + OpenGL | no Vulkan FG/RT features | The current native paths expect Vulkan handles and Vulkan images. |
-| Iris installed + Vulkan | Iris may stay installed; shader packs are off | Iris disables its normal shader pipeline under Vulkan. After that, the relevant render path largely corresponds to "Sodium + Vulkan". |
-| Iris + active shader pack | currently not compatible with the Vulkan FG/RT paths | Iris forces OpenGL for shader packs. Its final color, depth, and material data are OpenGL resources, not `VkImage` resources. |
+| Iris installed + Vulkan, no pack | normal path | Corresponds to "Sodium + Vulkan". |
+| Iris 1.12 + active shader pack on Vulkan | cooperative (see 1.2) | Frame generation and Reflex on the pack's image; no upscaling, no mod RT. |
+| Iris 1.11 + active shader pack | not compatible with the Vulkan FG/RT paths | Iris 1.11 forces OpenGL for shader packs; its images are OpenGL resources, not `VkImage` resources. |
 | Iris without active shader pack + OpenGL | no Vulkan FG/RT features | No usable Vulkan context, even though Iris is loaded. |
-| Future Iris with Vulkan shaders | re-evaluate | This would require explicit resource and synchronization contracts from Iris. |
+| Iris with a render-scale hook | re-evaluate | Would allow real DLSS upscaling of shader packs. |
 
 ### 3.2 What "Sodium-compatible" can realistically mean
 

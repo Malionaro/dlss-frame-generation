@@ -7,6 +7,7 @@ mixed together.
 ## User guides
 
 - [Installation and setup](user/INSTALL.md)
+- [Modrinth project description](MODRINTH.md)
 
 ## Architecture
 
