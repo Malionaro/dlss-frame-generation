@@ -1,0 +1,80 @@
+name: Bug report
+description: Something looks or behaves wrong (wobbling, flicker, wrong FPS, a setting that does nothing).
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! For crashes use the **Crash report** template instead.
+  - type: input
+    id: version
+    attributes:
+      label: Mod version
+      placeholder: 0.1.0-alpha
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver
+      placeholder: RTX 5080, driver 616.64
+    validations:
+      required: true
+  - type: dropdown
+    id: feature
+    attributes:
+      label: Affected feature
+      multiple: true
+      options:
+        - DLSS Super Resolution / DLAA
+        - DLSS Frame Generation
+        - NVIDIA Reflex
+        - Hardware ray tracing
+        - DLSS Ray Reconstruction
+        - AMD FSR 3.1
+        - Intel / FSR 3.1 fallback
+        - Vulkan to D3D12 presentation
+        - Settings screen / Sodium page
+        - F3 lines / OSD
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings
+      description: DLSS mode, frame-generation multiplier, Reflex, dynamic resolution, RT on/off.
+      placeholder: DLSS Quality, FG 4x, Reflex On + Boost, DRS off, RT off
+    validations:
+      required: true
+  - type: textarea
+    id: mods
+    attributes:
+      label: Other mods and shader pack
+      placeholder: Sodium 0.9.3, Iris 1.12.0 (Vulkan), ComplementaryReimagined r5.9.3
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens and what you expected
+      description: When does it happen? Standing still, moving, in menus, after alt-tab?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Set DLSS to Ultra Performance
+        2. Walk forward
+        3. ...
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshot or video
+      description: A screenshot with F3 open helps a lot.
+  - type: textarea
+    id: log
+    attributes:
+      label: latest.log
+      description: Paste the relevant part or attach the file.
+      render: text

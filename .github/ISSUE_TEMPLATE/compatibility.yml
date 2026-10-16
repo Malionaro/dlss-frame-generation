@@ -1,0 +1,44 @@
+name: Mod or shader pack compatibility
+description: Problems together with Sodium, Iris, Vitrail, a shader pack or another mod.
+labels: ["compatibility"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Mod version
+      placeholder: 0.1.0-alpha
+    validations:
+      required: true
+  - type: input
+    id: other
+    attributes:
+      label: Other mod and version
+      placeholder: Iris 1.12.0-snapshot (Vulkan build)
+    validations:
+      required: true
+  - type: input
+    id: pack
+    attributes:
+      label: Shader pack (if any)
+      placeholder: Rethinking Voxels r0.1-beta9
+  - type: dropdown
+    id: without
+    attributes:
+      label: Does it also happen without this mod?
+      options:
+        - "No, only with Vulkan Frame Generation installed"
+        - "Yes, also without it"
+        - "Not tested"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: latest.log or crash report
+      render: text

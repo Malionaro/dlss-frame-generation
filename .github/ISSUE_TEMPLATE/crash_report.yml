@@ -1,0 +1,50 @@
+name: Crash report
+description: The game crashes or closes.
+labels: ["crash"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Mod version
+      placeholder: 0.1.0-alpha
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver
+      placeholder: RTX 5080, driver 616.64
+    validations:
+      required: true
+  - type: dropdown
+    id: when
+    attributes:
+      label: When does it crash?
+      options:
+        - On game start
+        - When joining a world
+        - While playing
+        - When changing a setting
+        - When resizing, alt-tabbing or toggling fullscreen
+        - When closing the game
+    validations:
+      required: true
+  - type: textarea
+    id: mods
+    attributes:
+      label: Other mods and shader pack
+      placeholder: Sodium 0.9.3, Iris 1.12.0 (Vulkan), shader pack name
+  - type: textarea
+    id: crash
+    attributes:
+      label: Crash report
+      description: The newest file from `crash-reports` in your instance folder.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: latest.log
+      description: From the `logs` folder. Native crashes often only show up here or in `hs_err_pid*.log`.
+      render: text

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Feature status and known limitations
+    url: https://github.com/Malionaro/dlss-frame-generation/blob/port/minecraft-26.3/docs/status/FEATURE_STATUS.md
+    about: Check whether something is already known as experimental or unavailable.
+  - name: Installation guide
+    url: https://github.com/Malionaro/dlss-frame-generation/blob/port/minecraft-26.3/docs/user/INSTALL.md
+    about: Setup, Vulkan backend and shader packs.

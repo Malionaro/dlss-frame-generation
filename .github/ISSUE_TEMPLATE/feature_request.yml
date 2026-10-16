@@ -1,0 +1,19 @@
+name: Feature request
+description: An idea for a new feature or an improvement.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would it help?
+  - type: input
+    id: gpu
+    attributes:
+      label: Your GPU (if the idea depends on hardware)
+      placeholder: RTX 4070
