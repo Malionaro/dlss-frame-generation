@@ -784,6 +784,20 @@ public final class VulkanRegistry {
         }
     }
 
+    /** Minecraft's unjittered projection of the current frame, FOV effects included. */
+    public static Matrix4f cameraProjection() {
+        return new Matrix4f(currentProjMatrix);
+    }
+
+    /** Sub-pixel jitter applied to this frame's projection, in render pixels. */
+    public static float jitterPixelsX() {
+        return jitterX;
+    }
+
+    public static float jitterPixelsY() {
+        return jitterY;
+    }
+
     /** Render and output size of the current world frame. */
     public static NvidiaDlssRenderResolution.Resolution activeResolution() {
         return activeResolution;

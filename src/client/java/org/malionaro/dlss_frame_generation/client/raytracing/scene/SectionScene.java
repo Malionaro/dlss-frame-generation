@@ -65,7 +65,7 @@ public final class SectionScene implements AutoCloseable {
 
     private final Map<Long, List<SceneLights.Emitter>> lights = new HashMap<>();
     private boolean lightsDirty = true;
-    private ByteBuffer lightBuffer = SceneLights.nearest(List.of(), 0, 0, 0);
+    private ByteBuffer lightBuffer = SceneLights.nearest(List.of(), 0, 0, 0, 0, 0, 0);
     private long lightsVersion;
 
     private int centerX = Integer.MIN_VALUE;
@@ -88,10 +88,13 @@ public final class SectionScene implements AutoCloseable {
         return sprites;
     }
 
-    /** Advances section selection and capture by one frame's budget. */
-    public void update(Minecraft minecraft, int requestedDistance) {
+    /**
+     * Advances section selection and capture by one frame's budget. The scene
+     * follows {@code camera}, so third person and spectator views are covered.
+     */
+    public void update(Minecraft minecraft, int requestedDistance, net.minecraft.world.phys.Vec3 camera) {
         ClientLevel currentLevel = minecraft != null ? minecraft.level : null;
-        if (currentLevel == null || minecraft.player == null) {
+        if (currentLevel == null || minecraft.player == null || camera == null) {
             if (level != null) {
                 resetAll();
                 level = null;
@@ -107,7 +110,7 @@ public final class SectionScene implements AutoCloseable {
             level = currentLevel;
         }
 
-        BlockPos player = minecraft.player.blockPosition();
+        BlockPos player = BlockPos.containing(camera);
         int sectionX = SectionPos.blockToSectionCoord(player.getX());
         int sectionY = SectionPos.blockToSectionCoord(player.getY());
         int sectionZ = SectionPos.blockToSectionCoord(player.getZ());
@@ -117,6 +120,8 @@ public final class SectionScene implements AutoCloseable {
             centerY = sectionY;
             centerZ = sectionZ;
             distance = requestedDistance;
+            // The origin moved with the centre section: lights are relative to it.
+            lightsDirty = true;
             reselect(player);
         }
         requeueDirty();
@@ -125,7 +130,7 @@ public final class SectionScene implements AutoCloseable {
         collectCompleted();
         if (lightsDirty) {
             lightBuffer = SceneLights.nearest(lights.values(),
-                    player.getX() + 0.5, player.getY() + 0.5, player.getZ() + 0.5);
+                    camera.x, camera.y, camera.z, originX(), originY(), originZ());
             lightsDirty = false;
             lightsVersion++;
         }
@@ -359,6 +364,22 @@ public final class SectionScene implements AutoCloseable {
 
     public long lightsVersion() {
         return lightsVersion;
+    }
+
+    /**
+     * Scene origin in blocks: the centre section's corner. Shader positions are
+     * relative to it so they stay small and exact far from the world origin.
+     */
+    public int originX() {
+        return centerX == Integer.MIN_VALUE ? 0 : centerX << 4;
+    }
+
+    public int originY() {
+        return centerX == Integer.MIN_VALUE ? 0 : centerY << 4;
+    }
+
+    public int originZ() {
+        return centerX == Integer.MIN_VALUE ? 0 : centerZ << 4;
     }
 
     public int residentCount() {

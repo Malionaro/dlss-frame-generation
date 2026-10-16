@@ -18,7 +18,7 @@ public final class SceneLights {
     public static final int HEADER_BYTES = 16;
     public static final int BUFFER_BYTES = HEADER_BYTES + MAX_LIGHTS * BYTES_PER_LIGHT;
 
-    public record Emitter(float x, float y, float z, float radius,
+    public record Emitter(double x, double y, double z, float radius,
                           float red, float green, float blue, float intensity) {
         float distanceSquared(double cameraX, double cameraY, double cameraZ) {
             double dx = x - cameraX;
@@ -34,7 +34,7 @@ public final class SceneLights {
      * Light for a block emitting {@code emission} (1..15) with colour
      * {@code rgb} (0xRRGGBB); warm or cool tints for the usual light blocks.
      */
-    public static Emitter emitter(float x, float y, float z, int emission, int rgb, LightTint tint) {
+    public static Emitter emitter(double x, double y, double z, int emission, int rgb, LightTint tint) {
         float radius = Math.max(5.0f, emission);
         float intensity = Math.min(2.5f, 0.4f + emission * 0.12f);
         float red;
@@ -57,9 +57,13 @@ public final class SceneLights {
 
     public enum LightTint { FIRE, COOL, RED, WATER, GOLD, BLOCK_COLOR }
 
-    /** The nearest {@link #MAX_LIGHTS} of all sections' emitters, in shader layout. */
+    /**
+     * The nearest {@link #MAX_LIGHTS} of all sections' emitters, in shader
+     * layout, with positions relative to the scene origin.
+     */
     public static ByteBuffer nearest(Collection<List<Emitter>> perSection,
-                                     double cameraX, double cameraY, double cameraZ) {
+                                     double cameraX, double cameraY, double cameraZ,
+                                     double originX, double originY, double originZ) {
         List<Emitter> all = new ArrayList<>();
         for (List<Emitter> emitters : perSection) {
             all.addAll(emitters);
@@ -72,7 +76,10 @@ public final class SceneLights {
         buffer.putInt(count).putInt(0).putInt(0).putInt(0);
         for (int index = 0; index < count; index++) {
             Emitter light = all.get(index);
-            buffer.putFloat(light.x()).putFloat(light.y()).putFloat(light.z()).putFloat(light.radius());
+            buffer.putFloat((float) (light.x() - originX))
+                    .putFloat((float) (light.y() - originY))
+                    .putFloat((float) (light.z() - originZ))
+                    .putFloat(light.radius());
             buffer.putFloat(light.red()).putFloat(light.green()).putFloat(light.blue())
                     .putFloat(light.intensity());
         }

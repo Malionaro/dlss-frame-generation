@@ -6,6 +6,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -78,6 +79,9 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private final ArrayDeque<GpuSection> retiredSections = new ArrayDeque<>();
     /** Bumped whenever the resident set changes; slots rebuild their TLAS to match. */
     private long sceneVersion;
+    private int sceneOriginX;
+    private int sceneOriginY;
+    private int sceneOriginZ;
     private final SlotScene[] slotScenes = new SlotScene[FRAME_SLOT_COUNT];
     private long scratchAlignment = 256L;
     private long atlasView;
@@ -166,7 +170,17 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             ensureOutput(width, height);
             // CPU side first: section selection, snapshots and finished
             // meshes never wait on the GPU.
-            scene.update(Minecraft.getInstance(), config.rayTracingMaxDistance);
+            Minecraft minecraft = Minecraft.getInstance();
+            scene.update(minecraft, config.rayTracingMaxDistance,
+                    RayTracingFrameData.cameraPosition(minecraft));
+            if (scene.originX() != sceneOriginX || scene.originY() != sceneOriginY
+                    || scene.originZ() != sceneOriginZ) {
+                // Every instance offset is relative to the origin.
+                sceneOriginX = scene.originX();
+                sceneOriginY = scene.originY();
+                sceneOriginZ = scene.originZ();
+                sceneVersion++;
+            }
             int frameSlot = (int) (frameNumber % FRAME_SLOT_COUNT);
             // Never overwrite a slot the GPU may still read. This wait
             // also proves every frame before (frameNumber - FRAME_SLOT_COUNT)
@@ -203,7 +217,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             uploadSlotTables(slotScene);
 
             RayTracingFrameData frame = RayTracingFrameData.capture(
-                    Minecraft.getInstance(), width, height, config);
+                    minecraft, width, height, config,
+                    slotScene.originX, slotScene.originY, slotScene.originZ);
             if (frame == null) {
                 finishWithoutTrace(frameSlot, recordedBuilds);
                 return false;
@@ -645,6 +660,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     previous = sections.remove(mesh.key());
                 } else {
                     GpuSection section = createSection(mesh, stack);
+                    section.key = mesh.key();
                     previous = sections.put(mesh.key(), section);
                     built.add(section);
                     changed = true;
@@ -797,13 +813,21 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     (long) count * Long.BYTES, 0, mapped), "map RT section table");
             long tableBase = mapped.get(0);
             int index = 0;
+            slotScene.originX = sceneOriginX;
+            slotScene.originY = sceneOriginY;
+            slotScene.originZ = sceneOriginZ;
             for (GpuSection section : sections.values()) {
                 VkAccelerationStructureInstanceKHR instance = VkAccelerationStructureInstanceKHR.create(
                         instanceBase + (long) index * VkAccelerationStructureInstanceKHR.SIZEOF);
+                // Section-local boxes, placed relative to the scene origin:
+                // small integers, exact in float anywhere in the world.
+                float offsetX = SectionPos.sectionToBlockCoord(SectionPos.x(section.key)) - sceneOriginX;
+                float offsetY = SectionPos.sectionToBlockCoord(SectionPos.y(section.key)) - sceneOriginY;
+                float offsetZ = SectionPos.sectionToBlockCoord(SectionPos.z(section.key)) - sceneOriginZ;
                 instance.transform().matrix(stack.floats(
-                        1, 0, 0, 0,
-                        0, 1, 0, 0,
-                        0, 0, 1, 0
+                        1, 0, 0, offsetX,
+                        0, 1, 0, offsetY,
+                        0, 0, 1, offsetZ
                 ));
                 instance.instanceCustomIndex(index)
                         .mask(0xff)
@@ -2014,6 +2038,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
 
     /** One section's boxes and BLAS. */
     private static final class GpuSection {
+        private long key;
         private Allocation boxes;
         private long boxesAddress;
         private int boxCount;
@@ -2040,6 +2065,10 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         private long lightsVersion = -1L;
         private long spriteVersion = -1L;
         private boolean descriptorsStale = true;
+        /** Scene origin this slot's TLAS was built for. */
+        private int originX;
+        private int originY;
+        private int originZ;
     }
 
     private static final class RetiredOutput {

@@ -3,7 +3,9 @@ package org.malionaro.dlss_frame_generation.client.raytracing;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
 import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
 import org.malionaro.dlss_frame_generation.client.mixin.CameraAccessor;
 import org.malionaro.dlss_frame_generation.client.mixin.GameRendererAccessor;
@@ -18,18 +20,33 @@ public record RayTracingFrameData(
         float tangentHalfFov, float aspect, float maxDistance,
         float nearPlane, float farPlane,
         boolean reflections, int samples, int quality,
-        // Explicit reflection range in meters. Previously the shader abused
-        // cameraForward.w (which carries the quality ordinal) as a range
-        // factor, silently coupling quality changes to reflection distance.
-        float reflectionRange
+        float reflectionRange, // meters
+        float jitterX, float jitterY
 ) {
     public static final int BYTE_SIZE = 112;
 
+    /** Camera position of the current frame, or null without a camera. */
+    public static Vec3 cameraPosition(Minecraft minecraft) {
+        if (minecraft == null
+                || !(minecraft.gameRenderer instanceof GameRendererAccessor renderer)
+                || !(renderer.dlss_fg$getMainCamera() instanceof CameraAccessor cameraAccess)) {
+            return null;
+        }
+        return cameraAccess.dlss_fg$getPosition();
+    }
+
+    /**
+     * @param originX scene origin the slot's TLAS was built for; the camera is
+     *                sent relative to it so it stays exact far from world origin
+     */
     public static RayTracingFrameData capture(
             Minecraft minecraft,
             int width,
             int height,
-            FrameGenConfig config
+            FrameGenConfig config,
+            int originX,
+            int originY,
+            int originZ
     ) {
         if (minecraft == null
                 || !(minecraft.gameRenderer instanceof GameRendererAccessor renderer)
@@ -42,8 +59,17 @@ public record RayTracingFrameData(
         Vector3f forward = new Vector3f(cameraAccess.dlss_fg$getForwards()).normalize();
         Vector3f up = new Vector3f(cameraAccess.dlss_fg$getUp()).normalize();
         Vector3f right = new Vector3f(cameraAccess.dlss_fg$getLeft()).negate().normalize();
-        double fovDegrees = minecraft.options.fov().get();
-        float tangentHalfFov = (float) Math.tan(Math.toRadians(fovDegrees) * 0.5);
+        // The real projection, not the FOV option: sprinting, speed effects and
+        // the spyglass change the field of view and the rays must follow.
+        Matrix4f projection = VulkanRegistry.cameraProjection();
+        float projectionY = Math.abs(projection.m11());
+        float projectionX = Math.abs(projection.m00());
+        float tangentHalfFov = projectionY > 1.0e-6f
+                ? 1.0f / projectionY
+                : (float) Math.tan(Math.toRadians(minecraft.options.fov().get()) * 0.5);
+        float aspect = projectionX > 1.0e-6f && projectionY > 1.0e-6f
+                ? projectionY / projectionX
+                : height > 0 ? (float) width / height : 1.0f;
         double dayFraction = Math.floorMod(
                 minecraft.level.getOverworldClockTime(),
                 24_000L
@@ -77,15 +103,15 @@ public record RayTracingFrameData(
         };
 
         return new RayTracingFrameData(
-                (float) position.x,
-                (float) position.y,
-                (float) position.z,
+                (float) (position.x - originX),
+                (float) (position.y - originY),
+                (float) (position.z - originZ),
                 forward,
                 right,
                 up,
                 sunDirection,
                 tangentHalfFov,
-                height > 0 ? (float) width / height : 1.0f,
+                aspect,
                 maxDistance,
                 0.05f,
                 Math.max(
@@ -97,7 +123,10 @@ public record RayTracingFrameData(
                         ? Math.max(4, config.rayTracingRaysPerPixel)
                         : config.rayTracingRaysPerPixel,
                 quality.ordinal(),
-                maxDistance * reflectionFraction
+                maxDistance * reflectionFraction,
+                // Rays go through the same jittered sample point as the raster.
+                VulkanRegistry.jitterPixelsX(),
+                VulkanRegistry.jitterPixelsY()
         );
     }
 
@@ -116,7 +145,7 @@ public record RayTracingFrameData(
                 sunDirection.z,
                 samples
         );
-        putVec4(data, reflectionRange, 0.0f, 0.0f, 0.0f);
+        putVec4(data, reflectionRange, jitterX, jitterY, 0.0f);
         return data.flip();
     }
 

@@ -67,7 +67,7 @@ class SceneFormatTest {
         for (int index = 0; index < SceneLights.MAX_LIGHTS + 5; index++) {
             near.add(SceneLights.emitter(index, 0, 0, 10, 0xFFFFFF, SceneLights.LightTint.BLOCK_COLOR));
         }
-        ByteBuffer buffer = SceneLights.nearest(List.of(far, near), 0, 0, 0);
+        ByteBuffer buffer = SceneLights.nearest(List.of(far, near), 0, 0, 0, 0, 0, 0);
         assertEquals(SceneLights.BUFFER_BYTES, buffer.remaining());
         assertEquals(SceneLights.MAX_LIGHTS, buffer.getInt(0));
         // First light is the one at the camera, the far torch is cut.
@@ -75,5 +75,17 @@ class SceneFormatTest {
         float lastX = buffer.getFloat(SceneLights.HEADER_BYTES
                 + (SceneLights.MAX_LIGHTS - 1) * SceneLights.BYTES_PER_LIGHT);
         assertEquals(SceneLights.MAX_LIGHTS - 1, lastX);
+    }
+
+    @Test
+    void lightsAreWrittenRelativeToTheSceneOrigin() {
+        List<SceneLights.Emitter> lights = List.of(
+                SceneLights.emitter(1_000_000.5, 70.5, -2_000_000.5, 14, 0xFFFFFF, SceneLights.LightTint.FIRE));
+        ByteBuffer buffer = SceneLights.nearest(List.of(lights),
+                1_000_000, 70, -2_000_000, 1_000_000 - 16, 64, -2_000_000 - 16);
+        // Exact in float only because the origin is subtracted in double.
+        assertEquals(16.5f, buffer.getFloat(SceneLights.HEADER_BYTES));
+        assertEquals(6.5f, buffer.getFloat(SceneLights.HEADER_BYTES + 4));
+        assertEquals(15.5f, buffer.getFloat(SceneLights.HEADER_BYTES + 8));
     }
 }

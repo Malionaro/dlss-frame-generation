@@ -20,6 +20,10 @@ import java.util.List;
  * Turns one {@link SectionSnapshot} into ray-traced boxes ({@link RtBoxFormat})
  * plus its light emitters. Runs on a mesher thread.
  *
+ * <p>Boxes are section-local (0..16), so floats stay exact anywhere in the
+ * world; the BLAS instance transform moves them into place. Lights keep
+ * world coordinates.</p>
+ *
  * <p>Fully enclosed opaque cubes are skipped: no primary, shadow or
  * reflection ray can reach them, and they were most of every section.</p>
  */
@@ -76,7 +80,7 @@ public final class SectionMesher {
                     int color = mapColor != null ? mapColor.col : 0x808080;
                     int emission = state.getLightEmission();
                     if (emission > 0) {
-                        lights.add(SceneLights.emitter(worldX + 0.5f, worldY + 0.5f, worldZ + 0.5f,
+                        lights.add(SceneLights.emitter(worldX + 0.5, worldY + 0.5, worldZ + 0.5,
                                 emission, color, lightTint(mapColor)));
                     }
 
@@ -88,7 +92,7 @@ public final class SectionMesher {
                         int tintWord = RtBoxFormat.packTint(tint, look.tintedFaces(), look.cutout());
                         int flags = flags(mapColor, false, state, emission);
                         VoxelShape shape = state.getShape(EmptyBlockGetter.INSTANCE, position);
-                        if (appendShape(boxes, count, shape, worldX, worldY, worldZ, color, flags,
+                        if (appendShape(boxes, count, shape, x, y, z, color, flags,
                                 look.facesX(), look.facesY(), look.facesZ(), tintWord)) {
                             overflowed = true;
                             break outer;
@@ -105,8 +109,8 @@ public final class SectionMesher {
                             overflowed = true;
                             break outer;
                         }
-                        RtBoxFormat.putBox(boxes, worldX, worldY, worldZ,
-                                worldX + 1.0f, worldY + height, worldZ + 1.0f,
+                        RtBoxFormat.putBox(boxes, x, y, z,
+                                x + 1.0f, y + height, z + 1.0f,
                                 packed, flags(fluidColor, true, state, 0), 0, 0, 0,
                                 RtBoxFormat.packTint(NO_TINT, 0, false));
                         count[0]++;

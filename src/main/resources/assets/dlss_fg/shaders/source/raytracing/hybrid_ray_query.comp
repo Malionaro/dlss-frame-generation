@@ -37,7 +37,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 cameraUp;
     vec4 renderParameters; // tanHalfFov, aspect, maxDistance, reflection enabled
     vec4 sunDirectionAndSamples;
-    vec4 reflectionParams; // x = reflection range in meters (A7: explicit, quality-decoupled)
+    vec4 reflectionParams; // x = reflection range in meters, yz = sub-pixel jitter
 } frame;
 layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D noisyColorImage;
 layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D diffuseAlbedoImage;
@@ -68,6 +68,14 @@ struct Hit {
 
 BlockAabb fetchBox(uint section, uint primitive) {
     return BoxList(sectionBoxes[section]).boxes[primitive];
+}
+
+// Boxes are section-local; the instance transform is a pure translation, so
+// the offset between world and object ray origin moves them into scene space.
+BlockAabb toScene(BlockAabb box, vec3 offset) {
+    box.minimumAndMaximumX += vec4(offset, offset.x);
+    box.maximumYZColorFlags.xy += offset.yz;
+    return box;
 }
 
 vec3 boxMinimum(BlockAabb box) {
@@ -161,9 +169,10 @@ Hit traceScene(vec3 origin, vec3 direction, float minimumDistance, float maximum
     while (rayQueryProceedEXT(query)) {
         if (rayQueryGetIntersectionTypeEXT(query, false)
                 == gl_RayQueryCandidateIntersectionAABBEXT) {
-            BlockAabb box = fetchBox(
+            BlockAabb box = toScene(fetchBox(
                 rayQueryGetIntersectionInstanceCustomIndexEXT(query, false),
-                rayQueryGetIntersectionPrimitiveIndexEXT(query, false));
+                rayQueryGetIntersectionPrimitiveIndexEXT(query, false)),
+                origin - rayQueryGetIntersectionObjectRayOriginEXT(query, false));
             float nearDistance;
             float farDistance;
             vec3 nearNormal;
@@ -197,9 +206,10 @@ Hit traceScene(vec3 origin, vec3 direction, float minimumDistance, float maximum
     }
 
     hit.distance = rayQueryGetIntersectionTEXT(query, true);
-    hit.box = fetchBox(
+    hit.box = toScene(fetchBox(
         rayQueryGetIntersectionInstanceCustomIndexEXT(query, true),
-        rayQueryGetIntersectionPrimitiveIndexEXT(query, true));
+        rayQueryGetIntersectionPrimitiveIndexEXT(query, true)),
+        origin - rayQueryGetIntersectionObjectRayOriginEXT(query, true));
     vec3 point = origin + direction * hit.distance;
     vec3 minimum = boxMinimum(hit.box);
     vec3 maximum = boxMaximum(hit.box);
@@ -253,7 +263,9 @@ vec3 toneMapAces(vec3 hdr) {
 }
 
 vec3 rayDirectionForPixel(ivec2 pixel, ivec2 size) {
-    vec2 uv = (vec2(pixel) + vec2(0.5)) / vec2(size);
+    // Same jittered sample point as the raster image under it, so DLSS sees
+    // RT lighting and geometry move together.
+    vec2 uv = (vec2(pixel) + vec2(0.5) - frame.reflectionParams.yz) / vec2(size);
     vec2 ndc = uv * 2.0 - 1.0;
     ndc.y = -ndc.y;
     return normalize(
