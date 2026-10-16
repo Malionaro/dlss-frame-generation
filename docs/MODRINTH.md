@@ -74,10 +74,10 @@ All native files (Streamline, DLSS, FidelityFX, OptiScaler) are inside the singl
 |---|---|---|
 | DLSS Frame Generation | ✅ Runs on RTX 5080 | Provider accepts every frame; 2× to 6× slider; off in menus. |
 | DLSS Super Resolution / DLAA | 🟡 Experimental | Runs on RTX 5080; the stability and sharpness fixes are new and need more testing. |
-| NVIDIA Reflex | 🟡 Experimental | Low-latency mode works; the frame cap only applies with pacing on. |
-| Iris 1.12 (Vulkan) + shader pack | 🟡 Experimental | Frame generation on the pack's image; no upscaling with Iris; mod RT off. |
+| NVIDIA Reflex | ✅ Runs | Low-latency mode works; the frame cap only applies with pacing on. |
+| Iris 1.12 (Vulkan) + shader pack | ✅ Runs | Frame generation on the pack's image; no upscaling with Iris; mod RT off. |
 | Vitrail shader packs | 🟡 Experimental | DLSS drives Vitrail's render scale. |
-| Sodium 0.9 + Vulkan | 🟡 Experimental | Own settings page; terrain texture fixes apply with Sodium too. |
+| Sodium 0.9 + Vulkan | ✅ Runs | Own settings page; terrain texture fixes apply with Sodium too. |
 | Hybrid hardware ray tracing | 🟡 Experimental | New per-section scene with textures; needs RTX testing. |
 | DLSS Ray Reconstruction | 🟡 Experimental | Guides are connected; not validated yet. |
 | AMD FSR 3.1 Frame Generation | 🟡 Experimental | Vulkan proxy swapchain connected; needs AMD hardware tests. |
@@ -87,5 +87,9 @@ All native files (Streamline, DLSS, FidelityFX, OptiScaler) are inside the singl
 | OpenGL backend | 🔒 Not supported | Everything here needs Minecraft's Vulkan renderer. |
 
 > A visible option does not guarantee activation. A feature becomes active only after the GPU, driver, native runtime, renderer inputs and presentation path all pass their checks. The Status tab and the diagnostics tell you exactly what is missing.
+
+## Thanks
+
+A big thank you to **KawasakiMaxi** for testing the mod on real hardware and giving detailed feedback. Many of the fixes in this release exist because of those test sessions.
 
 Back up your worlds before testing. Source, build instructions and the detailed status are on GitHub.

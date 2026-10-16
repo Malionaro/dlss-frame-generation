@@ -78,6 +78,10 @@ Windows with Java 25, CMake 3.25+ and Visual Studio 2022 Build Tools (C++ worklo
 
 Gradle builds the JNI bridge, compiles the shaders, runs 95 unit tests (including a shaderc compile of every compute shader) and packs everything into one JAR. In IntelliJ, open the project as Gradle project and use the **Minecraft Client** run configuration. More in [Installation](docs/user/INSTALL.md), [Backends](docs/architecture/BACKENDS.md) and the [documentation index](docs/README.md).
 
+## Thanks
+
+A big thank you to **KawasakiMaxi** for testing the mod on real hardware and giving detailed feedback. Many of the fixes in 0.1.0-alpha exist because of those test sessions.
+
 ## Licence
 
 All rights reserved, see [`LICENSE.txt`](LICENSE.txt). Third-party components (NVIDIA Streamline, AMD FidelityFX, OptiScaler) keep their own licences, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
