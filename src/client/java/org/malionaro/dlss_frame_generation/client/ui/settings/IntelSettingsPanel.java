@@ -35,7 +35,7 @@ public final class IntelSettingsPanel {
                         Component.translatable("dlss_fg.option.intel.frame_generation"), (button, value) -> {
                             config.setFrameGenerationEnabled(INTEL, value);
                             config.save();
-                            // D1: native push only via backend.
+                            // Native push only via backend.
                             FrameGenerationBackend.applyActiveConfig(config);
                             screen.refreshSettingsWidgets();
                         });
@@ -67,7 +67,7 @@ public final class IntelSettingsPanel {
                 (capabilities & StreamlineBridge.CAP_UPSCALING) != 0;
 
         // OptiScaler consumes the standard FFX Vulkan input on Intel. Only
-        // 0=Off and 1=Native-AA are real (C2, see AmdSettingsPanel).
+        // Only 0=Off and 1=Native-AA are real modes, see AmdSettingsPanel.
         var btnXessMode = CycleButton.builder((Integer value) -> switch (value) {
                     case 0 -> Component.translatable("dlss_fg.value.off");
                     case 1 -> Component.translatable("dlss_fg.value.native_aa");
@@ -78,7 +78,7 @@ public final class IntelSettingsPanel {
                         Component.translatable("dlss_fg.option.intel.upscaling"), (button, value) -> {
                             config.setUpscalerMode(INTEL, value);
                             config.save();
-                            // D1: native push only via backend.
+                            // Native push only via backend.
                             FrameGenerationBackend.applyActiveConfig(config);
                         });
         btnXessMode.active = xessUpscalingSupported;

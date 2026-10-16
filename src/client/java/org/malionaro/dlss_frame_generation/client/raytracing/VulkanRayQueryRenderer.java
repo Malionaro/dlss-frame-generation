@@ -55,20 +55,13 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private static final int SECTION_UPLOADS_PER_FRAME = 8;
     private static final int FRAME_SLOT_COUNT = 3;
 
-    // Phase 3 K1: GPU-Synchronisation – echte per-slot VkFences. Jede Fence wird
-    // beim Ressourcenaufbau mit VK_FENCE_CREATE_SIGNALED_BIT erzeugt und vor dem
-    // Upload per vkResetFences bewaffnet; ein minimaler Drain-Marker-Submit auf
-    // der Graphics-Queue signalisiert sie, sobald die GPU alle zuvor eingereihten
-    // Command Buffers (inkl. des Frames, der den Slot zuletzt konsumierte)
-    // abgearbeitet hat. render() ruft vor jedem vkCmdUpdateBuffer
-    // awaitUniformSlotFence(frameSlot) und nach dem Dispatch
-    // markUniformSlotInFlight(frameSlot): ein belegter Slot wird nie
-    // überschrieben – bei Timeout/Fehler wird der Frame übersprungen und im
-    // nächsten Frame erneut gewartet (kein Force-Retire, kein korrupter Upload).
-    // Offen (P1): Timeline-Semaphoren (vkWaitSemaphores) und ein
-    // HOST_VISIBLE-Staging-Ring via vkCmdCopyBuffer; der Renderer besitzt keinen
-    // eigenen Frame-Submit, daher ersetzt der Marker-Submit die fehlende
-    // Fence-Zuordnung.
+    // One fence per frame slot, created signalled. markUniformSlotInFlight
+    // re-arms it with an empty submit on the graphics queue, which signals
+    // once the GPU finished everything queued before it. render() waits on it
+    // before reusing the slot and skips the frame on timeout instead of
+    // overwriting data a frame in flight still reads. The renderer records into
+    // Minecraft's command buffer and never submits a frame itself, so this
+    // marker submit is the earliest point a fence of our own can observe.
     private final long[] slotFences = new long[FRAME_SLOT_COUNT];
     private final VkCommandBuffer[] slotMarkerCommandBuffers =
             new VkCommandBuffer[FRAME_SLOT_COUNT];
@@ -175,7 +168,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             // meshes never wait on the GPU.
             scene.update(Minecraft.getInstance(), config.rayTracingMaxDistance);
             int frameSlot = (int) (frameNumber % FRAME_SLOT_COUNT);
-            // P0 K1: never overwrite a slot the GPU may still read. This wait
+            // Never overwrite a slot the GPU may still read. This wait
             // also proves every frame before (frameNumber - FRAME_SLOT_COUNT)
             // finished: the slot fence was armed while that frame was
             // recorded. Section retirement and the slot's TLAS, scratch and
@@ -237,8 +230,6 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                         null
                 );
             }
-            // Slot-Fence bewaffnen (setzt slotInFlight/slotSubmittedFrame und
-            // reicht bei verfügbarem Fence-Pfad einen Drain-Marker ein).
             markUniformSlotInFlight(frameSlot);
             if (descriptorDepthView != depthView.vkImageView()) {
                 // Earlier slots keep their old view until they come round
@@ -506,7 +497,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         if (outputImage != NULL && width == outputWidth && height == outputHeight) {
             return;
         }
-        // A5: only on actual resize/recreate, which follows every dynamic
+        // Only on actual resize/recreate, which follows every dynamic
         // resolution step. Frames in flight may still use the old images, so
         // they are retired and freed once the slot fences prove those frames
         // finished, instead of idling the whole device here.
@@ -1660,13 +1651,11 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     }
 
     /**
-     * Wartet (bounded, 100&nbsp;ms) bis der Slot wiederverwendet werden darf.
+     * Waits up to 100&nbsp;ms until the slot may be reused.
      *
-     * @return {@code true} nur bei bestätigter GPU-Fertigstellung (oder wenn der
-     *         Slot gar nicht belegt war); {@code false} wenn der Aufrufer den
-     *         Frame überspringen muss. Ein belegter Slot wird bei
-     *         Timeout/Fehler bewusst <em>nicht</em> zwangs-retired – der nächste
-     *         Frame wartet erneut, statt In-Flight-Daten zu überschreiben.
+     * @return {@code true} once the GPU finished with the slot (or it was not in
+     *         use); {@code false} when the caller must skip the frame. A busy
+     *         slot is never force-retired: the next frame waits again.
      */
     private boolean awaitUniformSlotFence(int slot) {
         if (slot < 0 || slot >= FRAME_SLOT_COUNT) {
@@ -1677,9 +1666,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         }
         long lastFrame = slotSubmittedFrame[slot];
         if (!fenceSyncAvailable || slotFences[slot] == NULL) {
-            // WIP: requires VkDevice handle + graphics-queue plumbing for the
-            // drain-marker submit; without them only the CPU frame-retired
-            // heuristic remains as a conservative fallback.
+            // No graphics queue for the marker submit: count frames instead.
             awaitUniformSlotCpuFallback(slot, lastFrame);
             return !slotInFlight[slot];
         }
@@ -1971,7 +1958,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             return;
         }
         vkDeviceWaitIdle(device);
-        // Phase 3 K1: after vkDeviceWaitIdle every marker submit has finished,
+        // After vkDeviceWaitIdle every marker submit has finished,
         // so fences and the marker command pool can be destroyed safely.
         destroySynchronization();
         java.util.Arrays.fill(slotInFlight, false);

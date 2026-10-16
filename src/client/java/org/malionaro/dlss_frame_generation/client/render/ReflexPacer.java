@@ -6,7 +6,7 @@ import org.malionaro.dlss_frame_generation.client.FrameGenMod;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 
 public class ReflexPacer {
-    // C8: atomic read-modify-write cycles (EMA + last-frame delta). Readers
+    // Atomic read-modify-write cycles (EMA + last-frame delta). Readers
     // (OSD metrics) and writers (present path) must never see torn values.
     private static final java.util.concurrent.atomic.AtomicLong lastFrameTimeNano =
             new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
@@ -62,17 +62,8 @@ public class ReflexPacer {
             return;
         }
 
-        // Provider-neutral fallback for hardware without Reflex.
-        // P0 Fix: Present path must not block via Thread.sleep.
-        // Keep duration tracking for metrics but do NOT sleep on present thread.
-        // If pacing is required, it should be driven by a scheduler outside the
-        // present path (e.g. LockSupport.parkNanos in a dedicated thread).
-        long targetPaceNano = 1_000_000_000L / targetFps;
-        // no-op: pacing intentionally disabled on present thread to avoid jank/starvation
-        // long sleepDurationNano = targetPaceNano - smoothedFrameDurationNano;
-        // if (sleepDurationNano > 500_000L) {
-        //     java.util.concurrent.locks.LockSupport.parkNanos(sleepDurationNano);
-        // }
+        // Without Reflex only the frame time is tracked: sleeping on the
+        // present thread caused stutter.
     }
 
     public static double getAverageFrameTimeMs() {

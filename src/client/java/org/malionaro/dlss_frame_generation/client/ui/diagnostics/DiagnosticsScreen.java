@@ -64,20 +64,20 @@ public final class DiagnosticsScreen extends Screen {
         addRenderableWidget(runAgainButton);
 
         addRenderableWidget(Button.builder(Component.translatable("gui.done"), button -> {
-            // D13: minecraft is null in headless/edge cases; parent null means close.
+            // Minecraft is null in headless/edge cases; parent null means close.
             if (minecraft != null) {
                 minecraft.setScreenAndShow(parent);
             }
         }).bounds(left + buttonWidth + gap, footerY, buttonWidth, 20).build());
 
-        // D13: content height up front (init runs on resize too), so scrolling
+        // Content height up front (init runs on resize too), so scrolling
         // works before the first render instead of starting at maxScroll 0.
         recomputeContentHeight();
     }
 
     @Override
     public void onClose() {
-        // D13: see above.
+        // See above.
         if (minecraft != null) {
             minecraft.setScreenAndShow(parent);
         }
@@ -85,7 +85,7 @@ public final class DiagnosticsScreen extends Screen {
 
     @Override
     public boolean keyPressed(KeyEvent event) {
-        // D4: keyboard scrolling mirrors MultiVendorSettingsScreen
+        // Keyboard scrolling mirrors MultiVendorSettingsScreen
         // (UP/DOWN = 24px, PgUp/PgDn = 120px); ESC keeps default handling.
         int key = event.key();
         int amount = key == 265 || event.isUp() ? -24

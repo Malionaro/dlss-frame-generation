@@ -21,7 +21,7 @@ namespace dxgipresenter {
 namespace {
 
 constexpr int32_t kNotHandled = INT32_MIN;
-// B5: upper bound for JNI-supplied present wait-semaphore counts. Bounds the
+// Upper bound for JNI-supplied present wait-semaphore counts. Bounds the
 // under-lock allocation in submitVulkanReady against corrupt/huge counts.
 constexpr uint32_t kMaxPresentWaitSemaphores = 16;
 
@@ -41,7 +41,7 @@ uint64_t g_lastSubmittedDone = 0;
 uint32_t g_nextAcquire = 0;
 int32_t g_currentImageIndex = -1;
 bool g_sessionDisabled = false;
-// B1: ownership epoch. Bumped whenever presentation ownership changes
+// Ownership epoch. Bumped whenever presentation ownership changes
 // (swapchain created/destroyed, shutdown). releasePresentationLocked captures
 // it before unlocking for GPU idle and aborts if it changed meanwhile, so a
 // stale teardown never runs on a newer owner's state (TOCTOU/double-reset).
@@ -81,7 +81,7 @@ VulkanFunctions g_vk;
 struct SwapchainToken {};
 std::unique_ptr<SwapchainToken> g_swapchainToken;
 VkSwapchainKHR g_retiredSwapchain = VK_NULL_HANDLE;
-// B4: handles handed to the renderer are monotonic ids, never recycled token
+// Handles handed to the renderer are monotonic ids, never recycled token
 // addresses. A freed unique_ptr address can be reused by the next make_unique
 // (ABA), letting a stale handle compare equal again; ids grow forever
 // (0 = null), so a retired handle can never become valid again.
@@ -347,7 +347,7 @@ void abandonPresentationLocked() {
 
 void releasePresentationLocked(std::unique_lock<std::mutex>& lock) {
     // Deadlock fix: do not hold g_mutex while blocking on GPU idle.
-    // B1: capture the ownership epoch first; a concurrent create/destroy
+    // Capture the ownership epoch first; a concurrent create/destroy
     // bumps it while unlocked, in which case the newer owner is responsible
     // for teardown and this stale invocation must stop after re-locking.
     const uint64_t releaseEpoch = g_presentationEpoch;
@@ -415,7 +415,7 @@ void releasePresentationLocked(std::unique_lock<std::mutex>& lock) {
     g_vulkanReadyFence.Reset();
     g_d3d12DoneFence.Reset();
     if (g_swapchainToken != nullptr) {
-        // B4: retire the id, not the token address (see globals).
+        // Retire the id, not the token address (see globals).
         g_retiredSwapchain = idToHandle(g_activeSwapchainId);
         g_activeSwapchainId = 0;
         g_swapchainToken.reset();
@@ -1136,7 +1136,7 @@ bool canCreatePresentationSwapchain() {
 
 bool ownsSwapchain(VkSwapchainKHR swapchain) {
     std::lock_guard lock(g_mutex);
-    // B4: id comparison (no ABA) with explicit parentheses for the || chain.
+    // Id comparison (no ABA) with explicit parentheses for the || chain.
     return (g_swapchainToken != nullptr
         && g_activeSwapchainId != 0
         && swapchain == idToHandle(g_activeSwapchainId))
@@ -1180,7 +1180,7 @@ int32_t createSwapchain(
     }
 
     g_window = static_cast<HWND>(window);
-    // B13: zero-area extents must be rejected before any committed resource
+    // Zero-area extents must be rejected before any committed resource
     // or DXGI swapchain is created from them.
     if (createInfo->imageExtent.width == 0
         || createInfo->imageExtent.height == 0) {
@@ -1295,11 +1295,11 @@ int32_t createSwapchain(
     }
 
     g_swapchainToken = std::make_unique<SwapchainToken>();
-    // B4: hand out a fresh monotonic id (never a recyclable address).
+    // Hand out a fresh monotonic id (never a recyclable address).
     g_activeSwapchainId = ++g_nextSwapchainId;
     *swapchain = idToHandle(g_activeSwapchainId);
     g_stage = Stage::PresentationReady;
-    // B1: new ownership generation takes over teardown responsibility.
+    // New ownership generation takes over teardown responsibility.
     ++g_presentationEpoch;
     g_capabilities |=
         kCapDxgiSwapchain | kCapZeroCopyFrames;
@@ -1317,7 +1317,7 @@ void destroySwapchain(VkSwapchainKHR swapchain) {
         && g_activeSwapchainId != 0
         && swapchain == idToHandle(g_activeSwapchainId)) {
         releasePresentationLocked(lock);
-        // B1: ownership ended; any stale teardown still in its idle wait
+        // Ownership ended; any stale teardown still in its idle wait
         // observes this bump and aborts instead of double-resetting.
         ++g_presentationEpoch;
     } else if (swapchain == g_retiredSwapchain) {
@@ -1396,7 +1396,7 @@ int32_t acquireNextImage(
         }
     }
     if (!found) {
-        // B2: every frame is still in flight. Report instead of falling back
+        // Every frame is still in flight. Report instead of falling back
         // to round-robin on a busy texture — reusing it would overwrite a
         // shared image the GPU is still reading. The renderer retries on the
         // next frame (standard VK_NOT_READY handling, no session damage).
@@ -1440,7 +1440,7 @@ int32_t queuePresent(
         g_sessionDisabled = true;
         return VK_ERROR_DEVICE_LOST;
     }
-    // B5: bound the JNI-supplied wait-semaphore block before submitVulkanReady
+    // Bound the JNI-supplied wait-semaphore block before submitVulkanReady
     // allocates from it under lock. A corrupt count or a non-null count with a
     // null pointer would otherwise OOM or crash the JVM.
     if (presentInfo->waitSemaphoreCount > kMaxPresentWaitSemaphores
@@ -1459,11 +1459,11 @@ int32_t queuePresent(
         return VK_ERROR_OUT_OF_DATE_KHR;
     }
 
-    // B3: the submit/wait/copy/signal sequence below intentionally stays under
+    // The submit/wait/copy/signal sequence below intentionally stays under
     // g_mutex: teardown (destroySwapchain/shutdown) takes the same lock, so
     // releasing mid-sequence would let it free copy commands and shared frames
     // still referenced below. The only unbounded under-lock work was the
-    // wait-semaphore vector, now capped by kMaxPresentWaitSemaphores (B5).
+    // wait-semaphore vector, capped by kMaxPresentWaitSemaphores.
     // Present() itself already runs unlocked. No blocking wait holds the lock:
     // submits and fence waits only enqueue; teardown idles after unlocking.
     uint64_t readyValue = ++g_readyValue;
@@ -1478,7 +1478,7 @@ int32_t queuePresent(
     HRESULT result = g_d3d12Queue->Wait(
         g_vulkanReadyFence.Get(), readyValue);
     if (FAILED(result)) {
-        // B12: a bare HRESULT hex code never explains a dead queue — attach
+        // A bare HRESULT hex code never explains a dead queue — attach
         // the device-removed reason like the Present path below does.
         HRESULT removed = g_d3d12Device->GetDeviceRemovedReason();
         fail("D3D12 queue wait for Vulkan failed: "
@@ -1490,7 +1490,7 @@ int32_t queuePresent(
 
     uint32_t destinationIndex =
         g_dxgiSwapchain->GetCurrentBackBufferIndex();
-    // B13: the driver-owned back-buffer index is untrusted input for the
+    // The driver-owned back-buffer index is untrusted input for the
     // copy-command lookup below — bound it before indexing.
     if (destinationIndex >= g_bufferCount) {
         fail("DXGI bridge reported an out-of-range back-buffer index");
@@ -1506,7 +1506,7 @@ int32_t queuePresent(
     result = g_d3d12Queue->Signal(
         g_d3d12DoneFence.Get(), readyValue);
     if (FAILED(result)) {
-        // B12: see the queue-wait path above.
+        // See the queue-wait path above.
         HRESULT removed = g_d3d12Device->GetDeviceRemovedReason();
         fail("D3D12 completion fence signal failed: "
             + hresultText(result)
@@ -1572,7 +1572,7 @@ void shutdown() {
     std::unique_lock<std::mutex> lock(g_mutex);
 #if defined(_WIN32)
     releasePresentationLocked(lock);
-    // B1: see destroySwapchain — ownership ended here as well.
+    // See destroySwapchain — ownership ended here as well.
     ++g_presentationEpoch;
     g_d3d12Queue.Reset();
     g_d3d12Device.Reset();

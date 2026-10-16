@@ -35,7 +35,7 @@ public final class ProviderLifecycle {
     private long swapchainGeneration;
     private FrameIdentity lastAcceptedFrame = FrameIdentity.INVALID;
     private String detail = "No provider detected";
-    // C5: transient failures (e.g. swapchain drain timeouts) are retryable on
+    // Transient failures (e.g. swapchain drain timeouts) are retryable on
     // the next swapchain generation; hard failures latch until re-detection.
     private boolean failureTransient;
     private long failureGeneration = -1L;
@@ -189,7 +189,7 @@ public final class ProviderLifecycle {
     }
 
     /**
-     * Transient failure (C5): latched as FAILED like {@link #failed}, but
+     * Transient failure: latched as FAILED like {@link #failed}, but
      * marked retryable once the swapchain generation advances (e.g. a drain
      * timeout during rebuild). See
      * {@link org.malionaro.dlss_frame_generation.client.compat.CompatibilityManager#completeProviderSwapchainRebuild(long)}.

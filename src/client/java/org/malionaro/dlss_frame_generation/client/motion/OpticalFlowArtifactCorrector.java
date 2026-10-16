@@ -7,7 +7,7 @@ public class OpticalFlowArtifactCorrector {
     private static float dampeningFactor = 1.0f; // 1.0 = Full FG, 0.0 = Dampened for zero artifacts
 
     /**
-     * D7: current dampening factor, consumed by the motion pipeline to reset
+     * Current dampening factor, consumed by the motion pipeline to reset
      * temporal history while whipping the camera (reprojection is unreliable
      * then; static vectors beat tearing). Render-thread confined, like the
      * camera state that feeds it.

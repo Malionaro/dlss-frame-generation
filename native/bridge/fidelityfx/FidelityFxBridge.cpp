@@ -412,7 +412,7 @@ void setUpscalingMode(int mode, float sharpness) {
 }
 
 bool submitUpscalingInputs(const UpscalingInputs& inputs) {
-    // B12: pure descriptor math hoisted above the lock (see
+    // Pure descriptor math hoisted above the lock (see
     // submitFrameGenerationInputs); validation, context ensure and the
     // dispatch stay under it.
     const FfxApiResource colorRes = makeImageResource(
@@ -518,7 +518,7 @@ const std::string& status() {
 }
 
 bool submitFrameGenerationInputs(const FrameGenerationInputs& inputs) {
-    // B12: pure-local descriptor/camera prep runs before the lock (no globals
+    // Pure-local descriptor/camera prep runs before the lock (no globals
     // involved). Validation, context ensure and both dispatches stay under it:
     // they touch g_ state that teardown under the same mutex may destroy.
     const FfxApiResource hudlessColor = makeImageResource(

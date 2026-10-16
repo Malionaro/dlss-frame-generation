@@ -9,7 +9,7 @@ import org.slf4j.LoggerFactory;
  * per-frame input readiness so the UI can explain both states truthfully.
  */
 public class NvidiaBackend implements FrameGenerationBackend {
-    // C10: native misses are debug-logged instead of swallowed, so a missing
+    // Native misses are debug-logged instead of swallowed, so a missing
     // entry point is distinguishable from "applied and idle".
     private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.backend.nvidia");
 
@@ -82,7 +82,7 @@ public class NvidiaBackend implements FrameGenerationBackend {
 
     @Override
     public void restoreAfterSwapchainRecreation(FrameGenConfig config) {
-        // C4: restore through the same filtered path as applyConfig so a
+        // Restore through the same filtered path as applyConfig so a
         // FAILED/unsupported session is never silently re-enabled on rebuild.
         applyConfig(config);
     }

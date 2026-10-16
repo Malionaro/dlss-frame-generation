@@ -57,7 +57,7 @@ public class FrameGenOsdRenderer {
         boolean showReflex = backend != null && backend.vendor() == FrameGenerationBackend.GpuVendor.NVIDIA;
         boolean showRt = config.rayTracingMode != FrameGenConfig.RayTracingMode.OFF;
 
-        // D5: build lines first so the card width follows the longest line
+        // Build lines first so the card width follows the longest line
         // (German strings overflowed the fixed 210px box). Colors raised to
         // WCAG-friendlier values on the translucent card.
         record OsdLine(Component text, int color) {}
@@ -84,7 +84,7 @@ public class FrameGenOsdRenderer {
                         VulkanRegistry.getCapturedFrameCount()),
                 0xFF66CCFF));
         if (showReflex) {
-            // D5: no hardcoded English — reuse the value keys.
+            // No hardcoded English — reuse the value keys.
             Component reflexValue = Component.translatable(
                     config.reflexMode == 2 ? "dlss_fg.value.on_boost"
                             : config.reflexMode == 1 ? "dlss_fg.value.on"

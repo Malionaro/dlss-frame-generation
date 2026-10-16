@@ -238,7 +238,7 @@ public final class D3D12PresentationBridge {
     }
 
     private static void refresh() {
-        // B10: native string getters return null on JNI OOM/invalid UTF (see
+        // Native string getters return null on JNI OOM/invalid UTF (see
         // StreamlineBridge NewStringUTF handling) — never let a null detail
         // or LUID escape into contains()/adapter matchers as an NPE.
         String adapterLuid = orEmpty(

@@ -34,7 +34,7 @@ public final class AmdSettingsPanel {
                         Component.translatable("dlss_fg.option.amd.frame_generation"), (button, value) -> {
                             config.setFrameGenerationEnabled(AMD, value);
                             config.save();
-                            // D1: native push only via backend.
+                            // Native push only via backend.
                             FrameGenerationBackend.applyActiveConfig(config);
                             screen.refreshSettingsWidgets();
                         });
@@ -66,7 +66,7 @@ public final class AmdSettingsPanel {
         int columnWidth = screen.settingsColumnWidth();
         boolean upscalingSupported = (capabilities & StreamlineBridge.CAP_UPSCALING) != 0;
 
-        // Only 0=Off and 1=Native-AA are real Vulkan modes (C2: sanitize maps
+        // Only 0=Off and 1=Native-AA are real Vulkan modes (sanitize maps
         // anything higher to Off), so no higher values are offered.
         var btnFsrMode = CycleButton.builder((Integer value) -> switch (value) {
                     case 0 -> Component.translatable("dlss_fg.value.off");
@@ -78,7 +78,7 @@ public final class AmdSettingsPanel {
                         Component.translatable("dlss_fg.option.amd.upscaling"), (button, value) -> {
                             config.setUpscalerMode(AMD, value);
                             config.save();
-                            // D1: native push only via backend.
+                            // Native push only via backend.
                             FrameGenerationBackend.applyActiveConfig(config);
                         });
         btnFsrMode.active = upscalingSupported;

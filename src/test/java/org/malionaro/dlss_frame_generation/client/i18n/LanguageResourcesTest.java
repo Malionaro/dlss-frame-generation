@@ -28,7 +28,7 @@ class LanguageResourcesTest {
                             + "message|backend_status|category|key)"
                             + "\\.[a-zA-Z0-9_.]+"
             );
-    // D6: only %s (and escaped %%) are used; counted per key for the arity test.
+    // Only %s (and escaped %%) are used; counted per key for the arity test.
     private static final Pattern PLACEHOLDER =
             Pattern.compile("%(\\d+\\$)?s");
 
@@ -79,7 +79,7 @@ class LanguageResourcesTest {
 
     @Test
     void formatPlaceholdersMatchBetweenLanguages() throws IOException {
-        // D6 arity gate: a German string with fewer/more %s than its English
+        // Arity check: a German string with fewer/more %s than its English
         // source throws or drops arguments at runtime. Encodings were verified
         // clean (no U+FFFD / control chars in either file).
         var english = placeholderCounts("en_us.json");

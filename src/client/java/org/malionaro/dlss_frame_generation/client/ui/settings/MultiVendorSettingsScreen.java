@@ -252,7 +252,7 @@ public class MultiVendorSettingsScreen extends Screen {
                         Component.translatable("dlss_fg.option.ui_recomposition"), (button, value) -> {
                             config.uiRecomposition = value;
                             config.save();
-                            // D1: native push only via backend.
+                            // Native push only via backend.
                             FrameGenerationBackend.applyActiveConfig(config);
                         });
         btnRecomp.active = available;
@@ -282,7 +282,7 @@ public class MultiVendorSettingsScreen extends Screen {
                 value -> {
                     setter.accept(value / 100.0f);
                     config.saveSoon();
-                    // D2/D3: native apply throttled while dragging.
+                    // Native apply is throttled while dragging.
                     long now = System.nanoTime();
                     if (now - lastApplyNanos[0] >= 200_000_000L) {
                         lastApplyNanos[0] = now;
@@ -503,14 +503,14 @@ public class MultiVendorSettingsScreen extends Screen {
     @Override
     public void removed() {
         super.removed();
-        // C9: flush any coalesced slider save so the last drag position
+        // Flush any coalesced slider save so the last drag position
         // always reaches disk when the screen closes.
         FrameGenConfig.flushPendingSave();
     }
 
     @Override
     protected void rebuildWidgets() {
-        // P2-02: keep the scroll position across a rebuild.
+        // Keep the scroll position across a rebuild.
         int savedScroll = scrollOffset;
         super.rebuildWidgets();
         scrollOffset = Math.clamp(savedScroll, 0, Math.max(0, maxScroll));
@@ -680,7 +680,7 @@ public class MultiVendorSettingsScreen extends Screen {
                 .create(0, 0, settingsColumnWidth(), 20,
                         Component.translatable("dlss_fg.option.preset"), (button, value) -> {
                             config.applyPreset(value);
-                            // D1: presets mutate the config directly, so they
+                            // Presets mutate the config directly, so they
                             // must push it to native like every other control.
                             FrameGenerationBackend.applyActiveConfig(config);
                             rebuildWidgets();

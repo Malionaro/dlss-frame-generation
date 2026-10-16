@@ -25,7 +25,7 @@ public class FrameGenConfig {
                 return FabricLoader.getInstance().getConfigDir().resolve("frame_gen.json");
             }
         } catch (Throwable t) {
-            // Fallback for headless unit test runner. Loud on purpose (C11):
+            // Fallback for the headless unit test runner. Loud on purpose:
             // silently splitting productive and test config hides divergence.
             LOGGER.warn("Config directory unavailable, falling back to build/tmp/frame_gen.json: {}",
                     t.toString());
@@ -34,7 +34,7 @@ public class FrameGenConfig {
     }
 
     private static volatile FrameGenConfig instance;
-    /** Test-only override so unit tests never touch the real config file (D10). */
+    /** Test-only override so unit tests never touch the real config file. */
     private static volatile Path configPathOverride;
 
     /** Test seam (same package): redirect the config file into a temp dir. */
@@ -177,7 +177,7 @@ public class FrameGenConfig {
                 this.projectionJitterEnabled = true;
                 this.drsEnabled = true;
                 this.targetFps = 144;
-                // P2-01: drs/motionBlur cross-validate - Performance will kein MotionBlur
+                // Motion blur costs frames, which this preset is about.
                 this.motionBlurEnabled = false;
             }
             case CUSTOM -> {}
@@ -220,8 +220,7 @@ public class FrameGenConfig {
     public boolean reflexInputMarkerEnabled = false;
     public boolean dlssRayReconstructionEnabled = false;
 
-    // A11 single source for the hybrid-RT scene radius. the RT scene caps
-    // effectiveDistance with the same constant; sanitize clamps to it.
+    // Single source for the RT scene radius: the scene and sanitize both use it.
     /**
      * Highest DLSS-G multiplier the config accepts. DLSS 4.5 dynamic multi
      * frame generation reaches 6x on RTX 50; the native bridge still clamps
@@ -247,7 +246,7 @@ public class FrameGenConfig {
 
     // NVIDIA Streamline options. The runtime-reported maximum multiplier is
     // applied before the option is sent to DLSS-G.
-    // All providers default to off (C1): first-run device detection enables the
+    // All providers default to off: first-run device detection enables the
     // detected vendor instead of shipping an ambiguous all-on state.
     public boolean dlssFgEnabled = false;
     public int reflexMode = 1; // 0 = Off, 1 = Low Latency, 2 = Low Latency + Boost
@@ -475,7 +474,7 @@ public class FrameGenConfig {
         return instance;
     }
 
-    // Package-private for same-package unit tests (D10: no reflection needed).
+    // Package-private for same-package unit tests.
     static FrameGenConfig load() {
         Path path = getConfigPath();
         if (Files.exists(path)) {
@@ -508,7 +507,7 @@ public class FrameGenConfig {
             configVersion = 2;
         }
         if (configVersion < 3) {
-            // C1: files predating userHasChosenProvider keep their flags exactly
+            // Files predating userHasChosenProvider keep their flags exactly
             // as-is and count as an explicit choice, so first-run auto-enable
             // never overrides preserved user intent.
             userHasChosenProvider = true;
@@ -596,7 +595,7 @@ public class FrameGenConfig {
             LOGGER.warn("Sanitize: dlssUpscalingMode clamped from {} to {}", oldDlssMode, dlssUpscalingMode);
         }
         int oldAmdMode = amdFsrMode;
-        // C2: only 0=Off and 1=Native-AA are real Vulkan modes; anything higher
+        // Only 0=Off and 1=Native-AA are real Vulkan modes; anything higher
         // is silently unusable natively, so fail closed to Off with a warning.
         amdFsrMode = amdFsrMode > 1 ? 0 : clamp(amdFsrMode, 0, 1);
         if (oldAmdMode != amdFsrMode) {
@@ -737,7 +736,7 @@ public class FrameGenConfig {
         if (oldRays != rayTracingRaysPerPixel) {
             LOGGER.warn("Sanitize: rayTracingRaysPerPixel clamped from {} to {}", oldRays, rayTracingRaysPerPixel);
         }
-        // Final clamp UI-Werte Sicherung: motionBlurIntensity/Samples bereits oben, aber erneut für Nicht-MotionBlur Pfad
+        // Clamp again: the block above only runs with motion blur enabled.
         motionBlurIntensity = clamp(motionBlurIntensity, 0.0f, 1.0f);
         motionBlurSamples = clamp(motionBlurSamples, 1, 64);
     }
@@ -775,7 +774,7 @@ public class FrameGenConfig {
         }
     }
 
-    // C9: coalesced persistence for per-tick writers (sliders). Discrete
+    // Coalesced persistence for per-tick writers (sliders). Discrete
     // clicks keep using synchronous save() (crash-safe); high-frequency
     // applyValue paths use saveSoon() and flush on release/close, so dragging
     // a slider performs one disk write instead of one per pixel. Daemon thread:

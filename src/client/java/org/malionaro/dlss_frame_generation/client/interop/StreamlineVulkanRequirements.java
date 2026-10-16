@@ -207,7 +207,7 @@ public final class StreamlineVulkanRequirements {
             }
             return requirements;
         } catch (UnsatisfiedLinkError error) {
-            // B10: an empty array here used to silently mean "no requirements".
+            // An empty array here used to silently mean "no requirements".
             // Say loudly (once) that requirements are UNKNOWN so missing
             // extension/feature gates stay visible instead of fail-open quiet.
             warnRequirementsUnknownOnce(

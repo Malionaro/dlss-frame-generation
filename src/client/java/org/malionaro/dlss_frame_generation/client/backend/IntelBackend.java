@@ -12,7 +12,7 @@ import org.slf4j.LoggerFactory;
  * Native XeSS-FG remains unavailable because its API requires D3D12 and XeLL.
  */
 public class IntelBackend implements FrameGenerationBackend {
-    // C10: see NvidiaBackend — native misses are debug-logged, not swallowed.
+    // See NvidiaBackend — native misses are debug-logged, not swallowed.
     private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.backend.intel");
 
     @Override
@@ -39,7 +39,7 @@ public class IntelBackend implements FrameGenerationBackend {
 
         try {
             // Single entry point for Intel. All mode changes go through here.
-            // C3: same session-fallback path as NVIDIA (see AmdBackend).
+            // Same session-fallback path as NVIDIA (see AmdBackend).
             int supported = FrameGenerationCompatibilityLayer.queryVulkanRoute(GpuVendor.INTEL).capabilities();
             ProviderLifecycle.State state = FrameGenMod.compatibilityManager() != null
                     ? FrameGenMod.compatibilityManager().providerSnapshot().state()

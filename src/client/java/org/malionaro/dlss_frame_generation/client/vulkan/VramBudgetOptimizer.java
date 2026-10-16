@@ -8,7 +8,7 @@ import org.slf4j.LoggerFactory;
 public class VramBudgetOptimizer {
     private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.vram");
     private static final double BACKPRESSURE_THRESHOLD = 0.85;
-    // D9: atomics — checkVramPressure runs on the render thread while OSD and
+    // Atomics — checkVramPressure runs on the render thread while OSD and
     // diagnostics may read the counters; torn RMW cycles are out.
     private static final java.util.concurrent.atomic.AtomicLong lastFlushTime =
             new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis());
@@ -77,7 +77,7 @@ public class VramBudgetOptimizer {
     private static void checkLegacyDlssgVramPressure() {
         try {
             long vramBytes = StreamlineBridge.nGetDlssgVramUsage();
-            // D9: last-resort absolute threshold for drivers without
+            // Last-resort absolute threshold for drivers without
             // VK_EXT_memory_budget (no budget denominator exists there, so no
             // relative threshold is computable). Unlike before, this path now
             // actually notifies backpressure instead of only debug-logging it.

@@ -43,9 +43,9 @@ public class VulkanGpuSurfaceMixin {
     @Unique
     private static final long dlss_fg$DRAIN_TIMEOUT_NANOS = 2_000_000_000L;
 
-    // Phase 3 K2: completion gating lives in VulkanRegistry's rotating
+    // Completion gating lives in VulkanRegistry's rotating
     // present-gate (SlotFenceGate) + the pipeline's confirmed-present serial.
-    // The counter below is diagnostics only, not a sync primitive (A4: the
+    // The counter below is diagnostics only, not a sync primitive (the
     // never-written acquire-semaphore stub was removed).
     @Unique
     private long dlss_fg$presentSerialTimeline = 0L;
@@ -124,7 +124,7 @@ public class VulkanGpuSurfaceMixin {
                 MemoryUtil.memAddress(swapchain)
             );
             if (result != StreamlineBridge.NATIVE_NOT_HANDLED) {
-                // M4: track ownership for destroy – remember handle only when proxy actually created it
+                // Track ownership for destroy – remember handle only when proxy actually created it
                 if (result == 0) {
                     try {
                         dlss_fg$proxySwapchain = swapchain.get(0);
@@ -157,7 +157,7 @@ public class VulkanGpuSurfaceMixin {
             D3D12PresentationBridge.destroySwapchain(swapchain);
             return;
         }
-        // M4: Destroy ownership-check – only route through proxy if this handle was created via createProxySwapchain
+        // Destroy ownership-check – only route through proxy if this handle was created via createProxySwapchain
         // Use per-handle tracking (dlss_fg$proxySwapchain) and fallback to swapchainGeneration/proxy flag heuristic
         boolean isProxyOwned = false;
         if (useProviderProxy()) {
@@ -400,7 +400,7 @@ public class VulkanGpuSurfaceMixin {
                 }
             }
         } catch (Throwable ignored) {}
-        // Phase 3 K2: diagnostic present counter. Completion gating is owned
+        // Diagnostic present counter. Completion gating is owned
         // by VulkanRegistry's present-gate + the pipeline serial (see above).
         try {
             dlss_fg$presentSerialTimeline++;
@@ -415,7 +415,7 @@ public class VulkanGpuSurfaceMixin {
 
     @Inject(method = "present", at = @At("RETURN"))
     private void onPresentEnd(CallbackInfo ci) {
-        // Phase 3 K2: Present completion gating. The registry's rotating
+        // Present completion gating. The registry's rotating
         // present-gate (drain-marker fence, 2 presents deep) is polled with a
         // bounded wait; under -Ddlss_fg.strictSync=true this is a full
         // vkDeviceWaitIdle instead. The serial itself advances in

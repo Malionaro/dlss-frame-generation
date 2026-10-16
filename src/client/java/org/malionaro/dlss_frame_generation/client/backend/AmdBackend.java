@@ -12,7 +12,7 @@ import org.slf4j.LoggerFactory;
  * until the renderer supplies dense motion vectors and the remaining inputs.
  */
 public class AmdBackend implements FrameGenerationBackend {
-    // C10: see NvidiaBackend — native misses are debug-logged, not swallowed.
+    // See NvidiaBackend — native misses are debug-logged, not swallowed.
     private static final Logger LOGGER = LoggerFactory.getLogger("dlss_fg.backend.amd");
 
     @Override
@@ -39,7 +39,7 @@ public class AmdBackend implements FrameGenerationBackend {
 
         try {
             // All AMD upscaling and FG mode changes go through here. Single place, no duplicates.
-            // C3: same session-fallback path as NVIDIA — a FAILED/UNAVAILABLE
+            // Same session-fallback path as NVIDIA — a FAILED/UNAVAILABLE
             // provider degrades to reconstruction instead of showing FG as on.
             int supported = FrameGenerationCompatibilityLayer.queryVulkanRoute(GpuVendor.AMD).capabilities();
             ProviderLifecycle.State state = FrameGenMod.compatibilityManager() != null

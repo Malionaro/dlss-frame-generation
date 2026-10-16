@@ -40,7 +40,7 @@ public final class VulkanRegistry {
     private static volatile VulkanGpuSurface activeSurface;
     private static volatile VulkanCommandEncoder activeEncoder;
     private static volatile VulkanFrameGenerationPipeline frameGenerationPipeline;
-    // C8: cross-thread counters as atomics (render thread writes, mixin and
+    // Cross-thread counters as atomics (render thread writes, mixin and
     // present threads read). The camera matrix/float block below stays
     // render-thread confined (single writer: updateCameraState on the render
     // thread); see the confinement note at updateCameraState.
@@ -98,8 +98,7 @@ public final class VulkanRegistry {
         activeDevice = device;
         LOGGER.info("Registered active VulkanDevice context: {}", device);
         frameGenerationPipeline = new VulkanFrameGenerationPipeline(device, LOGGER);
-        // P0 K2/A1: the present gate holds VkDevice-bound fences/markers, so it
-        // must never survive a device change. Recreate lazily-initialized.
+        // The present gate holds fences of the old device; recreate it.
         SlotFenceGate previousGate = presentGate;
         presentGate = null;
         presentGateSequence = 0L;
@@ -248,7 +247,7 @@ public final class VulkanRegistry {
                                         fallback.detail()
                                 );
                             }
-                            // D1: single native config path – all mode-setter calls must go through backend.applyConfig(config)
+                            // Single native config path – all mode-setter calls must go through backend.applyConfig(config)
                             // Direct native setters here would be a duplicate path and are removed.
                             FrameGenerationBackend initBackend = comp.activeVendorBackend();
                             if (initBackend != null) {
@@ -402,7 +401,7 @@ public final class VulkanRegistry {
         if (comp == null || comp.activeVendorBackend() == null) {
             return;
         }
-        // D1: lifecycle pre-drain disable must not be a direct native setter in VulkanRegistry
+        // Lifecycle pre-drain disable must not be a direct native setter in VulkanRegistry
         // Delegate to backend so the single config path remains via applyConfig/lifecycle helper
         try {
             // Only NVIDIA needs explicit DLSS-G disable before resize; other vendors no-op
@@ -453,7 +452,7 @@ public final class VulkanRegistry {
                         adapter.getRenderWidth(),
                         adapter.getRenderHeight()
                     );
-                    // D1: restore uses backend lifecycle helper, not direct nSetFgMode, to keep single config path
+                    // Restore uses backend lifecycle helper, not direct nSetFgMode, to keep single config path
                     FrameGenerationBackend backend = comp.activeVendorBackend();
                     if (backend != null) {
                         backend.restoreAfterSwapchainRecreation(FrameGenConfig.getInstance());
@@ -625,7 +624,6 @@ public final class VulkanRegistry {
         clipToPrev.invert(prevToCurr);
         prevToCurr.get(prevClipToClipArr);
 
-        // Feature: AI Optical Flow Artifact Corrector
         org.malionaro.dlss_frame_generation.client.motion.OpticalFlowArtifactCorrector.updateCameraRotation(camFwdX, camFwdY, camFwdZ);
 
         // Get viewToClip and clipToView float arrays
@@ -819,7 +817,7 @@ public final class VulkanRegistry {
         currentFrameSerial.incrementAndGet();
         currentFrameResources = null;
         updateCameraState(gameRenderState);
-        // H2: jitter must only be reported when projection is actually mutated; otherwise keep 0.
+        // Jitter must only be reported when projection is actually mutated; otherwise keep 0.
         // A shader-pack engine (Vitrail) runs its own temporal passes on this
         // projection, so it is never jittered there.
         // Jitter is only invisible when the upscaler resolves it. If the last
@@ -895,14 +893,11 @@ public final class VulkanRegistry {
     }
 
     public static void onPresent() {
-        // Feature 3: Auto-Reflex Latency Pacing
         ReflexPacer.paceFrame();
-
-        // Feature: Dynamic VRAM Budget Optimizer
         org.malionaro.dlss_frame_generation.client.vulkan.VramBudgetOptimizer.checkVramPressure(
                 activePhysicalDeviceHandle);
 
-        // P0 K2/A1: arm the next drain-marker behind this present's submissions.
+        // Arm the next drain marker behind this present's submissions.
         // Queue order makes it observable GPU progress for the completion gate.
         // Never throws; a failed gate simply reports unconfirmed waits.
         try {
@@ -986,7 +981,7 @@ public final class VulkanRegistry {
         frameGenerationPipeline.setCameraOnlyMotion(paused || ForeignShaderPipeline.active());
         if (paused) {
             try {
-                // D1: lifecycle ÔÇô delegate to backend so VulkanRegistry has no direct nSet* path
+                // Through the backend, which owns every native mode setter.
                 backend.disableForPause(config);
             } catch (UnsatisfiedLinkError ignored) {
                 // The normal unsupported-provider path remains fail-closed.
@@ -1239,7 +1234,7 @@ public final class VulkanRegistry {
             return;
         }
         FrameGenConfig config = FrameGenConfig.getInstance();
-        // H3: vendor-aware UI finalize - mirror captureInputs vendor switch, not hardcoded NVIDIA
+        // Vendor-aware UI finalize - mirror captureInputs vendor switch, not hardcoded NVIDIA
         boolean uiEnabled;
         int uiMultiplier;
         switch (backend.vendor()) {

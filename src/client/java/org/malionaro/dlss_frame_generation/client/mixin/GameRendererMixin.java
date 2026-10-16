@@ -332,7 +332,7 @@ public class GameRendererMixin {
                 dlss_fg$separateUiForFrame
         );
 
-        // H4: guaranteed composite fallback – if capture bailed (no CmdBuffer, slot busy, validation fail)
+        // Guaranteed composite fallback – if capture bailed (no CmdBuffer, slot busy, validation fail)
         // and we are rendering at reduced resolution, blit worldTarget -> displayTarget via Java so HUD never composites over black.
         // A captured frame only counts when the pipeline really wrote the
         // display target. After a swapchain rebuild (alt-tab) it skips frames

@@ -265,7 +265,7 @@ vec3 rayDirectionForPixel(ivec2 pixel, ivec2 size) {
 }
 
 float rayDistanceForDepth(float hardwareDepth, vec3 direction) {
-    // A9: reversed-Z contract (FrameGuideConventions.REVERSED_ZERO_TO_ONE):
+    // Reversed-Z contract (FrameGuideConventions.REVERSED_ZERO_TO_ONE):
     // hardwareDepth 0.0 = far/sky, 1.0 = near plane. The formula below is the
     // reversed linearization z = n*f/(n+d*(f-n)) — d=0 yields far, d=1 yields
     // near — so it agrees with the convention and with the 0.0 history clear.
@@ -305,7 +305,7 @@ vec3 reconstructRasterNormal(
         * rayDistanceForDepth(rightDepth, rightDirection);
     vec3 downPosition = downDirection
         * rayDistanceForDepth(downDepth, downDirection);
-    // M5/M6: NaN-guard - degenerate triangle produces zero cross; fallback to view-facing normal
+    // NaN guard: a degenerate triangle has a zero cross product; fall back to view-facing normal
     vec3 crossVec = cross(downPosition - centerPosition, rightPosition - centerPosition);
     if (dot(crossVec, crossVec) < 1e-12) {
         return -centerDirection;
@@ -317,7 +317,7 @@ vec3 reconstructRasterNormal(
     return normal;
 }
 
-// A9: raster-vs-RT rejection tolerance in meters. A raster hit closer than
+// Raster-vs-RT rejection tolerance in meters. A raster hit closer than
 // the RT hit minus this tolerance wins (depth precision + AABB vs. raster
 // rasterization differences); larger values punch RT-shaped holes, smaller
 // values z-fight at grazing angles.
@@ -366,7 +366,7 @@ void main() {
                 1.0
             )
         );
-        // M6: specularHitDistance on miss = maxDistance (not 0) for correct denoiser / reprojection
+        // SpecularHitDistance on miss = maxDistance (not 0) for correct denoiser / reprojection
         imageStore(specularHitDistanceImage, pixel, vec4(frame.renderParameters.z));
         return;
     }
@@ -515,7 +515,7 @@ void main() {
             + reflectionDirection * reflection.distance;
         vec3 reflectionColor = reflection.valid
             ? srgbToLinear(surfaceColor(reflection.box, reflectionPoint, reflection.normal).rgb)
-            // A11: reflection miss = escaped ray. Use the pixel's own raster
+            // Reflection miss = escaped ray. Use the pixel's own raster
             // color (which already holds sky/fog) instead of a fixed sky blue
             // that tinted every grazing angle.
             : linearRaster;
@@ -532,7 +532,7 @@ void main() {
             reflectivity = 0.38;
         }
         result = mix(result, reflectionColor, reflectivity) + pointLightSpecular * specularAlbedo;
-        // M6 (refined A7): on reflection miss report the searched range instead
+        // On reflection miss report the searched range instead
         // of 0 — the ray found nothing within [0.04, reflectionRange], so the
         // range itself is the truthful lower bound for the hit distance.
         specularHitDistance = reflection.valid ? reflection.distance : frame.reflectionParams.x;

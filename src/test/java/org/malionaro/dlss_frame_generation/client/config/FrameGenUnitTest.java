@@ -183,7 +183,7 @@ public class FrameGenUnitTest {
 
         config.sanitize();
 
-        // Auto mode now prefers NVIDIA instead of wiping all (P1-04 fix)
+        // Auto mode prefers NVIDIA instead of turning everything off.
         assertTrue(config.dlssFgEnabled);
         assertFalse(config.amdFsrFgEnabled);
         assertFalse(config.intelXessFgEnabled);
@@ -284,7 +284,7 @@ public class FrameGenUnitTest {
 
     @Test
     public void freshConfigHasAllProvidersOffUntilDetectionChooses() {
-        // C1: no ambiguous all-on state on fresh installs.
+        // No ambiguous all-on state on fresh installs.
         FrameGenConfig config = new FrameGenConfig();
         assertFalse(config.dlssFgEnabled);
         assertFalse(config.amdFsrFgEnabled);
@@ -318,7 +318,7 @@ public class FrameGenUnitTest {
 
     @Test
     public void vulkanUpscalerModesAboveNativeAaFailClosedToOff() {
-        // C2: only 0=Off and 1=Native-AA are real Vulkan modes.
+        // Only 0=Off and 1=Native-AA are real Vulkan modes.
         FrameGenConfig config = new FrameGenConfig();
         config.amdFsrMode = 4;
         config.intelXessMode = 3;

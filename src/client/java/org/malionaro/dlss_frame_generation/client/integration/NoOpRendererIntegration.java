@@ -6,7 +6,7 @@ import org.malionaro.dlss_frame_generation.client.frame.FrameResourceSet;
 import java.util.Optional;
 
 /**
- * D8: reference no-op for the future renderer-integration boundary. Exists so
+ * Reference no-op for the future renderer-integration boundary. Exists so
  * the default methods of {@link RendererIntegration} are covered by tests and
  * cannot silently rot; production code continues to use no integration until a
  * real Aperture-style provider ships.

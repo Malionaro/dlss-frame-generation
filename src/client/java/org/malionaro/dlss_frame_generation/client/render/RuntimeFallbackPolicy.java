@@ -19,7 +19,7 @@ public final class RuntimeFallbackPolicy {
     private RuntimeFallbackPolicy() {
     }
 
-    // C10: last computed decision per process (one active provider at a time).
+    // Last computed decision per process (one active provider at a time).
     // Lets status surfaces report the effective mode instead of only logging it.
     private static volatile Decision lastDecision;
     private static volatile FrameGenerationBackend.GpuVendor lastVendor =
@@ -79,7 +79,7 @@ public final class RuntimeFallbackPolicy {
                 & StreamlineBridge.CAP_UPSCALING) != 0;
         // Respect safeMode==0: keep 0 as native presentation when reconstruction unavailable,
         // otherwise promote 0->1 for temporal reconstruction (preserves original intent).
-        // C10: the promotion is named in the detail so it never happens silently.
+        // The promotion is named in the detail so it never happens silently.
         int effectiveMode = reconstructionAvailable && safeMode == 0
                 ? 1
                 : safeMode;

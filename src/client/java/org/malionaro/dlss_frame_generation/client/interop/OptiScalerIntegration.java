@@ -53,7 +53,7 @@ public final class OptiScalerIntegration {
     );
 
     /**
-     * B7: native code LoadLibraryWs DLLs from the active runtime directory, so
+     * Native code LoadLibraryWs DLLs from the active runtime directory, so
      * every sibling it can load must match the bundled hashes — not just
      * OptiScaler.dll itself. Unknown or mismatching siblings reject the whole
      * external override (fail closed to the embedded bundle).
@@ -230,7 +230,7 @@ public final class OptiScalerIntegration {
         if (Files.isRegularFile(externalDll) && externalDll.startsWith(externalDirectory)) {
             try {
                 verifyEmbeddedHash(externalDll, "OptiScaler.dll");
-                // B7: every sibling the native loader can pick up from this
+                // Every sibling the native loader can pick up from this
                 // directory must match the bundle as well.
                 verifyExternalOverrideSiblings(externalDirectory);
                 logger.info(
@@ -347,7 +347,7 @@ public final class OptiScalerIntegration {
             String contents = Files.readString(ini);
             String configured = replaceAutoValue(
                     contents, "OptiDllPath", normalizedDirectory);
-            // B7 allowlist: native code LoadLibraryWs its DLLs from the
+            // Allowlist: native code loads its DLLs from the
             // runtime directory, so a foreign OptiDllPath would redirect those
             // loads anywhere (DLL hijack). Only the active runtime directory
             // itself is accepted; anything else is reset to it. The correction

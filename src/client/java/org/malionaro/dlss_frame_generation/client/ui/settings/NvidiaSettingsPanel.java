@@ -33,7 +33,7 @@ public final class NvidiaSettingsPanel {
                                 config.reflexMode = 1;
                             }
                             config.save();
-                            // D1: native push only via backend (reflex forcing
+                            // Native push only via backend (reflex forcing
                             // etc. live there exactly once).
                             FrameGenerationBackend.applyActiveConfig(config);
                             screen.refreshSettingsWidgets();
@@ -75,7 +75,7 @@ public final class NvidiaSettingsPanel {
                                 config.setFrameGenerationEnabled(NVIDIA, false);
                             }
                             config.save();
-                            // D1: native push only via backend.
+                            // Native push only via backend.
                             FrameGenerationBackend.applyActiveConfig(config);
                             screen.refreshSettingsWidgets();
                         });
@@ -124,7 +124,7 @@ public final class NvidiaSettingsPanel {
                                 config.dlssRayReconstructionEnabled = false;
                             }
                             config.save();
-                            // D1: native push only via backend.
+                            // Native push only via backend.
                             FrameGenerationBackend.applyActiveConfig(config);
                             screen.refreshSettingsWidgets();
                         });

@@ -73,7 +73,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private long frameNumber;
     private boolean historyValid;
     private boolean failed;
-    // Phase 3 M2: OOM (retry) vs validation (latch) distinction.
+    // OOM (retry) vs validation (latch) distinction.
     // Hard validation failures remain latched forever; OOM is retryable after swapchain generation change.
     private boolean failedDueToOutOfMemory;
     private long failedAtSwapchainGeneration = -1L;
@@ -178,7 +178,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     ) {
         lastUpscalingAccepted = false;
         lastOutputWritten = false;
-        // Phase 3 M2: lazy OOM-retry – if previous failure was OOM and generation has changed, clear latch
+        // Lazy OOM-retry – if previous failure was OOM and generation has changed, clear latch
         if (failed && failedDueToOutOfMemory && failedAtSwapchainGeneration != activeSwapchainGeneration) {
             logger.info("OOM recovery: clearing retryable latch (failed at gen {} -> now gen {})",
                     failedAtSwapchainGeneration, activeSwapchainGeneration);
@@ -279,7 +279,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     previousJitterX,
                     previousJitterY,
                     renderSizeChanged || cameraOnlyMotion,
-                    // D7: fast camera turns invalidate temporal matching — reset
+                    // Fast camera turns invalidate temporal matching — reset
                     // history while the artifact corrector reports dampening
                     // instead of smearing stale vectors across providers.
                     reset || !historyValid
@@ -463,7 +463,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                 providerAcceptedFrameCount++;
                 lastProviderAcceptedIdentity = identity;
             }
-            // P0 K2: hold the slot for two confirmed presents. The completion gate
+            // Hold the slot for two confirmed presents. The completion gate
             // confirms GPU progress through the frame submitted two presents ago,
             // so margin 2 means a slot is recycled only after the GPU verifiably
             // finished the frame that filled it (with 3 rotating slots this still
@@ -527,7 +527,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             int multiplier,
             boolean uiRecomposition
     ) {
-        // Phase 3 M2: allow lazy OOM recovery for UI path as well
+        // Allow lazy OOM recovery for UI path as well
         if (failed && failedDueToOutOfMemory && failedAtSwapchainGeneration != activeSwapchainGeneration) {
             logger.info("OOM recovery (UI): clearing retryable latch (failed at gen {} -> now gen {})",
                     failedAtSwapchainGeneration, activeSwapchainGeneration);
@@ -668,7 +668,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     }
 
     public void onPresentCompleted() {
-        // Phase 3 K2: completedPresentSerial counts CONFIRMED presents only. It
+        // CompletedPresentSerial counts CONFIRMED presents only. It
         // drives slot reuse (inUseUntilPresentSerial), so it must advance only
         // once the GPU caught up with the frames that filled those slots.
         // waitUntilGpuIdleBrief performs a bounded (2ms here) wait on the
@@ -704,7 +704,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         pendingUiSlot = -1;
         pendingUiIdentity = FrameIdentity.INVALID;
         lastCapturedIdentity = FrameIdentity.INVALID;
-        // Phase 3 M2: OOM-retryable latch is cleared on generation change; hard latch stays.
+        // OOM-retryable latch is cleared on generation change; hard latch stays.
         if (failed && failedDueToOutOfMemory && generation != failedAtSwapchainGeneration) {
             logger.info("OOM retryable failure cleared on swapchain generation change {} -> {}",
                     failedAtSwapchainGeneration, generation);
@@ -726,7 +726,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         return lastProviderAcceptedIdentity;
     }
 
-    // Phase 3 M2: ensureResources may throw OOM (VK_ERROR_OUT_OF_* -> IllegalStateException with VkResult -1/-2)
+    // EnsureResources may throw OOM (VK_ERROR_OUT_OF_* -> IllegalStateException with VkResult -1/-2)
     // The caller captureAndDispatch distinguishes OOM-retryable (reset on generation change) vs validation fatal latch.
     private void ensureResources(
             int renderWidth,
@@ -2139,7 +2139,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private void readLatestDebugSnapshot() {
         FrameSlot newest = null;
         for (FrameSlot slot : slots) {
-            // A12: debug copy needs one EXTRA confirmed present beyond slot
+            // Debug copy needs one EXTRA confirmed present beyond slot
             // retirement (inUseUntil + 1): the copy was recorded into the same
             // command buffer as the frame that filled the slot, and retirement
             // alone only proves the GPU reached the frame's submission — the
@@ -2234,7 +2234,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             target.putFloat(72, jitterX - previousJitterX);
             target.putFloat(76, jitterY - previousJitterY);
             target.putInt(80, reset ? 1 : 0);
-            // A8: resolution-proportional search radius — constant world-space
+            // Resolution-proportional search radius — constant world-space
             // search window (4 at 1080p, up to 8 at 4K; the shader clamps to
             // 0..8) instead of a fixed radius that over-searches low
             // resolutions and under-searches high ones.
@@ -2498,7 +2498,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         }
     }
 
-    // Phase 3 M2 helper: distinguish OOM/retryable vs validation/fatal latch
+    // Out of memory is retryable; validation failures latch.
     private static boolean isOutOfMemoryFailure(Throwable throwable) {
         if (throwable == null) {
             return false;

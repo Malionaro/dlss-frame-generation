@@ -224,7 +224,7 @@ public final class NativeLoader {
                 }
             }
 
-            // Load the JNI bridge. B6: the bridge is built locally, so no fixed
+            // Load the JNI bridge. It is built locally, so there is no fixed
             // SHA can be embedded — instead re-digest the extracted file
             // immediately before loading and fail closed unless it still
             // matches the bundled bytes (defeats truncation, partial writes
@@ -268,7 +268,7 @@ public final class NativeLoader {
     }
 
     /**
-     * B6: streaming copy that returns the SHA-256 of the bundled bytes as
+     * Streaming copy that returns the SHA-256 of the bundled bytes as
      * {@code hex:byteCount}. No fixed hash is embedded for the locally built
      * bridge — identity is established against the JAR resource itself.
      */
@@ -298,7 +298,7 @@ public final class NativeLoader {
         }
     }
 
-    /** B6: re-digest the extracted file immediately before loading. */
+    /** Re-digest the extracted file immediately before loading. */
     private static void verifyExtractedDigest(
             Path file, String bundledDigest, String fileName, Logger logger)
             throws IOException {
@@ -363,7 +363,7 @@ public final class NativeLoader {
                 stream.filter(p -> p.getFileName().toString().startsWith("dlss_fg_natives-"))
                         .forEach(p -> {
                             try {
-                                // B8: never traverse symlinks — a planted link
+                                // Never traverse symlinks — a planted link
                                 // named like our temp dir must not redirect
                                 // deletion into foreign trees. A stale link
                                 // itself is removed; anything else must be a

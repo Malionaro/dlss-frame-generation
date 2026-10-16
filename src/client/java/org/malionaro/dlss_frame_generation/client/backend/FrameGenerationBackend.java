@@ -47,14 +47,14 @@ public interface FrameGenerationBackend {
     boolean isFrameGenerationActive();
 
     /**
-     * D1: sole nSet* entry point. All StreamlineBridge.nSet* calls for this backend
+     * Sole nSet* entry point. All StreamlineBridge.nSet* calls for this backend
      * must funnel through applyConfig internally – VulkanRegistry and UI panels
      * must not call nSetDlssMode/nSetUpscalingMode/nSetFgMode directly.
      */
     void applyConfig(FrameGenConfig config);
 
     /**
-     * D1: sole UI-to-native push path. Settings panels mutate
+     * Sole UI-to-native push path. Settings panels mutate
      * {@link FrameGenConfig} and call this — never
      * {@code StreamlineBridge.nSet*} directly — so backend rules (reflex
      * forcing, MFG clamps, conflict gates, session fallback) cannot drift
@@ -76,7 +76,7 @@ public interface FrameGenerationBackend {
     }
 
     /**
-     * D1 lifecycle helper – disables frame generation before swapchain reconfiguration.
+     * Disables frame generation before swapchain reconfiguration.
      * This is a lifecycle-driven native toggle, not a persistent config change; it
      * still funnels through the backend so VulkanRegistry has no direct nSet* path.
      */
@@ -84,7 +84,7 @@ public interface FrameGenerationBackend {
     }
 
     /**
-     * D1 lifecycle helper – restores configured FG mode after swapchain recreation.
+     * Restores the configured FG mode after swapchain recreation.
      * Default delegates to applyConfig; vendor backends may override for precise native handling.
      */
     default void restoreAfterSwapchainRecreation(FrameGenConfig config) {
@@ -92,7 +92,7 @@ public interface FrameGenerationBackend {
     }
 
     /**
-     * D1 lifecycle helper – temporarily disables FG when game is paused.
+     * Temporarily disables FG while the game is paused.
      * Must funnel through backend, not direct VulkanRegistry nSetFrameGenerationMode.
      */
     default void disableForPause(FrameGenConfig config) {

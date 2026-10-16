@@ -15,7 +15,7 @@ public class CompositeFallbackPolicyTest {
 
     @Test
     public void failedCaptureWithReducedResolutionRequiresFallbackBlit() {
-        // H4 core case: capture bailed and we render at reduced resolution,
+        // Core case: capture bailed and we render at reduced resolution,
         // so HUD would otherwise composite over a black display target.
         assertEquals(Decision.FALLBACK_BLIT_REQUIRED,
                 CompositeFallbackPolicy.evaluate(false, true));

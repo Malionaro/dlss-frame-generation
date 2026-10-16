@@ -1,7 +1,7 @@
 package org.malionaro.dlss_frame_generation.client.render;
 
 /**
- * Decides whether the H4 composite fallback blit must run in Java because the
+ * Decides whether the composite fallback blit must run in Java because the
  * frame-generation capture path bailed for this frame.
  */
 public final class CompositeFallbackPolicy {

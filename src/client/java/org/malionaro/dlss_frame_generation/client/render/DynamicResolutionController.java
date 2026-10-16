@@ -44,7 +44,7 @@ public final class DynamicResolutionController {
     private long lastScaleChangeNanos;
     private long scaleChangeQuietUntilNanos;
 
-    // C8: atomic check-then-act. The flag is intentionally process-wide (one
+    // Atomic check-then-act. The flag is intentionally process-wide (one
     // GPU, one active controller); the CAS loop makes concurrent notifies safe
     // instead of relying on render-thread confinement.
     private static final java.util.concurrent.atomic.AtomicLong lastVramPressureAcceptedNanos =
@@ -53,9 +53,9 @@ public final class DynamicResolutionController {
             new java.util.concurrent.atomic.AtomicBoolean();
 
     /**
-     * Statischer Backpressure-Hook für den VramBudgetOptimizer: setzt intern
-     * einen Flag, der den Skalierungsfaktor einmalig um {@value #VRAM_PRESSURE_STEP}
-     * senkt. Wiederholte Meldungen innerhalb der 10s-Hysterese werden ignoriert.
+     * Called by the VRAM budget optimizer: lowers the scale once by
+     * {@value #VRAM_PRESSURE_STEP}. Repeated calls within the 10 s hysteresis
+     * are ignored.
      */
     public static void notifyVramPressure() {
         long now = System.nanoTime();
@@ -109,7 +109,7 @@ public final class DynamicResolutionController {
         }
 
         if (overBudgetSamples >= SAMPLES_BEFORE_ADJUSTMENT) {
-            // M3: adaptiver Step - je weiter über Budget, desto größerer Schritt (0.07 Basis)
+            // Step down harder the further the frame time is over budget.
             float adaptiveDown = DOWNSCALE_STEP;
             if (smoothedFrameTimeMs > targetFrameTimeMs * 1.20f) {
                 adaptiveDown *= 1.5f;
@@ -160,11 +160,8 @@ public final class DynamicResolutionController {
     }
 
     /**
-     * M3: Berechnet die Viewport-skalierte Render-Auflösung. Das persistente
-     * Max-Size Image bleibt auf {@code outputWidth/outputHeight} allokiert;
-     * zurückgegeben wird nur der skalierte Viewport (kein Realloc, kein WaitIdle).
-     * <b>Muss vor</b> {@code resolve()} aufgerufen werden, damit der Viewport vor
-     * dem Resolve/Upscale gültig ist.
+     * Applies the current scale to {@code base}. Only the render size changes;
+     * the output size stays, so nothing is reallocated at full size.
      */
     public NvidiaDlssRenderResolution.Resolution apply(
             NvidiaDlssRenderResolution.Resolution base,
@@ -173,8 +170,6 @@ public final class DynamicResolutionController {
         if (!enabled || base == null || base.mode() <= 0) {
             return base;
         }
-        // M3: Persistente Max-Size Images - outputWidth/Height bleibt die Allokationsgröße,
-        // renderWidth/renderHeight ist nur der Viewport (kein Realloc).
         // One ratio for both sides, sized by the shared helper so every DRS
         // step keeps the window's aspect ratio (independent rounding made
         // the image stretch a little differently at each step: a wobble).

@@ -18,7 +18,7 @@ public record RayTracingFrameData(
         float tangentHalfFov, float aspect, float maxDistance,
         float nearPlane, float farPlane,
         boolean reflections, int samples, int quality,
-        // A7: explicit reflection range in meters. Previously the shader abused
+        // Explicit reflection range in meters. Previously the shader abused
         // cameraForward.w (which carries the quality ordinal) as a range
         // factor, silently coupling quality changes to reflection distance.
         float reflectionRange
@@ -54,7 +54,7 @@ public record RayTracingFrameData(
                 (float) Math.cos(sunAngle),
                 0.22f
         ).normalize();
-        // M10: clamped horizon - when sun is below horizon (<0) clamp Y to keep shading stable (ambient fallback)
+        // Clamped horizon - when sun is below horizon (<0) clamp Y to keep shading stable (ambient fallback)
         if (sunDirection.y < 0.0f) {
             sunDirection.y = Math.max(sunDirection.y, 0.05f);
             if (sunDirection.y < 0.05f) {
@@ -64,7 +64,7 @@ public record RayTracingFrameData(
         }
 
         float maxDistance = config.rayTracingMaxDistance;
-        // A7: quality selects an explicit reflection range instead of leaking
+        // Quality selects an explicit reflection range instead of leaking
         // the ordinal into the shader through cameraForward.w.
         FrameGenConfig.RayTracingQuality quality = config.rayTracingQuality != null
                 ? config.rayTracingQuality

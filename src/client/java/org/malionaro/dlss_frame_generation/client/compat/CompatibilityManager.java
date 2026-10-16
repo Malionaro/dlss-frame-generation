@@ -239,7 +239,7 @@ public final class CompatibilityManager {
         ProviderLifecycle.State state =
                 providerLifecycle.snapshot().state();
         if (generation <= 0L) {
-            // C6: generation 0 means "no swapchain yet" — draining is
+            // Generation 0 means "no swapchain yet" — draining is
             // meaningless and ProviderLifecycle.draining would throw,
             // breaking swapchain configure. The very first configure of
             // every session lands here, so this is not worth a warning.
@@ -270,7 +270,7 @@ public final class CompatibilityManager {
             );
             return;
         }
-        // C5: a transient failure (e.g. drain timeout) is retryable once the
+        // A transient failure (e.g. drain timeout) is retryable once the
         // generation advanced — re-detect on the new generation instead of
         // staying latched until an unrelated re-detection happens.
         if (generation > 0
@@ -303,7 +303,7 @@ public final class CompatibilityManager {
         providerLifecycle.failed(detail);
     }
 
-    /** Transient variant for drain/rebuild timeouts (C5: retryable, see above). */
+    /** Transient variant for drain/rebuild timeouts; retryable, see above. */
     public synchronized void failProviderTransient(String detail) {
         providerLifecycle.failedTransient(detail);
     }
@@ -320,7 +320,7 @@ public final class CompatibilityManager {
                 FrameGenerationBackend.GpuVendor.fromVendorId(detectedVendor);
         FrameGenConfig config = FrameGenConfig.getInstance();
         if (vendor == FrameGenerationBackend.GpuVendor.UNKNOWN) {
-            // C12: transient detection gap (e.g. device metadata not ready
+            // Transient detection gap (e.g. device metadata not ready
             // yet). Apply in-memory only — a valid saved config must never be
             // destroyed by a momentary vendorId==0.
             config.retainFrameGenerationForVendor(vendor);
@@ -333,7 +333,7 @@ public final class CompatibilityManager {
                         == FrameGenerationBackend.GpuVendor.UNKNOWN
                 && config.selectedUpscalerVendor()
                         == FrameGenerationBackend.GpuVendor.UNKNOWN) {
-            // C1 first-run: no choice ever made and nothing active — enable the
+            // First run: no choice ever made and nothing active, so enable the
             // detected vendor instead of leaving everything silently off.
             // setFrameGenerationEnabled also records the choice, so this runs once.
             config.setFrameGenerationEnabled(vendor, true);
@@ -368,7 +368,7 @@ public final class CompatibilityManager {
             return "Rendering backend does not support frame generation (" + adapter.getClass().getSimpleName() + ")";
         }
         String routeStatus = activeRoute().status();
-        // C10: an active session fallback is part of the status, not just logs.
+        // An active session fallback is part of the status, not just logs.
         String fallback = org.malionaro.dlss_frame_generation.client.render.RuntimeFallbackPolicy
                 .lastDecisionDescription();
         return fallback.isEmpty() ? routeStatus : routeStatus + " | " + fallback;

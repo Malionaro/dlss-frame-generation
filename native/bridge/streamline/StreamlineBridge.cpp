@@ -27,7 +27,7 @@
 #define DLSS_FG_NATIVE_ABI_VERSION 2
 
 static std::mutex g_streamlineMutex;
-// B9: lifecycle flags and device handles are read from JNI entry points that
+// Lifecycle flags and device handles are read from JNI entry points that
 // do not take g_streamlineMutex (capability queries, mode setters, VRAM
 // probes) while nShutdown/nInit mutate them under lock. Plain statics would
 // be a data race / use-after-shutdown TOCTOU, so they are atomic. Larger
@@ -408,7 +408,7 @@ static std::wstring toWideString(JNIEnv* env, jstring value) {
 }
 
 static bool initializeCore(JNIEnv* env, jstring pluginsPath) {
-    // B11: JNI string extraction can block at GC safepoints and slInit below
+    // JNI string extraction can block at GC safepoints and slInit below
     // blocks for seconds — neither may run under the global frame-path lock.
     // A dedicated init-only mutex serializes concurrent initializers; the
     // global lock is taken only for the state check/update snapshots.
@@ -852,7 +852,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
     if (vendorId != 0x10DE || !g_initialized || !g_dlssgSupported) {
         return JNI_FALSE;
     }
-    // B11: copy every JNI input to stack locals BEFORE taking the global
+    // Copy every JNI input to stack locals BEFORE taking the global
     // lock. Array-region copies run per frame and must not execute under it.
     const jsize v2cLen = viewToClip ? env->GetArrayLength(viewToClip) : 0;
     const jsize c2vLen = clipToView ? env->GetArrayLength(clipToView) : 0;
@@ -1147,7 +1147,7 @@ extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
     g_dlssMode = std::clamp(static_cast<int>(mode), 0, 6);
     (void)sharpness;
     if (!g_initialized || !g_dlssSupported) return;
-    // B9: single atomic snapshot — the mode must not change between the
+    // Single atomic snapshot — the mode must not change between the
     // branch and the option build below.
     const int selectedDlssMode = g_dlssMode.load();
     if (selectedDlssMode != 0) {
@@ -1331,7 +1331,7 @@ Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nQueryMemoryB
     // VkPhysicalDeviceMemoryBudgetPropertiesEXT im pNext.
     auto pfnGetPhysicalDeviceMemoryProperties2 = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties2>(
         vkGetInstanceProcAddr(
-            // B9: explicit atomic load — a ternary mixing atomic and plain
+            // Explicit atomic load — a ternary mixing atomic and plain
             // handles is ambiguous (C2445).
             g_vkInstance != VK_NULL_HANDLE ? g_vkInstance.load() : VkInstance(nullptr),
             "vkGetPhysicalDeviceMemoryProperties2"));
@@ -1418,7 +1418,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         if (!g_initialized || !g_dlssSupported) {
             return JNI_FALSE;
         }
-        // B11: JNI array copies before the global lock (see
+        // JNI array copies before the global lock (see
         // nSubmitFrameGenerationInputs for the rationale).
         const jsize v2cLen = viewToClip ? env->GetArrayLength(viewToClip) : 0;
         const jsize c2vLen = clipToView ? env->GetArrayLength(clipToView) : 0;
@@ -1717,7 +1717,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
         noisyFormat != 0 && albedoFormat != 0 && specularFormat != 0 &&
         normalRoughnessFormat != 0 && specularHitDistanceFormat != 0 &&
         depthFormat != 0 && motionFormat != 0 && outputFormat != 0;
-    // B11: JNI array copies before the global lock (same pattern as the
+    // JNI array copies before the global lock (same pattern as the
     // DLSS-G/SR submits above). arraysValid also covers the copy outcome.
     const bool arraysPresent =
         viewToClip != nullptr && clipToView != nullptr &&
