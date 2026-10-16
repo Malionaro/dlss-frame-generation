@@ -84,4 +84,4 @@ A big thank you to **KawasakiMaxi** for testing the mod on real hardware and giv
 
 ## Licence
 
-All rights reserved, see [`LICENSE.txt`](LICENSE.txt). Third-party components (NVIDIA Streamline, AMD FidelityFX, OptiScaler) keep their own licences, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Custom source-available licence, see [`LICENSE.txt`](LICENSE.txt): you may read, fork and contribute, but not publish builds or the code without permission. See [CONTRIBUTING.md](CONTRIBUTING.md). Third-party components (NVIDIA Streamline, AMD FidelityFX, OptiScaler) keep their own licences, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

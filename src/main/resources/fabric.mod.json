@@ -12,7 +12,7 @@
     "sources": "https://github.com/Malionaro/dlss-frame-generation",
     "issues": "https://github.com/Malionaro/dlss-frame-generation/issues"
   },
-  "license": "All-Rights-Reserved",
+  "license": "LicenseRef-Vulkan-Frame-Generation-1.0",
   "environment": "client",
   "entrypoints": {
     "client": [

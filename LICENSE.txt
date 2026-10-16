@@ -1,2 +1,66 @@
+Vulkan Frame Generation License v1.0
+
 Copyright (c) 2026 Malionaro
-All rights reserved.
+
+This license covers the source code, shaders, native bridge code, assets
+and documentation of the Vulkan Frame Generation project ("the Project"),
+except the third-party components listed under THIRD-PARTY COMPONENTS.
+
+PERMITTED USE
+
+You may:
+- View and read the source code.
+- Fork the repository on GitHub in order to contribute to the Project.
+- Build and run the Project locally for personal, educational or research
+  purposes.
+- Modify the source code for personal use and for preparing contributions.
+- Submit bug fixes, improvements and other contributions to the original
+  Project, subject to the CONTRIBUTIONS section below.
+
+RESTRICTIONS
+
+You may not, without explicit written permission from the project maintainer:
+- Publish, distribute or host compiled builds, binaries, packages or other
+  executable distributions of the Project, its forks, modified versions or
+  derivative works, including on Modrinth, CurseForge or any other platform.
+- Publish or distribute the source code, forks, modified versions or
+  derivative works anywhere other than as a fork on GitHub that exists to
+  contribute to the original Project.
+- Incorporate, adapt or substantially reproduce any part of the Project's
+  source code, shaders or native code in another project.
+- Reuse, redistribute or incorporate non-code assets of the Project that are
+  owned by the author (such as the icon) in another project.
+- Use the Project or any part of it for commercial purposes.
+- Present the Project, a fork or a modified version as your own work.
+
+CONTRIBUTIONS
+
+Contributions to the original Project are welcome through pull requests.
+By submitting a contribution, you confirm that you have the right to submit
+it, and you grant the project maintainer a perpetual, worldwide,
+irrevocable, royalty-free license to use, modify, publish, distribute and
+relicense the contribution as part of the Project. You keep the copyright of
+your contribution.
+
+Please keep comments concise and only add them where the code does not
+explain itself.
+
+THIRD-PARTY COMPONENTS
+
+The Project bundles third-party software that remains under its own license
+and is not covered by this license, including NVIDIA Streamline and DLSS,
+AMD FidelityFX and OptiScaler (GPLv3). See THIRD_PARTY_NOTICES.md.
+
+DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+This is a custom source-available license and is not an Open Source license.
+For permission requests, contact the maintainer through GitHub:
+https://github.com/Malionaro
