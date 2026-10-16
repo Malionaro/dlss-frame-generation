@@ -14,7 +14,25 @@ layout(std140, set = 0, binding = 5) uniform FrameParameters {
     vec2 jitterDeltaPixels;
     uint resetHistory;
     uint searchRadius;
+    // Layout: ObjectMotion.java. Positions are relative to the current camera.
+    mat4 clipToCameraRelative;
+    mat4 cameraRelativeToPreviousClip;
+    uvec4 entityInfo; // x = entity count
+    vec4 entityBoxes[192]; // per entity: min, max, translation since last frame
 } frame;
+
+// Index of the moving entity whose box contains this surface point, or -1.
+int movingEntityAt(vec3 relative) {
+    uint count = min(frame.entityInfo.x, 64u);
+    for (uint i = 0u; i < count; ++i) {
+        vec3 minimum = frame.entityBoxes[i * 3u].xyz;
+        vec3 maximum = frame.entityBoxes[i * 3u + 1u].xyz;
+        if (all(greaterThanEqual(relative, minimum)) && all(lessThanEqual(relative, maximum))) {
+            return int(i);
+        }
+    }
+    return -1;
+}
 
 float colorError(vec3 a, vec3 b) {
     vec3 difference = abs(a - b);
@@ -75,6 +93,25 @@ void main() {
         return;
     }
 
+    // Moving entities: move the surface point back by the entity's own
+    // translation before reprojecting. Exact, so no colour search needed.
+    bool exactObjectMotion = false;
+    if (frame.entityInfo.x > 0u) {
+        vec4 relativeClip = frame.clipToCameraRelative * vec4(currentNdc, depth, 1.0);
+        if (abs(relativeClip.w) > 1.0e-6) {
+            vec3 relative = relativeClip.xyz / relativeClip.w;
+            int entity = movingEntityAt(relative);
+            if (entity >= 0) {
+                vec3 previousRelative = relative - frame.entityBoxes[uint(entity) * 3u + 2u].xyz;
+                vec4 objectClip = frame.cameraRelativeToPreviousClip * vec4(previousRelative, 1.0);
+                if (abs(objectClip.w) > 1.0e-6 && !any(isnan(objectClip)) && !any(isinf(objectClip))) {
+                    previousClip = objectClip;
+                    exactObjectMotion = true;
+                }
+            }
+        }
+    }
+
     vec2 predictedPreviousNdc = previousClip.xy / previousClip.w;
     vec2 predictedPreviousUv = vec2(
         predictedPreviousNdc.x * 0.5 + 0.5,
@@ -105,7 +142,7 @@ void main() {
     // a coarse pass plus 3x3 refinement (at most 34 candidates for radius 4,
     // instead of the previous 81 candidates at every render pixel).
     // radius 0: camera reprojection only (previous frame has another size).
-    if (radius > 0 && seedScore > 0.04) {
+    if (radius > 0 && !exactObjectMotion && seedScore > 0.04) {
         for (int y = -radius; y <= radius; y += coarseStep) {
             for (int x = -radius; x <= radius; x += coarseStep) {
                 ivec2 candidate = clamp(

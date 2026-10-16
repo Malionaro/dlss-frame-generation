@@ -35,7 +35,8 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private static final int MOTION_FORMAT = VK_FORMAT_R16G16_SFLOAT;
     private static final int RAY_RECONSTRUCTION_FORMAT =
             VK_FORMAT_R16G16B16A16_SFLOAT;
-    private static final int UNIFORM_SIZE = 96;
+    /** Camera block (96), two camera-relative matrices (128), then the entity block. */
+    private static final int UNIFORM_SIZE = 224 + ObjectMotion.BYTES;
     private static final int MOTION_BYTES_PER_PIXEL = 4;
     private static final int DEBUG_SAMPLE_STEP = 8;
 
@@ -2243,6 +2244,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     2, Math.min(8, (Math.max(width, height) + 135) / 270));
             target.putInt(84, searchRadius);
             target.putLong(88, 0L);
+            ObjectMotion objects = ObjectMotion.INSTANCE;
+            new Matrix4f().set(objects.clipToCameraRelative()).get(96, target);
+            new Matrix4f().set(objects.cameraRelativeToPreviousClip()).get(160, target);
+            ObjectMotion.writeBoxes(target, 224, reset ? java.util.List.of() : objects.boxes());
             vkUnmapMemory(device, memory);
         }
     }

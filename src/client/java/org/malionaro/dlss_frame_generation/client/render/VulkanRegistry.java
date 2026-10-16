@@ -606,6 +606,9 @@ public final class VulkanRegistry {
             worldReset = false;
         }
 
+        org.malionaro.dlss_frame_generation.client.motion.ObjectMotion.INSTANCE.update(
+                mc, pos, fwd, up, currentProjMatrix, resetForCurrentFrame);
+
         // Calculate clipToPrevClip & prevClipToClip JNI matrices
         Matrix4f clipToPrev = new Matrix4f();
         clipToPrev.set(prevProjMatrix);

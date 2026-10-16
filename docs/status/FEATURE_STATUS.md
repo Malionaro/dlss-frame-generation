@@ -72,7 +72,7 @@ native runtime and all required frame data have been accepted.
 
 | Feature | Status | Current state | Still to do |
 |---|---|---|---|
-| Dense motion vectors | ✅ Tested, with limitation | Reversed-Z, current-to-previous, positive Y downward and separate jitter data; camera-only motion after a resize, in menus and with shader packs | Full per-entity motion instead of the temporal estimate |
+| Dense motion vectors | ✅ Tested, with limitation | Reversed-Z, current-to-previous, positive Y downward and separate jitter data; exact translation for up to 64 moving entities (bounding box and movement since the last frame, camera-relative double-precision matrices); camera-only motion after a resize, in menus and with shader packs | Limb animation and entity rotation are not covered; validate in game |
 | Motion debug views | ✅ Tested | Arrows, heatmap and raw preview with corrected axes and delayed GPU readback | Optionally add a legend |
 | Motion vector blur | 🟡 Experimental | Compute pass along dense motion vectors after reconstruction | Validate quality and GPU cost |
 | Dynamic resolution | 🟡 Experimental | Smoothed frame times and hysteresis toward the target FPS; aspect-exact sizes; render-size changes resize only the render images; off while a shader pack runs | Tune on NVIDIA, AMD and Intel hardware |
