@@ -241,8 +241,9 @@ public final class CompatibilityManager {
         if (generation <= 0L) {
             // C6: generation 0 means "no swapchain yet" — draining is
             // meaningless and ProviderLifecycle.draining would throw,
-            // breaking swapchain configure. Skip loudly instead.
-            LOGGER.warn(
+            // breaking swapchain configure. The very first configure of
+            // every session lands here, so this is not worth a warning.
+            LOGGER.debug(
                     "Ignoring provider drain request with non-positive generation {}",
                     generation);
             return;

@@ -62,7 +62,7 @@ nothing here should be read as 26.3-validated.
 | Java, native and shader build | ✅ Tested | Local Windows build and GitHub Actions with Java 25 successful | Continue to verify via CI when changed |
 | Single mod JAR | ✅ Tested | Java code, JNI bridge, shaders and allowed runtime files are packaged together in `dlss-frame-generation-1.0.0.jar` (141.5 MB) | Ready for distribution |
 | JNI binding | ✅ Tested | All 53 Java native declarations have matching JNI exports | Cover new native functions in the same checks |
-| Fabric registration | ✅ Tested | Both entrypoints and all 16 mixins are registered | Re-check for new Minecraft versions |
+| Fabric registration | ✅ Tested | Both entrypoints and all 18 mixins are registered | Re-check for new Minecraft versions |
 | Provider selection | ✅ Tested | Exactly one FG provider, one upscaler and one presentation path may be active at the same time | Integrate additional providers into the same exclusivity logic |
 | Atomic frame data | ✅ Tested | Color, depth, motion, frame ID and swapchain generation are not mixed between frames | Additionally validate with real Sodium/Iris runs |
 | Safe fallback | ✅ Tested | Unsupported paths stay disabled or fall back to normal Vulkan WSI | Collect additional driver and error cases |

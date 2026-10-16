@@ -60,10 +60,32 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private final int[] slotTimeline = new int[FRAME_SLOT_COUNT];
     private long nextTimelineValue = 1L;
     private long lastUniformWaitWarnNanos;
-    /** A5: last frame that ran a full BLAS/TLAS rebuild (throttle below). */
-    private long lastSceneRebuildFrame = -10L;
-    /** A5: minimum frames between full scene rebuilds (~20Hz at 60fps). */
-    private static final long SCENE_REBUILD_MIN_INTERVAL_FRAMES = 3L;
+    /** A5: when the last full BLAS/TLAS rebuild ran (throttle below). */
+    private long lastSceneRebuildNanos;
+    /**
+     * A5: minimum time between full scene rebuilds (4 Hz). Rebuilds re-upload
+     * and rebuild the whole BLAS, so this is time based: the old 3-frame limit
+     * meant ~100 rebuilds per second at 300 FPS.
+     */
+    private static final long SCENE_REBUILD_MIN_INTERVAL_NANOS = 250_000_000L;
+    private long sceneRebuildCount;
+    /**
+     * Second scene set for double buffering. The working fields below
+     * (sceneBuffer … tlas) are the active set; rebuilds swap them with this
+     * one, so in-flight frames keep tracing the old set without a device wait.
+     */
+    private final SceneSet standbySceneSet = new SceneSet();
+    /** Last frame that recorded a trace against the active set, or -1. */
+    private long activeSceneLastUsedFrame = -1L;
+    /** Bumped whenever descriptor contents change; each slot catches up when idle. */
+    private long descriptorVersion;
+    private final long[] slotDescriptorVersion = new long[FRAME_SLOT_COUNT];
+    /** RT output images replaced by a resize, freed once their frames finished. */
+    private final java.util.ArrayDeque<RetiredOutput> retiredOutputs = new java.util.ArrayDeque<>();
+
+    {
+        java.util.Arrays.fill(slotDescriptorVersion, -1L);
+    }
 
     private final Logger logger;
     private final VulkanDevice minecraftDevice;
@@ -152,17 +174,31 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             if (scene.blockCount() == 0) {
                 return false;
             }
-            // A5: full rebuilds (vkDeviceWaitIdle + BLAS/TLAS BUILD) are
-            // throttled to ~20Hz during continuous edits; deferred work is
-            // re-armed via markSceneDirty so nothing is ever dropped.
-            // First build (tlas == NULL) always runs immediately.
+            int frameSlot = (int) (frameNumber % FRAME_SLOT_COUNT);
+            // P0 K1: niemals einen Slot überschreiben, den die GPU noch liest.
+            // Bei Timeout/Fehler Frame überspringen (alte Uniform-Daten bleiben
+            // gültig) statt korrupte Matrizen hochzuladen.
+            // This wait also proves every frame before
+            // (frameNumber - FRAME_SLOT_COUNT) finished: the slot fence was
+            // armed while that frame was recorded. The scene-set swap and the
+            // retired outputs below rely on exactly that guarantee.
+            if (!awaitUniformSlotFence(frameSlot)) {
+                return false;
+            }
+            releaseRetiredOutputs();
+            // A5: full rebuilds are throttled to 4 Hz during continuous edits
+            // and chunk streaming; deferred work is re-armed via
+            // markSceneDirty so nothing is ever dropped. They build into the
+            // standby scene set, so the device never has to idle. First build
+            // (tlas == NULL) always runs immediately.
             boolean sceneDirty = scene.consumeDirty();
             if (sceneDirty || tlas == NULL) {
-                if (tlas == NULL
-                        || frameNumber - lastSceneRebuildFrame
-                                >= SCENE_REBUILD_MIN_INTERVAL_FRAMES) {
+                long now = System.nanoTime();
+                boolean throttled = tlas != NULL
+                        && now - lastSceneRebuildNanos < SCENE_REBUILD_MIN_INTERVAL_NANOS;
+                if (!throttled && (tlas == NULL || standbySceneSetReusable())) {
                     rebuildScene(commandBuffer);
-                    lastSceneRebuildFrame = frameNumber;
+                    lastSceneRebuildNanos = now;
                 } else {
                     scene.markSceneDirty();
                 }
@@ -171,13 +207,6 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             RayTracingFrameData frame = RayTracingFrameData.capture(
                     Minecraft.getInstance(), width, height, config);
             if (frame == null) {
-                return false;
-            }
-            int frameSlot = (int) (frameNumber % FRAME_SLOT_COUNT);
-            // P0 K1: niemals einen Slot überschreiben, den die GPU noch liest.
-            // Bei Timeout/Fehler Frame überspringen (alte Uniform-Daten bleiben
-            // gültig) statt korrupte Matrizen hochzuladen.
-            if (!awaitUniformSlotFence(frameSlot)) {
                 return false;
             }
             ByteBuffer nativeData = frame.toNativeBuffer();
@@ -206,19 +235,23 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             // reicht bei verfügbarem Fence-Pfad einen Drain-Marker ein).
             markUniformSlotInFlight(frameSlot);
             if (descriptorDepthView != depthView.vkImageView()) {
-                if (descriptorDepthView != NULL) {
-                    // Descriptor sets from previous frames may still be in
-                    // flight when Minecraft recreates an equal-sized target.
-                    // This only occurs on target/fullscreen transitions.
-                    vkDeviceWaitIdle(device);
-                }
+                // Earlier slots keep their old view until they come round
+                // again (not in flight), so no device wait is needed.
                 descriptorDepthView = depthView.vkImageView();
                 descriptorsDirty = true;
             }
             if (descriptorsDirty) {
-                updateDescriptors(descriptorDepthView);
+                descriptorVersion++;
+                descriptorsDirty = false;
+            }
+            // Only this slot's set: it is guaranteed idle after the fence wait
+            // above, while the other slots' sets may still be bound in flight.
+            if (slotDescriptorVersion[frameSlot] != descriptorVersion) {
+                updateDescriptors(descriptorDepthView, frameSlot);
+                slotDescriptorVersion[frameSlot] = descriptorVersion;
             }
 
+            activeSceneLastUsedFrame = frameNumber;
             recordHybridPass(
                     commandBuffer,
                     colorView.texture().vkImage(),
@@ -276,20 +309,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         if (initialized) {
             return;
         }
-        sceneBuffer = createBuffer(
-                (long) BLOCK_CAPACITY * RayTracingScene.BYTES_PER_BLOCK,
-                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-                        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                true
-        );
-        lightBuffer = createBuffer(
-                RayTracingScene.LIGHT_BUFFER_BYTES,
-                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                false
-        );
+        ensureSceneInputBuffers();
         for (int index = 0; index < FRAME_SLOT_COUNT; index++) {
             uniformBuffers[index] = createBuffer(
                     RayTracingFrameData.BYTE_SIZE,
@@ -299,13 +319,6 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     false
             );
         }
-        instanceBuffer = createBuffer(
-                VkAccelerationStructureInstanceKHR.SIZEOF,
-                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                true
-        );
         createPipeline();
         setupSlotSynchronization();
         initialized = true;
@@ -457,10 +470,11 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         if (outputImage != NULL && width == outputWidth && height == outputHeight) {
             return;
         }
-        // A5: only on actual resize/recreate — never per-frame. Required before
-        // destroying in-flight output handles (no per-resource fences exist).
-        vkDeviceWaitIdle(device);
-        destroyOutput();
+        // A5: only on actual resize/recreate, which follows every dynamic
+        // resolution step. Frames in flight may still use the old images, so
+        // they are retired and freed once the slot fences prove those frames
+        // finished, instead of idling the whole device here.
+        retireOutput();
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer result = stack.mallocLong(1);
@@ -581,9 +595,16 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     }
 
     private void rebuildScene(VkCommandBuffer commandBuffer) {
-        // A5: required before destroying acceleration-structure handles; the
-        // caller throttles full rebuilds to ~20Hz so this never runs per-frame.
-        vkDeviceWaitIdle(device);
+        // Double-buffered: the frames in flight keep tracing the active set
+        // while this rebuild fills the standby set, which the caller proved
+        // idle (standbySceneSetReusable). The swap makes the standby set the
+        // working fields; its old handles and buffers are free to overwrite.
+        // The very first build has nothing in flight and uses the fields as is.
+        if (tlas != NULL) {
+            swapSceneSets();
+            ensureSceneInputBuffers();
+        }
+        activeSceneLastUsedFrame = -1L;
         destroyAccelerationStructureHandles();
         upload(sceneBuffer, scene.blocks());
         upload(lightBuffer, scene.lightBuffer());
@@ -727,7 +748,13 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             );
         }
         descriptorsDirty = true;
-        logger.info("Built hardware RT scene with {} block AABBs", scene.blockCount());
+        sceneRebuildCount++;
+        if (sceneRebuildCount == 1L) {
+            logger.info("Built hardware RT scene with {} block AABBs", scene.blockCount());
+        } else {
+            logger.debug("Rebuilt hardware RT scene with {} block AABBs (rebuild #{})",
+                    scene.blockCount(), sceneRebuildCount);
+        }
     }
 
     private static VkAccelerationStructureGeometryKHR.Buffer createAabbGeometry(
@@ -806,7 +833,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         }
     }
 
-    private void updateDescriptors(long depthView) {
+    /** Rewrites one slot's descriptor set; the caller guarantees it is not in flight. */
+    private void updateDescriptors(long depthView, int slot) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkWriteDescriptorSetAccelerationStructureKHR accelerationInfo =
                     VkWriteDescriptorSetAccelerationStructureKHR.calloc(stack)
@@ -843,7 +871,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     .buffer(lightBuffer.buffer)
                     .offset(0)
                     .range(RayTracingScene.LIGHT_BUFFER_BYTES);
-            for (int slot = 0; slot < FRAME_SLOT_COUNT; slot++) {
+            {
                 VkDescriptorBufferInfo.Buffer frameInfo =
                         VkDescriptorBufferInfo.calloc(1, stack);
                 frameInfo.get(0)
@@ -908,7 +936,6 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 vkUpdateDescriptorSets(device, writes, null);
             }
         }
-        descriptorsDirty = false;
     }
 
     private void recordHybridPass(
@@ -1567,6 +1594,119 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         destroyAllocation(image.memory, false);
     }
 
+    /**
+     * The standby set may be overwritten once its last trace is older than
+     * every frame the current slot fence covers (all frames before
+     * frameNumber - FRAME_SLOT_COUNT, see render()).
+     */
+    private boolean standbySceneSetReusable() {
+        return standbySceneSet.lastUsedFrame < frameNumber - FRAME_SLOT_COUNT;
+    }
+
+    /** Exchanges the working scene fields with the standby set. */
+    private void swapSceneSets() {
+        SceneSet standby = standbySceneSet;
+        Allocation allocation;
+        allocation = sceneBuffer; sceneBuffer = standby.sceneBuffer; standby.sceneBuffer = allocation;
+        allocation = lightBuffer; lightBuffer = standby.lightBuffer; standby.lightBuffer = allocation;
+        allocation = instanceBuffer; instanceBuffer = standby.instanceBuffer; standby.instanceBuffer = allocation;
+        allocation = blasStorage; blasStorage = standby.blasStorage; standby.blasStorage = allocation;
+        allocation = tlasStorage; tlasStorage = standby.tlasStorage; standby.tlasStorage = allocation;
+        allocation = blasScratch; blasScratch = standby.blasScratch; standby.blasScratch = allocation;
+        allocation = tlasScratch; tlasScratch = standby.tlasScratch; standby.tlasScratch = allocation;
+        long handle;
+        handle = blas; blas = standby.blas; standby.blas = handle;
+        handle = tlas; tlas = standby.tlas; standby.tlas = handle;
+        long lastUsed = activeSceneLastUsedFrame;
+        activeSceneLastUsedFrame = standby.lastUsedFrame;
+        standby.lastUsedFrame = lastUsed;
+    }
+
+    /** Host-written scene inputs of the working set, created on first use. */
+    private void ensureSceneInputBuffers() {
+        if (sceneBuffer == null) {
+            sceneBuffer = createBuffer(
+                    (long) BLOCK_CAPACITY * RayTracingScene.BYTES_PER_BLOCK,
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+                            | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                            | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    true
+            );
+        }
+        if (lightBuffer == null) {
+            lightBuffer = createBuffer(
+                    RayTracingScene.LIGHT_BUFFER_BYTES,
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    false
+            );
+        }
+        if (instanceBuffer == null) {
+            instanceBuffer = createBuffer(
+                    VkAccelerationStructureInstanceKHR.SIZEOF,
+                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                            | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    true
+            );
+        }
+    }
+
+    /** Destroys the working scene set; only after a device idle. */
+    private void destroyWorkingSceneSet() {
+        destroyAccelerationStructures();
+        destroyAllocation(instanceBuffer, true);
+        destroyAllocation(sceneBuffer, true);
+        destroyAllocation(lightBuffer, true);
+        instanceBuffer = null;
+        sceneBuffer = null;
+        lightBuffer = null;
+    }
+
+    /** Moves the current output images to the retire queue (see render()). */
+    private void retireOutput() {
+        if (outputImage == NULL && outputMemory == null && noisyColor == null) {
+            return;
+        }
+        RetiredOutput retired = new RetiredOutput();
+        retired.outputImage = outputImage;
+        retired.outputView = outputView;
+        retired.outputMemory = outputMemory;
+        retired.storageImages = new StorageImage[] {
+                noisyColor, diffuseAlbedo, specularAlbedo, normalRoughness, specularHitDistance
+        };
+        // Frames up to frameNumber - 1 may have used these images.
+        retired.lastUsedFrame = frameNumber - 1;
+        retiredOutputs.add(retired);
+        outputImage = NULL;
+        outputView = NULL;
+        outputMemory = null;
+        noisyColor = diffuseAlbedo = specularAlbedo = normalRoughness = specularHitDistance = null;
+    }
+
+    /** Frees retired outputs the slot-fence guarantee covers; call after the wait in render(). */
+    private void releaseRetiredOutputs() {
+        java.util.Iterator<RetiredOutput> iterator = retiredOutputs.iterator();
+        while (iterator.hasNext()) {
+            RetiredOutput retired = iterator.next();
+            if (retired.lastUsedFrame >= frameNumber - FRAME_SLOT_COUNT) {
+                continue;
+            }
+            destroyRetiredOutput(retired);
+            iterator.remove();
+        }
+    }
+
+    private void destroyRetiredOutput(RetiredOutput retired) {
+        for (StorageImage image : retired.storageImages) {
+            destroyStorageImage(image);
+        }
+        if (retired.outputView != NULL) vkDestroyImageView(device, retired.outputView, null);
+        if (retired.outputImage != NULL) vkDestroyImage(device, retired.outputImage, null);
+        destroyAllocation(retired.outputMemory, false);
+    }
+
     private void destroyAccelerationStructureHandles() {
         if (tlas != NULL) {
             vkDestroyAccelerationStructureKHR(device, tlas, null);
@@ -1615,15 +1755,19 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         java.util.Arrays.fill(slotSubmittedFrame, 0L);
         java.util.Arrays.fill(slotTimeline, 0);
         nextTimelineValue = 1L;
-        destroyAccelerationStructures();
+        // Both scene sets and every retired output; the device is idle.
+        destroyWorkingSceneSet();
+        swapSceneSets();
+        destroyWorkingSceneSet();
+        for (RetiredOutput retired : retiredOutputs) {
+            destroyRetiredOutput(retired);
+        }
+        retiredOutputs.clear();
         destroyOutput();
-        destroyAllocation(instanceBuffer, true);
         for (int index = 0; index < FRAME_SLOT_COUNT; index++) {
             destroyAllocation(uniformBuffers[index], true);
             uniformBuffers[index] = null;
         }
-        destroyAllocation(sceneBuffer, true);
-        destroyAllocation(lightBuffer, true);
         if (depthSampler != NULL) vkDestroySampler(device, depthSampler, null);
         if (descriptorPool != NULL) vkDestroyDescriptorPool(device, descriptorPool, null);
         if (pipeline != NULL) vkDestroyPipeline(device, pipeline, null);
@@ -1645,6 +1789,28 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             this.memory = memory;
             this.size = size;
         }
+    }
+
+    /** Inactive half of the double-buffered scene (see swapSceneSets). */
+    private static final class SceneSet {
+        private Allocation sceneBuffer;
+        private Allocation lightBuffer;
+        private Allocation instanceBuffer;
+        private Allocation blasStorage;
+        private Allocation tlasStorage;
+        private Allocation blasScratch;
+        private Allocation tlasScratch;
+        private long blas;
+        private long tlas;
+        private long lastUsedFrame = -1L;
+    }
+
+    private static final class RetiredOutput {
+        private long outputImage;
+        private long outputView;
+        private Allocation outputMemory;
+        private StorageImage[] storageImages;
+        private long lastUsedFrame;
     }
 
     private static final class StorageImage {

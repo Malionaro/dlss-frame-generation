@@ -70,7 +70,7 @@ See [docs/README.md](docs/README.md) for the full map.
 Audited on 2026-09-02:
 
 - all 79 client files are in the jar
-- both entrypoints and all 16 mixins are registered
+- both entrypoints and all 18 mixins are registered
 - all 53 native methods have a matching JNI export
 - every `.cpp` file is part of the CMake target
 - all four shaders are loaded by real code and by tests
@@ -118,6 +118,7 @@ Then reimport.
 
 You can configure settings through the menu or use direct in-game shortcuts:
 
+- **F3**: The vanilla debug screen shows the frame-generation output FPS (base FPS × multiplier, an estimate) while FG is active, plus an extra line with technology, multiplier and base FPS, or why FG is off.
 - **F8**: Toggles the Performance OSD HUD. Shows real-time FPS, base FPS, frame multiplier, pacing latency, backend status, NVIDIA Reflex mode, and Hardware Raytracing status.
 - **F7**: Toggles Frame Generation on and off immediately with live actionbar feedback.
 - **End**: Opens the Multi-Vendor Settings Screen directly without opening pause menus.

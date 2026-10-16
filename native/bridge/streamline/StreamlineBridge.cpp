@@ -2032,7 +2032,10 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
 extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nProbeD3D12Presentation
   (JNIEnv*, jclass, jlong physicalDevice, jlong device,
    jlong graphicsQueue, jint graphicsQueueFamily) {
+    // nInit runs first and retains the instance; the presenter needs it to
+    // resolve physical-device entry points without the interposer exports.
     return dxgipresenter::probe(
+        g_vkInstance.load(),
         reinterpret_cast<VkPhysicalDevice>(physicalDevice),
         reinterpret_cast<VkDevice>(device),
         reinterpret_cast<VkQueue>(graphicsQueue),

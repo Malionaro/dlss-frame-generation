@@ -1,4 +1,5 @@
 #include "WindowsDxgiPresenter.h"
+#include "VulkanLoader.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -51,6 +52,31 @@ PFN_vkGetMemoryWin32HandlePropertiesKHR
 PFN_vkImportSemaphoreWin32HandleKHR
     g_importSemaphoreWin32Handle = nullptr;
 PFN_vkQueueSubmit2 g_queueSubmit2 = nullptr;
+
+// Every other Vulkan entry point the presenter uses is resolved here as well,
+// from the real loader (see VulkanLoader.h). The statically linked exports go
+// through sl.interposer, whose dispatch is not installed on non-NVIDIA
+// adapters: vkGetPhysicalDeviceProperties2 in the startup probe and
+// vkDeviceWaitIdle at shutdown both jumped to a null pointer on Intel GPUs.
+struct VulkanFunctions {
+    PFN_vkGetPhysicalDeviceProperties2 getPhysicalDeviceProperties2 = nullptr;
+    PFN_vkGetPhysicalDeviceMemoryProperties
+        getPhysicalDeviceMemoryProperties = nullptr;
+    PFN_vkGetPhysicalDeviceImageFormatProperties2
+        getPhysicalDeviceImageFormatProperties2 = nullptr;
+    PFN_vkGetPhysicalDeviceExternalSemaphoreProperties
+        getPhysicalDeviceExternalSemaphoreProperties = nullptr;
+    PFN_vkDeviceWaitIdle deviceWaitIdle = nullptr;
+    PFN_vkCreateImage createImage = nullptr;
+    PFN_vkDestroyImage destroyImage = nullptr;
+    PFN_vkGetImageMemoryRequirements getImageMemoryRequirements = nullptr;
+    PFN_vkAllocateMemory allocateMemory = nullptr;
+    PFN_vkFreeMemory freeMemory = nullptr;
+    PFN_vkBindImageMemory bindImageMemory = nullptr;
+    PFN_vkCreateSemaphore createSemaphore = nullptr;
+    PFN_vkDestroySemaphore destroySemaphore = nullptr;
+};
+VulkanFunctions g_vk;
 
 struct SwapchainToken {};
 std::unique_ptr<SwapchainToken> g_swapchainToken;
@@ -192,7 +218,7 @@ uint32_t selectMemoryType(
     VkMemoryPropertyFlags preferred
 ) {
     VkPhysicalDeviceMemoryProperties properties{};
-    vkGetPhysicalDeviceMemoryProperties(
+    g_vk.getPhysicalDeviceMemoryProperties(
         g_vkPhysicalDevice, &properties);
     for (uint32_t index = 0;
          index < properties.memoryTypeCount;
@@ -328,8 +354,8 @@ void releasePresentationLocked(std::unique_lock<std::mutex>& lock) {
     g_stage = Stage::Unavailable;
     lock.unlock();
     VkResult vulkanIdle = VK_SUCCESS;
-    if (g_vkDevice != VK_NULL_HANDLE) {
-        vulkanIdle = vkDeviceWaitIdle(g_vkDevice);
+    if (g_vkDevice != VK_NULL_HANDLE && g_vk.deviceWaitIdle != nullptr) {
+        vulkanIdle = g_vk.deviceWaitIdle(g_vkDevice);
     }
     std::string idleError;
     bool d3d12Idle = waitForD3D12QueueIdle(idleError);
@@ -356,24 +382,24 @@ void releasePresentationLocked(std::unique_lock<std::mutex>& lock) {
     for (SharedFrame& frame : g_sharedFrames) {
         if (frame.vulkanImage != VK_NULL_HANDLE
             && g_vkDevice != VK_NULL_HANDLE) {
-            vkDestroyImage(
+            g_vk.destroyImage(
                 g_vkDevice, frame.vulkanImage, nullptr);
         }
         if (frame.vulkanMemory != VK_NULL_HANDLE
             && g_vkDevice != VK_NULL_HANDLE) {
-            vkFreeMemory(
+            g_vk.freeMemory(
                 g_vkDevice, frame.vulkanMemory, nullptr);
         }
     }
     g_sharedFrames.clear();
     if (g_vulkanReadySemaphore != VK_NULL_HANDLE
         && g_vkDevice != VK_NULL_HANDLE) {
-        vkDestroySemaphore(
+        g_vk.destroySemaphore(
             g_vkDevice, g_vulkanReadySemaphore, nullptr);
     }
     if (g_d3d12DoneSemaphore != VK_NULL_HANDLE
         && g_vkDevice != VK_NULL_HANDLE) {
-        vkDestroySemaphore(
+        g_vk.destroySemaphore(
             g_vkDevice, g_d3d12DoneSemaphore, nullptr);
     }
     g_vulkanReadySemaphore = VK_NULL_HANDLE;
@@ -437,7 +463,7 @@ bool externalImageSupported(VkFormat format) {
         VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2
     };
     properties.pNext = &externalProperties;
-    VkResult result = vkGetPhysicalDeviceImageFormatProperties2(
+    VkResult result = g_vk.getPhysicalDeviceImageFormatProperties2(
         g_vkPhysicalDevice, &imageInfo, &properties);
     if (result != VK_SUCCESS) {
         return false;
@@ -460,7 +486,7 @@ bool externalFenceSupported() {
     VkExternalSemaphoreProperties properties{
         VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES
     };
-    vkGetPhysicalDeviceExternalSemaphoreProperties(
+    g_vk.getPhysicalDeviceExternalSemaphoreProperties(
         g_vkPhysicalDevice, &info, &properties);
     return (properties.externalSemaphoreFeatures
                 & VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT) != 0;
@@ -505,7 +531,7 @@ bool createSharedTimeline(
         VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
     };
     createInfo.pNext = &typeInfo;
-    VkResult vkResult = vkCreateSemaphore(
+    VkResult vkResult = g_vk.createSemaphore(
         g_vkDevice, &createInfo, nullptr, &vulkanSemaphore);
     if (vkResult != VK_SUCCESS) {
         CloseHandle(sharedHandle);
@@ -527,7 +553,7 @@ bool createSharedTimeline(
     vkResult = g_importSemaphoreWin32Handle(
         g_vkDevice, &importInfo);
     if (vkResult != VK_SUCCESS) {
-        vkDestroySemaphore(g_vkDevice, vulkanSemaphore, nullptr);
+        g_vk.destroySemaphore(g_vkDevice, vulkanSemaphore, nullptr);
         vulkanSemaphore = VK_NULL_HANDLE;
         CloseHandle(sharedHandle);
         sharedHandle = nullptr;
@@ -617,7 +643,7 @@ bool createSharedFrame(
         | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VkResult vkResult = vkCreateImage(
+    VkResult vkResult = g_vk.createImage(
         g_vkDevice, &imageInfo, nullptr, &frame.vulkanImage);
     if (vkResult != VK_SUCCESS) {
         CloseHandle(resourceHandle);
@@ -628,7 +654,7 @@ bool createSharedFrame(
     }
 
     VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(
+    g_vk.getImageMemoryRequirements(
         g_vkDevice, frame.vulkanImage, &requirements);
     VkMemoryWin32HandlePropertiesKHR handleProperties{
         VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR
@@ -641,7 +667,7 @@ bool createSharedFrame(
     );
     if (vkResult != VK_SUCCESS) {
         CloseHandle(resourceHandle);
-        vkDestroyImage(g_vkDevice, frame.vulkanImage, nullptr);
+        g_vk.destroyImage(g_vkDevice, frame.vulkanImage, nullptr);
         frame.vulkanImage = VK_NULL_HANDLE;
         frame.d3d12Resource.Reset();
         error = "Vulkan could not inspect the D3D12 resource handle: "
@@ -655,7 +681,7 @@ bool createSharedFrame(
     );
     if (memoryType == UINT32_MAX) {
         CloseHandle(resourceHandle);
-        vkDestroyImage(g_vkDevice, frame.vulkanImage, nullptr);
+        g_vk.destroyImage(g_vkDevice, frame.vulkanImage, nullptr);
         frame.vulkanImage = VK_NULL_HANDLE;
         frame.d3d12Resource.Reset();
         error =
@@ -680,27 +706,27 @@ bool createSharedFrame(
     allocation.pNext = &importInfo;
     allocation.allocationSize = requirements.size;
     allocation.memoryTypeIndex = memoryType;
-    vkResult = vkAllocateMemory(
+    vkResult = g_vk.allocateMemory(
         g_vkDevice, &allocation, nullptr, &frame.vulkanMemory);
     CloseHandle(resourceHandle);
     if (vkResult != VK_SUCCESS) {
-        vkDestroyImage(g_vkDevice, frame.vulkanImage, nullptr);
+        g_vk.destroyImage(g_vkDevice, frame.vulkanImage, nullptr);
         frame.vulkanImage = VK_NULL_HANDLE;
         frame.d3d12Resource.Reset();
         error = "Vulkan import of D3D12 texture memory failed: "
             + std::to_string(vkResult);
         return false;
     }
-    vkResult = vkBindImageMemory(
+    vkResult = g_vk.bindImageMemory(
         g_vkDevice,
         frame.vulkanImage,
         frame.vulkanMemory,
         0
     );
     if (vkResult != VK_SUCCESS) {
-        vkFreeMemory(g_vkDevice, frame.vulkanMemory, nullptr);
+        g_vk.freeMemory(g_vkDevice, frame.vulkanMemory, nullptr);
         frame.vulkanMemory = VK_NULL_HANDLE;
-        vkDestroyImage(g_vkDevice, frame.vulkanImage, nullptr);
+        g_vk.destroyImage(g_vkDevice, frame.vulkanImage, nullptr);
         frame.vulkanImage = VK_NULL_HANDLE;
         frame.d3d12Resource.Reset();
         error = "Vulkan shared image binding failed: "
@@ -848,6 +874,7 @@ VkResult submitVulkanReady(
 } // namespace
 
 bool probe(
+    VkInstance instance,
     VkPhysicalDevice physicalDevice,
     VkDevice device,
     VkQueue graphicsQueue,
@@ -873,38 +900,89 @@ bool probe(
     g_vkGraphicsQueue = graphicsQueue;
     g_vkGraphicsQueueFamily = graphicsQueueFamily;
 
-    if (physicalDevice == VK_NULL_HANDLE
+    if (instance == VK_NULL_HANDLE
+        || physicalDevice == VK_NULL_HANDLE
         || device == VK_NULL_HANDLE
         || graphicsQueue == VK_NULL_HANDLE
         || graphicsQueueFamily == VK_QUEUE_FAMILY_IGNORED) {
-        fail("Vulkan physical device, logical device or graphics queue is missing");
+        fail("Vulkan instance, physical device, logical device or graphics queue is missing");
+        return false;
+    }
+
+    g_vk = VulkanFunctions{};
+    g_vk.getPhysicalDeviceProperties2 = reinterpret_cast<
+        PFN_vkGetPhysicalDeviceProperties2>(framegen::loaderGetInstanceProcAddr()(
+            instance, "vkGetPhysicalDeviceProperties2"));
+    g_vk.getPhysicalDeviceMemoryProperties = reinterpret_cast<
+        PFN_vkGetPhysicalDeviceMemoryProperties>(framegen::loaderGetInstanceProcAddr()(
+            instance, "vkGetPhysicalDeviceMemoryProperties"));
+    g_vk.getPhysicalDeviceImageFormatProperties2 = reinterpret_cast<
+        PFN_vkGetPhysicalDeviceImageFormatProperties2>(framegen::loaderGetInstanceProcAddr()(
+            instance, "vkGetPhysicalDeviceImageFormatProperties2"));
+    g_vk.getPhysicalDeviceExternalSemaphoreProperties = reinterpret_cast<
+        PFN_vkGetPhysicalDeviceExternalSemaphoreProperties>(framegen::loaderGetInstanceProcAddr()(
+            instance, "vkGetPhysicalDeviceExternalSemaphoreProperties"));
+    g_vk.deviceWaitIdle = reinterpret_cast<PFN_vkDeviceWaitIdle>(
+        framegen::loaderGetDeviceProcAddr()(device, "vkDeviceWaitIdle"));
+    g_vk.createImage = reinterpret_cast<PFN_vkCreateImage>(
+        framegen::loaderGetDeviceProcAddr()(device, "vkCreateImage"));
+    g_vk.destroyImage = reinterpret_cast<PFN_vkDestroyImage>(
+        framegen::loaderGetDeviceProcAddr()(device, "vkDestroyImage"));
+    g_vk.getImageMemoryRequirements = reinterpret_cast<
+        PFN_vkGetImageMemoryRequirements>(framegen::loaderGetDeviceProcAddr()(
+            device, "vkGetImageMemoryRequirements"));
+    g_vk.allocateMemory = reinterpret_cast<PFN_vkAllocateMemory>(
+        framegen::loaderGetDeviceProcAddr()(device, "vkAllocateMemory"));
+    g_vk.freeMemory = reinterpret_cast<PFN_vkFreeMemory>(
+        framegen::loaderGetDeviceProcAddr()(device, "vkFreeMemory"));
+    g_vk.bindImageMemory = reinterpret_cast<PFN_vkBindImageMemory>(
+        framegen::loaderGetDeviceProcAddr()(device, "vkBindImageMemory"));
+    g_vk.createSemaphore = reinterpret_cast<PFN_vkCreateSemaphore>(
+        framegen::loaderGetDeviceProcAddr()(device, "vkCreateSemaphore"));
+    g_vk.destroySemaphore = reinterpret_cast<PFN_vkDestroySemaphore>(
+        framegen::loaderGetDeviceProcAddr()(device, "vkDestroySemaphore"));
+    if (g_vk.getPhysicalDeviceProperties2 == nullptr
+        || g_vk.getPhysicalDeviceMemoryProperties == nullptr
+        || g_vk.getPhysicalDeviceImageFormatProperties2 == nullptr
+        || g_vk.getPhysicalDeviceExternalSemaphoreProperties == nullptr
+        || g_vk.deviceWaitIdle == nullptr
+        || g_vk.createImage == nullptr
+        || g_vk.destroyImage == nullptr
+        || g_vk.getImageMemoryRequirements == nullptr
+        || g_vk.allocateMemory == nullptr
+        || g_vk.freeMemory == nullptr
+        || g_vk.bindImageMemory == nullptr
+        || g_vk.createSemaphore == nullptr
+        || g_vk.destroySemaphore == nullptr) {
+        g_vk = VulkanFunctions{};
+        fail("Vulkan entry points for D3D12 interop could not be resolved");
         return false;
     }
 
     auto getMemoryHandle = reinterpret_cast<
         PFN_vkGetMemoryWin32HandleKHR>(
-            vkGetDeviceProcAddr(
+            framegen::loaderGetDeviceProcAddr()(
                 device, "vkGetMemoryWin32HandleKHR"));
     g_getMemoryWin32HandleProperties = reinterpret_cast<
         PFN_vkGetMemoryWin32HandlePropertiesKHR>(
-            vkGetDeviceProcAddr(
+            framegen::loaderGetDeviceProcAddr()(
                 device,
                 "vkGetMemoryWin32HandlePropertiesKHR"));
     g_importSemaphoreWin32Handle = reinterpret_cast<
         PFN_vkImportSemaphoreWin32HandleKHR>(
-            vkGetDeviceProcAddr(
+            framegen::loaderGetDeviceProcAddr()(
                 device,
                 "vkImportSemaphoreWin32HandleKHR"));
     auto getSemaphoreHandle = reinterpret_cast<
         PFN_vkGetSemaphoreWin32HandleKHR>(
-            vkGetDeviceProcAddr(
+            framegen::loaderGetDeviceProcAddr()(
                 device,
                 "vkGetSemaphoreWin32HandleKHR"));
     g_queueSubmit2 = reinterpret_cast<PFN_vkQueueSubmit2>(
-        vkGetDeviceProcAddr(device, "vkQueueSubmit2"));
+        framegen::loaderGetDeviceProcAddr()(device, "vkQueueSubmit2"));
     if (g_queueSubmit2 == nullptr) {
         g_queueSubmit2 = reinterpret_cast<PFN_vkQueueSubmit2>(
-            vkGetDeviceProcAddr(device, "vkQueueSubmit2KHR"));
+            framegen::loaderGetDeviceProcAddr()(device, "vkQueueSubmit2KHR"));
     }
     if (getMemoryHandle == nullptr
         || g_getMemoryWin32HandleProperties == nullptr) {
@@ -928,7 +1006,7 @@ bool probe(
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2
     };
     properties.pNext = &idProperties;
-    vkGetPhysicalDeviceProperties2(physicalDevice, &properties);
+    g_vk.getPhysicalDeviceProperties2(physicalDevice, &properties);
     if (idProperties.deviceLUIDValid != VK_TRUE) {
         fail("Vulkan driver did not expose a valid Windows adapter LUID");
         return false;

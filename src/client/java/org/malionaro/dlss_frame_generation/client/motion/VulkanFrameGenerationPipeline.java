@@ -83,11 +83,17 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private long unconfirmedPresentCount;
     private long capturedFrameCount;
     private long providerAcceptedFrameCount;
+    /** Whether the last capture wrote a DLSS/FSR (or DLSS-RR) result to the output. */
+    private boolean lastUpscalingAccepted;
     private int pendingUiSlot = -1;
     private FrameIdentity pendingUiIdentity = FrameIdentity.INVALID;
     private long activeSwapchainGeneration;
     private FrameIdentity lastCapturedIdentity = FrameIdentity.INVALID;
     private FrameIdentity lastProviderAcceptedIdentity = FrameIdentity.INVALID;
+    /** Render images replaced by a resize, freed once their frames completed. */
+    private final java.util.ArrayDeque<Retired> retiredResources = new java.util.ArrayDeque<>();
+    /** Set by a resize; the new render images get their initial layout next frame. */
+    private boolean renderImagesNeedInit;
 
     public VulkanFrameGenerationPipeline(VulkanDevice minecraftDevice, Logger logger) {
         this.logger = logger;
@@ -145,6 +151,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             float motionBlurIntensity,
             int motionBlurSamples
     ) {
+        lastUpscalingAccepted = false;
         // Phase 3 M2: lazy OOM-retry – if previous failure was OOM and generation has changed, clear latch
         if (failed && failedDueToOutOfMemory && failedAtSwapchainGeneration != activeSwapchainGeneration) {
             logger.info("OOM recovery: clearing retryable latch (failed at gen {} -> now gen {})",
@@ -214,6 +221,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     sourceDepthFormat,
                     destinationFormat
             );
+            // Resized render images first: they also satisfy the layout check
+            // in initializeHistoryImages, which must only run after a full
+            // rebuild because it re-clears the output-sized images too.
+            initializeResizedRenderImages(commandBuffer);
             initializeHistoryImages(commandBuffer);
             int currentIndex = (int) (frameNumber % SLOT_COUNT);
             int previousIndex = (currentIndex + SLOT_COUNT - 1) % SLOT_COUNT;
@@ -341,6 +352,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                             cameraForwardX, cameraForwardY, cameraForwardZ,
                             reset || !historyValid
                     );
+            lastUpscalingAccepted = upscalingAccepted;
             boolean fullResolutionFallback = !upscalingAccepted;
             if (fullResolutionFallback) {
                 blitSnapshotToOwnedOutput(
@@ -609,6 +621,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         return providerAcceptedFrameCount;
     }
 
+    public boolean lastUpscalingAccepted() {
+        return lastUpscalingAccepted;
+    }
+
     public long completedPresentCount() {
         return completedPresentSerial;
     }
@@ -683,15 +699,25 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             int sourceDepthFormat,
             int destinationFormat
     ) throws IOException {
-        if (pipeline != NULL && width == renderWidth && height == renderHeight
+        releaseRetiredResources(false);
+        boolean sameOutput = pipeline != NULL
                 && outputWidth == displayWidth && outputHeight == displayHeight
                 && colorFormat == sourceColorFormat
                 && depthFormat == sourceDepthFormat
-                && outputFormat == destinationFormat) {
+                && outputFormat == destinationFormat;
+        if (sameOutput && width == renderWidth && height == renderHeight) {
+            return;
+        }
+        if (sameOutput) {
+            // Dynamic resolution and shader-pack render scale change only the
+            // world size. Rebuilding everything here (device idle, three
+            // shaderc compiles, new pipelines) stalled every DRS step.
+            resizeRenderResources(renderWidth, renderHeight);
             return;
         }
 
         vkDeviceWaitIdle(device);
+        releaseRetiredResources(true);
         destroyResources();
         try {
             width = renderWidth;
@@ -704,30 +730,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
 
             for (int index = 0; index < SLOT_COUNT; index++) {
                 FrameSlot slot = new FrameSlot();
-                slot.color = createImage(
-                        colorFormat,
-                        VK_IMAGE_ASPECT_COLOR_BIT,
-                        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-                                | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                        width,
-                        height
-                );
-                slot.depth = createImage(
-                        depthFormat,
-                        VK_IMAGE_ASPECT_DEPTH_BIT,
-                        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                        width,
-                        height
-                );
-                slot.motion = createImage(
-                        MOTION_FORMAT,
-                        VK_IMAGE_ASPECT_COLOR_BIT,
-                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-                                | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-                                | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                        width,
-                        height
-                );
+                // Stored before allocation so destroyResources frees a
+                // partially built slot if a later allocation throws.
+                slots[index] = slot;
+                allocateRenderImages(slot);
                 slot.upscaled = createImage(
                         outputFormat,
                         VK_IMAGE_ASPECT_COLOR_BIT,
@@ -767,18 +773,6 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                 );
                 slot.uniformBuffer = uniform.buffer;
                 slot.uniformMemory = uniform.memory;
-                Allocation debugReadback = createBuffer(
-                        Math.multiplyExact(
-                                Math.multiplyExact((long) width, height),
-                                MOTION_BYTES_PER_PIXEL
-                        ),
-                        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-                                | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-                );
-                slot.debugReadbackBuffer = debugReadback.buffer;
-                slot.debugReadbackMemory = debugReadback.memory;
-                slots[index] = slot;
             }
 
             createPipeline();
@@ -809,6 +803,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             throw error;
         }
         historyValid = false;
+        renderImagesNeedInit = false;
         frameNumber = 0;
         completedPresentSerial = 0;
         unconfirmedPresentCount = 0;
@@ -822,6 +817,186 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                 "Allocated frame-generation input pipeline: render={}x{}, output={}x{}, color={}, depth={}, motion=RG16F",
                 width, height, outputWidth, outputHeight, colorFormat, depthFormat
         );
+    }
+
+    /** Render-resolution images of one slot (sized by {@link #width}/{@link #height}). */
+    private void allocateRenderImages(FrameSlot slot) {
+        slot.color = createImage(
+                colorFormat,
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                        | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                width,
+                height
+        );
+        slot.depth = createImage(
+                depthFormat,
+                VK_IMAGE_ASPECT_DEPTH_BIT,
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                width,
+                height
+        );
+        slot.motion = createImage(
+                MOTION_FORMAT,
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                        | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                        | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                width,
+                height
+        );
+        Allocation debugReadback = createBuffer(
+                Math.multiplyExact(
+                        Math.multiplyExact((long) width, height),
+                        MOTION_BYTES_PER_PIXEL
+                ),
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+                        | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+        );
+        slot.debugReadbackBuffer = debugReadback.buffer;
+        slot.debugReadbackMemory = debugReadback.memory;
+        slot.debugReadbackPending = false;
+    }
+
+    /**
+     * Swaps only the render-resolution images when the world size changes but
+     * the output size and formats stay. Pipelines, shaders, samplers, uniform
+     * buffers and the output-sized images are kept; nothing waits for the
+     * device. The replaced images and the descriptor pools that reference them
+     * may still be used by frames in flight, so they are retired and freed
+     * once the confirmed present serial passes every slot that could hold them.
+     */
+    private void resizeRenderResources(int renderWidth, int renderHeight) {
+        long releaseAfter = completedPresentSerial + SLOT_COUNT;
+        Retired retired = new Retired();
+        for (FrameSlot slot : slots) {
+            releaseAfter = Math.max(releaseAfter, slot.inUseUntilPresentSerial + 1);
+            retired.images.add(slot.color);
+            retired.images.add(slot.depth);
+            retired.images.add(slot.motion);
+            retired.buffers.add(new Allocation(
+                    slot.debugReadbackBuffer, slot.debugReadbackMemory));
+            slot.color = slot.depth = slot.motion = null;
+            slot.debugReadbackBuffer = slot.debugReadbackMemory = NULL;
+        }
+        retired.descriptorPools.add(descriptorPool);
+        retired.descriptorPools.add(motionBlurDescriptorPool);
+        descriptorPool = motionBlurDescriptorPool = NULL;
+        retired.releaseAfterPresentSerial = releaseAfter;
+        retiredResources.add(retired);
+
+        int previousWidth = width;
+        int previousHeight = height;
+        width = renderWidth;
+        height = renderHeight;
+        try {
+            for (FrameSlot slot : slots) {
+                allocateRenderImages(slot);
+            }
+            createDescriptors();
+            createMotionBlurDescriptors();
+        } catch (RuntimeException error) {
+            // Rare (allocation failure): fall back to a clean full rebuild on
+            // the next frame instead of leaving half-built slots behind.
+            vkDeviceWaitIdle(device);
+            releaseRetiredResources(true);
+            destroyResources();
+            width = height = outputWidth = outputHeight = 0;
+            colorFormat = depthFormat = outputFormat = 0;
+            historyValid = false;
+            status = "Frame-generation resize failed: " + error.getMessage();
+            throw error;
+        }
+        // The previous slot's history now has a different size; the motion
+        // search and temporal providers must not compare across it.
+        historyValid = false;
+        renderImagesNeedInit = true;
+        latestDebugSnapshot = null;
+        logger.debug(
+                "Resized frame-generation render images {}x{} -> {}x{} without a device wait",
+                previousWidth, previousHeight, width, height
+        );
+    }
+
+    /**
+     * Frees retired render images once the GPU has confirmed the presents that
+     * could still use them. {@code force} is only valid right after a device
+     * idle (full rebuild, close).
+     */
+    private void releaseRetiredResources(boolean force) {
+        java.util.Iterator<Retired> iterator = retiredResources.iterator();
+        while (iterator.hasNext()) {
+            Retired retired = iterator.next();
+            if (!force && retired.releaseAfterPresentSerial > completedPresentSerial) {
+                continue;
+            }
+            for (NativeImage image : retired.images) {
+                destroyImage(image);
+            }
+            for (Allocation buffer : retired.buffers) {
+                if (buffer.buffer() != NULL) vkDestroyBuffer(device, buffer.buffer(), null);
+                if (buffer.memory() != NULL) vkFreeMemory(device, buffer.memory(), null);
+            }
+            for (long pool : retired.descriptorPools) {
+                if (pool != NULL) vkDestroyDescriptorPool(device, pool, null);
+            }
+            iterator.remove();
+        }
+    }
+
+    /**
+     * Initial layout and clear for render images created by a resize. Unlike
+     * {@link #initializeHistoryImages}, it never touches the output-sized
+     * images, which in-flight frames and the present-time providers may still
+     * read.
+     */
+    private void initializeResizedRenderImages(VkCommandBuffer commandBuffer) {
+        if (!renderImagesNeedInit) return;
+        renderImagesNeedInit = false;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkClearColorValue colorClear = VkClearColorValue.calloc(stack)
+                    .float32(stack.floats(0.0f, 0.0f, 0.0f, 0.0f));
+            VkClearDepthStencilValue depthClear = VkClearDepthStencilValue.calloc(stack)
+                    .depth(0.0f)
+                    .stencil(0);
+            VkImageSubresourceRange colorRange = VkImageSubresourceRange.calloc(stack)
+                    .aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                    .baseMipLevel(0).levelCount(1)
+                    .baseArrayLayer(0).layerCount(1);
+            VkImageSubresourceRange depthRange = VkImageSubresourceRange.calloc(stack)
+                    .aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT)
+                    .baseMipLevel(0).levelCount(1)
+                    .baseArrayLayer(0).layerCount(1);
+            for (FrameSlot slot : slots) {
+                for (NativeImage image : new NativeImage[] {slot.color, slot.depth, slot.motion}) {
+                    transitionImage(
+                            commandBuffer, image,
+                            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                            0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            stack);
+                }
+                vkCmdClearColorImage(
+                        commandBuffer, slot.color.image,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, colorClear, colorRange);
+                vkCmdClearDepthStencilImage(
+                        commandBuffer, slot.depth.image,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, depthClear, depthRange);
+                vkCmdClearColorImage(
+                        commandBuffer, slot.motion.image,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, colorClear, colorRange);
+                for (NativeImage image : new NativeImage[] {slot.color, slot.depth, slot.motion}) {
+                    transitionImage(
+                            commandBuffer, image,
+                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                            VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, stack);
+                }
+            }
+        }
     }
 
     private void createPipeline() throws IOException {
@@ -2403,6 +2578,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     @Override
     public void close() {
         vkDeviceWaitIdle(device);
+        releaseRetiredResources(true);
         destroyResources();
     }
 
@@ -2450,5 +2626,12 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     }
 
     private record Allocation(long buffer, long memory) {
+    }
+
+    private static final class Retired {
+        private final java.util.List<NativeImage> images = new java.util.ArrayList<>();
+        private final java.util.List<Allocation> buffers = new java.util.ArrayList<>();
+        private final java.util.List<Long> descriptorPools = new java.util.ArrayList<>();
+        private long releaseAfterPresentSerial;
     }
 }

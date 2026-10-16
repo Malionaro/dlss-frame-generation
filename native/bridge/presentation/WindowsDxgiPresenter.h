@@ -25,6 +25,7 @@ constexpr int32_t kCapDxgiSwapchain = 1 << 5;
 constexpr int32_t kCapZeroCopyFrames = 1 << 6;
 
 bool probe(
+    VkInstance instance,
     VkPhysicalDevice physicalDevice,
     VkDevice device,
     VkQueue graphicsQueue,

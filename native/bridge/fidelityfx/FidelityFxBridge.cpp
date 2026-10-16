@@ -13,6 +13,7 @@
 #include "ffx_api/ffx_framegeneration.h"
 #include "ffx_api/ffx_upscale.h"
 #include "ffx_api/vk/ffx_api_vk.h"
+#include "VulkanLoader.h"
 
 namespace fidelityfx {
 namespace {
@@ -165,7 +166,7 @@ bool ensureFrameGenerationContext(const FrameGenerationInputs& inputs) {
     backend.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK;
     backend.vkDevice = g_device;
     backend.vkPhysicalDevice = g_physicalDevice;
-    backend.vkDeviceProcAddr = vkGetDeviceProcAddr;
+    backend.vkDeviceProcAddr = framegen::loaderGetDeviceProcAddr();
 
     ffxCreateContextDescFrameGenerationHudless hudless{};
     hudless.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION_HUDLESS;
@@ -215,7 +216,7 @@ bool ensureUpscaleContext(const UpscalingInputs& inputs) {
     backend.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK;
     backend.vkDevice = g_device;
     backend.vkPhysicalDevice = g_physicalDevice;
-    backend.vkDeviceProcAddr = vkGetDeviceProcAddr;
+    backend.vkDeviceProcAddr = framegen::loaderGetDeviceProcAddr();
 
     ffxCreateContextDescUpscale desc{};
     desc.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
@@ -721,7 +722,7 @@ void destroySwapchain(
         return;
     }
     const auto destroy = reinterpret_cast<PFN_vkDestroySwapchainKHR>(
-        vkGetDeviceProcAddr(device, "vkDestroySwapchainKHR")
+        framegen::loaderGetDeviceProcAddr()(device, "vkDestroySwapchainKHR")
     );
     if (destroy != nullptr) destroy(device, swapchain, allocator);
 }

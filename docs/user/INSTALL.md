@@ -32,6 +32,7 @@
 2. Open menu: **Options... -> Video Settings... -> Frame Generation...**
    (or via **ModMenu**, or press **End** in game).
 3. Use shortcuts while playing:
+   - **F3**: The vanilla debug screen shows the frame-generation FPS and an extra "Frame Gen" line.
    - **F8**: Toggle the Performance OSD HUD (FPS, latency, Reflex and RT status).
    - **F7**: Toggle Frame Generation on/off with actionbar notifications.
    - **End**: Open the Frame Generation settings screen directly.

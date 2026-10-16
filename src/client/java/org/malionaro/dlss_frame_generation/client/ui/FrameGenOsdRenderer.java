@@ -9,7 +9,6 @@ import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
 import org.malionaro.dlss_frame_generation.client.FrameGenMod;
 import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend;
 import org.malionaro.dlss_frame_generation.client.render.ReflexPacer;
-import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
 
 public class FrameGenOsdRenderer {
@@ -26,7 +25,8 @@ public class FrameGenOsdRenderer {
         int osdY = 10;
 
         // Extract metrics
-        int baseFps = mc.getFps();
+        FrameGenFpsStats stats = FrameGenFpsStats.capture();
+        int baseFps = stats.baseFps();
         double frameTimeMs = ReflexPacer.getAverageFrameTimeMs();
 
         CompatibilityManager comp = FrameGenMod.compatibilityManager();
@@ -38,30 +38,20 @@ public class FrameGenOsdRenderer {
             backend = comp.activeVendorBackend();
             vendorName = backend.vendor().displayName();
         }
-        boolean fgActive = backend != null && backend.isFrameGenerationActive();
-        int fgMultiplier = fgActive ? configuredMultiplier(config, backend.vendor()) : 1;
-        int estimatedFgFps = baseFps * fgMultiplier;
+        int estimatedFgFps = stats.outputFps();
 
         // When frame generation is off, "INACTIVE" alone is useless during
         // debugging: the reason lives in the native status string. Show it so
         // the overlay answers "why is this off" without opening the log.
         Component fgState;
-        if (fgActive) {
+        if (stats.active()) {
             fgState = Component.translatable(
-                    "dlss_fg.value.multiplier", fgMultiplier
+                    "dlss_fg.value.multiplier", stats.multiplier()
             );
         } else {
-            String reason = "";
-            if (backend != null) {
-                try {
-                    reason = backend.statusDescription();
-                } catch (UnsatisfiedLinkError ignored) {
-                    reason = "";
-                }
-            }
-            fgState = reason.isBlank()
+            fgState = stats.inactiveReason().isBlank()
                     ? Component.translatable("dlss_fg.osd.inactive")
-                    : Component.literal(reason);
+                    : Component.literal(stats.inactiveReason());
         }
 
         boolean showReflex = backend != null && backend.vendor() == FrameGenerationBackend.GpuVendor.NVIDIA;
@@ -124,31 +114,6 @@ public class FrameGenOsdRenderer {
         for (OsdLine line : lines) {
             extractor.text(mc.font, line.text(), osdX + 8, currentY, line.color());
             currentY += 13;
-        }
-    }
-
-    private static int configuredMultiplier(
-            FrameGenConfig config,
-            FrameGenerationBackend.GpuVendor vendor
-    ) {
-        return switch (vendor) {
-            case NVIDIA -> Math.min(
-                    config.frameMultiplier,
-                    maximumNativeMultiplier(FrameGenerationBackend.GpuVendor.NVIDIA)
-            );
-            case AMD -> config.amdFsrMultiplier;
-            case INTEL -> 2;
-            case UNKNOWN -> 1;
-        };
-    }
-
-    private static int maximumNativeMultiplier(
-            FrameGenerationBackend.GpuVendor vendor
-    ) {
-        try {
-            return Math.max(1, StreamlineBridge.nGetMaxFrameMultiplier(vendor.vendorId()));
-        } catch (UnsatisfiedLinkError ignored) {
-            return 1;
         }
     }
 }

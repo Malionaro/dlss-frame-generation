@@ -3,6 +3,7 @@ import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend
 import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationCompatibilityLayer;
 import org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle;
 import org.malionaro.dlss_frame_generation.client.compat.CompatibilityManager;
+import org.malionaro.dlss_frame_generation.client.compat.ForeignShaderPipeline;
 import org.malionaro.dlss_frame_generation.client.compat.RendererDetection;
 import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
 import org.malionaro.dlss_frame_generation.client.frame.FrameGuideConventions;
@@ -792,9 +793,12 @@ public final class VulkanRegistry {
         currentFrameSerial.incrementAndGet();
         currentFrameResources = null;
         updateCameraState(gameRenderState);
-        // H2: jitter must only be reported when projection is actually mutated; otherwise keep 0
+        // H2: jitter must only be reported when projection is actually mutated; otherwise keep 0.
+        // A shader-pack engine (Vitrail) runs its own temporal passes on this
+        // projection, so it is never jittered there.
         if (!FrameGenConfig.getInstance().projectionJitterEnabled
-                || activeResolution.mode() == 0) {
+                || activeResolution.mode() == 0
+                || ForeignShaderPipeline.active()) {
             previousJitterX = jitterX;
             previousJitterY = jitterY;
             jitterX = 0.0f;
@@ -1017,6 +1021,8 @@ public final class VulkanRegistry {
 
         try {
             RayReconstructionResources rayReconstructionResources = null;
+            // With a shader pack this runs on the pack's finished (possibly
+            // Vitrail-scaled) world image, before DLSS/FSR upscaling.
             if (FrameGenMod.rayTracingManager() != null) {
                 rayReconstructionResources =
                         FrameGenMod.rayTracingManager().renderBeforeUpscale(
@@ -1235,6 +1241,12 @@ public final class VulkanRegistry {
     public static long getCapturedFrameCount() {
         return frameGenerationPipeline == null
                 ? 0L : frameGenerationPipeline.capturedFrameCount();
+    }
+
+    /** Whether the last pre-HUD capture wrote a DLSS/FSR result to its output target. */
+    public static boolean lastFrameUpscaled() {
+        return frameGenerationPipeline != null
+                && frameGenerationPipeline.lastUpscalingAccepted();
     }
 
     public static long getProviderAcceptedFrameCount() {

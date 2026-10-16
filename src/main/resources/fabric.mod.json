@@ -20,6 +20,9 @@
     ],
     "modmenu": [
       "org.malionaro.dlss_frame_generation.client.compat.ModMenuIntegration"
+    ],
+    "sodium:config_api_user": [
+      "org.malionaro.dlss_frame_generation.client.compat.SodiumOptionsEntrypoint"
     ]
   },
   "mixins": [

@@ -6,7 +6,10 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.state.GameRenderState;
 import org.joml.Vector4f;
+import org.malionaro.dlss_frame_generation.client.compat.ForeignShaderPipeline;
+import org.malionaro.dlss_frame_generation.client.compat.VitrailBridge;
 import org.malionaro.dlss_frame_generation.client.render.CompositeFallbackPolicy;
+import org.malionaro.dlss_frame_generation.client.render.UiLayerRedirect;
 import org.malionaro.dlss_frame_generation.client.render.NvidiaDlssRenderResolution;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 import org.malionaro.dlss_frame_generation.client.render.VulkanRegistry;
@@ -32,12 +35,27 @@ public class GameRendererMixin {
     @Unique private RenderTarget dlss_fg$worldTargetForFrame;
     @Unique private boolean dlss_fg$separateUiForFrame;
 
+    // Shader-pack engine (Vitrail) cooperation, see ForeignShaderPipeline.
+    @Unique private MainTarget dlss_fg$shaderPackOutput;
+    @Unique private int dlss_fg$shaderPackFullWidth;
+    @Unique private int dlss_fg$shaderPackFullHeight;
+    @Unique private boolean dlss_fg$shaderPackCopyPending;
+
     // 26.3 changed GameRenderer#render from (DeltaTracker, boolean) to (), so every
     // handler below takes only the CallbackInfo. The DeltaTracker that used to be
     // passed here is obtained from RenderSystem where a frame delta is needed.
     @Inject(method = "render", at = @At("HEAD"))
     private void onRenderStart(CallbackInfo ci) {
-        if (dlss_fg$displayTarget != null) {
+        // The HUD redirect lives only between the pre-HUD clear and
+        // GuiRenderer.endFrame; drop it if an interrupted frame left it set.
+        UiLayerRedirect.end();
+        dlss_fg$separateUiForFrame = false;
+        if (ForeignShaderPipeline.active()) {
+            // The shader-pack engine owns the world target and recovers it
+            // itself; this mode never assigns mainRenderTarget.
+            dlss_fg$displayTarget = null;
+            dlss_fg$shaderPackCopyPending = false;
+        } else if (dlss_fg$displayTarget != null) {
             // A previous frame always hands control back to Minecraft with the
             // display target active. Enforce that invariant before vanilla's
             // resize check as recovery from an interrupted frame.
@@ -72,6 +90,16 @@ public class GameRendererMixin {
         )
     )
     private void prepareReducedResolutionWorld(CallbackInfo ci) {
+        if (ForeignShaderPipeline.active()) {
+            // Never swap mainRenderTarget here: Vitrail has already put its
+            // scaled world textures into this very object (beginWorld at the
+            // first clear) and restores them through the field at endWorld.
+            // DLSS/FSR instead drives Vitrail's own render scale.
+            dlss_fg$worldTargetForFrame = null;
+            dlss_fg$prepareShaderPackScale();
+            VulkanRegistry.beginWorldFrame(gameRenderState);
+            return;
+        }
         dlss_fg$displayTarget = mainRenderTarget;
         NvidiaDlssRenderResolution.Resolution resolution =
                 VulkanRegistry.resolveWorldResolution(
@@ -108,6 +136,152 @@ public class GameRendererMixin {
         VulkanRegistry.beginWorldFrame(gameRenderState);
     }
 
+    /**
+     * Window-size reference for the shader-pack path. While Vitrail scales,
+     * mainRenderTarget reports the scaled size, so the size recorded after
+     * its last restore is used (or the window on the very first frames).
+     */
+    @Unique
+    private void dlss_fg$prepareShaderPackScale() {
+        boolean scaled = VitrailBridge.worldScaled();
+        if (!scaled) {
+            dlss_fg$shaderPackFullWidth = mainRenderTarget.width;
+            dlss_fg$shaderPackFullHeight = mainRenderTarget.height;
+        } else if (dlss_fg$shaderPackFullWidth <= 0
+                || dlss_fg$shaderPackFullHeight <= 0) {
+            net.minecraft.client.Minecraft minecraft =
+                    net.minecraft.client.Minecraft.getInstance();
+            dlss_fg$shaderPackFullWidth = minecraft.getWindow().getWidth();
+            dlss_fg$shaderPackFullHeight = minecraft.getWindow().getHeight();
+        }
+        if (!VitrailBridge.available()
+                || dlss_fg$shaderPackFullWidth <= 0
+                || dlss_fg$shaderPackFullHeight <= 0) {
+            return;
+        }
+        NvidiaDlssRenderResolution.Resolution resolution =
+                VulkanRegistry.resolveWorldResolution(
+                        dlss_fg$shaderPackFullWidth,
+                        dlss_fg$shaderPackFullHeight
+                );
+        // The ratio applies from Vitrail's next beginWorld, i.e. next frame.
+        if (resolution.reduced()) {
+            int whole = VitrailBridge.wholePercent();
+            int percent = Math.round(whole * resolution.renderWidth()
+                    / (float) dlss_fg$shaderPackFullWidth);
+            VitrailBridge.requestScale(Math.max(1, Math.min(whole - 1, percent)));
+        } else {
+            VitrailBridge.requestScale(-1);
+        }
+    }
+
+    @Unique
+    private void dlss_fg$captureShaderPackFrame() {
+        RenderTarget world = mainRenderTarget;
+        int fullWidth = dlss_fg$shaderPackFullWidth > 0
+                ? dlss_fg$shaderPackFullWidth : world.width;
+        int fullHeight = dlss_fg$shaderPackFullHeight > 0
+                ? dlss_fg$shaderPackFullHeight : world.height;
+        boolean scaled = world.width < fullWidth || world.height < fullHeight;
+        RenderTarget output = world;
+        if (scaled) {
+            // DLSS/FSR writes the window-size result here; it replaces
+            // Vitrail's FSR-1 upscale after endWorld restored the target.
+            boolean fresh = false;
+            if (dlss_fg$shaderPackOutput == null) {
+                dlss_fg$shaderPackOutput = new MainTarget(fullWidth, fullHeight);
+                fresh = true;
+            } else if (dlss_fg$shaderPackOutput.width != fullWidth
+                    || dlss_fg$shaderPackOutput.height != fullHeight) {
+                dlss_fg$shaderPackOutput.resize(fullWidth, fullHeight);
+                fresh = true;
+            }
+            if (fresh) {
+                // Give the new images a defined layout before the pipeline
+                // records its copy into them.
+                RenderSystem.getDevice().createCommandEncoder()
+                        .clearColorAndDepthTextures(
+                                dlss_fg$shaderPackOutput.getColorTexture(),
+                                DLSS_FG_TRANSPARENT,
+                                dlss_fg$shaderPackOutput.getDepthTexture(),
+                                0.0
+                        );
+            }
+            output = dlss_fg$shaderPackOutput;
+        }
+        dlss_fg$separateUiForFrame = VulkanRegistry.shouldSeparateUi();
+        VulkanRegistry.captureFrameGenerationInputs(
+                world, output, dlss_fg$separateUiForFrame);
+        dlss_fg$shaderPackCopyPending = scaled
+                && VulkanRegistry.getCurrentFrameResources() != null
+                && VulkanRegistry.lastFrameUpscaled();
+    }
+
+    /**
+     * Runs right after the depth-only clear, i.e. after Vitrail's endWorld
+     * restored the window-size textures and drew its own upscale.
+     */
+    @Inject(
+        method = "render",
+        at = @At(
+            value = "INVOKE",
+            target = "Lcom/mojang/renderpearl/api/commands/CommandEncoder;clearDepthTexture(Lcom/mojang/renderpearl/api/textures/GpuTexture;D)V",
+            shift = At.Shift.AFTER
+        )
+    )
+    private void dlss_fg$afterShaderPackWorld(CallbackInfo ci) {
+        if (!ForeignShaderPipeline.active()) {
+            return;
+        }
+        RenderTarget display = mainRenderTarget;
+        if (!VitrailBridge.worldScaled()) {
+            dlss_fg$shaderPackFullWidth = display.width;
+            dlss_fg$shaderPackFullHeight = display.height;
+        }
+        if (dlss_fg$shaderPackCopyPending
+                && dlss_fg$shaderPackOutput != null
+                && dlss_fg$shaderPackOutput.width == display.width
+                && dlss_fg$shaderPackOutput.height == display.height) {
+            try {
+                display.copyColorFrom(dlss_fg$shaderPackOutput);
+            } catch (Throwable t) {
+                org.slf4j.LoggerFactory.getLogger("DLSS_FG_Mixin")
+                        .debug("Shader-pack upscale copy failed", t);
+            }
+        }
+        dlss_fg$shaderPackCopyPending = false;
+
+        if (dlss_fg$separateUiForFrame) {
+            // Vitrail restored its textures in this very object; it stays
+            // mainRenderTarget, only GuiRenderer.draw is pointed at the layer.
+            dlss_fg$displayTarget = display;
+            dlss_fg$beginUiLayer(display);
+        }
+    }
+
+    /**
+     * Prepares the transparent full-resolution UI layer and routes the HUD
+     * into it via {@link UiLayerRedirect} (see GuiRendererMixin). The
+     * {@code mainRenderTarget} field is left alone.
+     */
+    @Unique
+    private void dlss_fg$beginUiLayer(RenderTarget display) {
+        if (dlss_fg$uiTarget == null) {
+            dlss_fg$uiTarget = new MainTarget(display.width, display.height);
+        } else if (dlss_fg$uiTarget.width != display.width
+                || dlss_fg$uiTarget.height != display.height) {
+            dlss_fg$uiTarget.resize(display.width, display.height);
+        }
+        RenderSystem.getDevice().createCommandEncoder()
+                .clearColorAndDepthTextures(
+                        dlss_fg$uiTarget.getColorTexture(),
+                        DLSS_FG_TRANSPARENT,
+                        dlss_fg$uiTarget.getDepthTexture(),
+                        0.0
+                );
+        UiLayerRedirect.begin(dlss_fg$uiTarget);
+    }
+
     @Unique
     private void dlss_fg$copyWorldToDisplay(RenderTarget src, RenderTarget dst) {
         if (src == null || dst == null || src == dst) return;
@@ -129,6 +303,13 @@ public class GameRendererMixin {
         )
     )
     private void captureSceneBeforeHud(CallbackInfo ci) {
+        if (ForeignShaderPipeline.active()) {
+            // Still before Vitrail's endWorld: mainRenderTarget holds the
+            // pack's finished (possibly scaled) world. The HUD redirect waits
+            // for dlss_fg$afterShaderPackWorld, after the engine restored it.
+            dlss_fg$captureShaderPackFrame();
+            return;
+        }
         RenderTarget worldTarget = dlss_fg$worldTargetForFrame != null
                 ? dlss_fg$worldTargetForFrame
                 : mainRenderTarget;
@@ -153,26 +334,11 @@ public class GameRendererMixin {
             dlss_fg$copyWorldToDisplay(worldTarget, displayTarget);
         }
 
+        // The reduced world target hands back to the display target here; the
+        // HUD itself is routed into the UI layer by GuiRendererMixin.
+        mainRenderTarget = displayTarget;
         if (dlss_fg$separateUiForFrame) {
-            if (dlss_fg$uiTarget == null) {
-                dlss_fg$uiTarget = new MainTarget(
-                        displayTarget.width,
-                        displayTarget.height
-                );
-            } else if (dlss_fg$uiTarget.width != displayTarget.width
-                    || dlss_fg$uiTarget.height != displayTarget.height) {
-                dlss_fg$uiTarget.resize(displayTarget.width, displayTarget.height);
-            }
-            RenderSystem.getDevice().createCommandEncoder()
-                    .clearColorAndDepthTextures(
-                            dlss_fg$uiTarget.getColorTexture(),
-                            DLSS_FG_TRANSPARENT,
-                            dlss_fg$uiTarget.getDepthTexture(),
-                            0.0
-                    );
-            mainRenderTarget = dlss_fg$uiTarget;
-        } else {
-            mainRenderTarget = displayTarget;
+            dlss_fg$beginUiLayer(displayTarget);
         }
     }
 
@@ -185,14 +351,16 @@ public class GameRendererMixin {
         )
     )
     private void compositeFullResolutionUi(CallbackInfo ci) {
+        // The HUD is finished; nothing after this point may draw into the layer.
+        UiLayerRedirect.end();
         if (!dlss_fg$separateUiForFrame
                 || dlss_fg$uiTarget == null
                 || dlss_fg$displayTarget == null) {
+            dlss_fg$separateUiForFrame = false;
             return;
         }
 
         VulkanRegistry.captureFrameGenerationUi(dlss_fg$uiTarget);
-        mainRenderTarget = dlss_fg$displayTarget;
         dlss_fg$uiTarget.blitAndBlendToTexture(
                 dlss_fg$displayTarget.getColorTextureView(),
                 dlss_fg$displayTarget.getDepthTextureView()
@@ -216,6 +384,10 @@ public class GameRendererMixin {
         if (dlss_fg$uiTarget != null) {
             dlss_fg$uiTarget.destroyBuffers();
             dlss_fg$uiTarget = null;
+        }
+        if (dlss_fg$shaderPackOutput != null) {
+            dlss_fg$shaderPackOutput.destroyBuffers();
+            dlss_fg$shaderPackOutput = null;
         }
     }
 }

@@ -19,7 +19,9 @@
     "ClientLevelMixin",
     "OptionsAccessor",
     "VideoSettingsScreenMixin",
-    "GuiHudMixin"
+    "GuiHudMixin",
+    "DebugEntryFpsMixin",
+    "GuiRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1
