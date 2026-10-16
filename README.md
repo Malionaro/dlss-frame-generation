@@ -110,7 +110,7 @@ On Windows you need Java 25, CMake 3.25+ and Visual Studio 2022 Build Tools with
 .\gradlew.bat build
 ```
 
-The result is `build/libs/dlss-frame-generation-1.0.0.jar` (about 148 MB with every native DLL bundled). The build currently runs 95 unit tests in 24 classes, including a shaderc compile of all four compute shaders.
+The result is `build/libs/dlss-frame-generation-0.1.0-alpha.jar` (about 148 MB with every native DLL bundled). The build currently runs 95 unit tests in 24 classes, including a shaderc compile of all four compute shaders.
 
 ### Source layout
 

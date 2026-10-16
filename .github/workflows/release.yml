@@ -66,12 +66,21 @@ jobs:
       - name: Drop sources JAR from release assets
         run: Remove-Item build/libs/*-sources.jar -ErrorAction SilentlyContinue
 
+      - name: Select release notes
+        id: notes
+        run: |
+          $notes = "docs/release-notes/${{ steps.tag.outputs.value }}.md"
+          if (-not (Test-Path $notes)) { $notes = "" }
+          "path=$notes" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.value }}
           name: ${{ steps.tag.outputs.value }}
+          body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
+          prerelease: ${{ contains(steps.tag.outputs.value, 'alpha') || contains(steps.tag.outputs.value, 'beta') }}
           files: |
             build/libs/dlss-frame-generation-*.jar
           fail_on_unmatched_files: true
