@@ -1,5 +1,6 @@
 package org.malionaro.dlss_frame_generation.client.ui.settings;
 import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend;
+import org.malionaro.dlss_frame_generation.client.compat.ForeignShaderPipeline;
 import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
 import org.malionaro.dlss_frame_generation.client.FrameGenMod;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
@@ -11,22 +12,22 @@ import org.malionaro.dlss_frame_generation.client.raytracing.RayTracingCapabilit
 
 /**
  * Capability-gated settings for the hybrid hardware ray-query renderer.
+ * Locked while a shader pack renders the world: the pack lights the scene
+ * itself and our RT pass stays off.
  */
 public final class RayTracingSettingsPanel {
     private RayTracingSettingsPanel() {}
 
-    public static int addWidgets(
+    public static void addWidgets(
             MultiVendorSettingsScreen screen,
             FrameGenConfig config,
-            RayTracingCapabilities capabilities,
-            int topY
+            RayTracingCapabilities capabilities
     ) {
-        int leftX = screen.settingsLeftX();
-        int rightX = screen.settingsRightX();
         int columnWidth = screen.settingsColumnWidth();
-        boolean backendReady = capabilities.backendReady();
+        boolean shaderPack = ForeignShaderPipeline.active();
+        boolean usable = capabilities.backendReady() && !shaderPack;
         boolean rayReconstructionSupported = false;
-        if (backendReady
+        if (usable
                 && capabilities.vendorId()
                 == FrameGenerationBackend.GpuVendor.NVIDIA.vendorId()) {
             try {
@@ -45,28 +46,20 @@ public final class RayTracingSettingsPanel {
                                 "dlss_fg.value.rt_mode."
                                         + mode.name().toLowerCase(java.util.Locale.ROOT)
                         ),
-                        config.rayTracingMode)
+                        shaderPack ? FrameGenConfig.RayTracingMode.OFF : config.rayTracingMode)
                 .withValues(
                         FrameGenConfig.RayTracingMode.OFF,
                         FrameGenConfig.RayTracingMode.SHADOWS,
                         FrameGenConfig.RayTracingMode.SHADOWS_AND_REFLECTIONS)
-                .create(leftX, topY, columnWidth, 20,
+                .create(0, 0, columnWidth, 20,
                         Component.translatable("dlss_fg.option.rt.mode"), (button, value) -> {
                             config.rayTracingMode = value;
                             config.save();
-                            if (FrameGenMod.rayTracingManager() != null) {
-                                FrameGenMod.rayTracingManager().applyConfiguration(config);
-                            }
-                            if (runtimeStatusButton[0] != null) {
-                                runtimeStatusButton[0].setMessage(runtimeLabel(config));
-                            }
+                            applyAndRefresh(config, runtimeStatusButton);
                         });
-        modeButton.active = backendReady;
-        screen.addSettingsWidget(
-                modeButton,
-                screen.rayTracingTooltip(
-                        capabilities, "dlss_fg.tooltip.rt.mode")
-        );
+        modeButton.active = usable;
+        screen.place(modeButton, screen.rayTracingTooltip(
+                capabilities, "dlss_fg.tooltip.rt.mode"));
 
         var qualityButton = CycleButton.builder(
                         (FrameGenConfig.RayTracingQuality quality) -> Component.translatable(
@@ -79,86 +72,64 @@ public final class RayTracingSettingsPanel {
                         FrameGenConfig.RayTracingQuality.MEDIUM,
                         FrameGenConfig.RayTracingQuality.HIGH,
                         FrameGenConfig.RayTracingQuality.ULTRA)
-                .create(rightX, topY, columnWidth, 20,
+                .create(0, 0, columnWidth, 20,
                         Component.translatable("dlss_fg.option.rt.quality"), (button, value) -> {
                             config.rayTracingQuality = value;
                             config.save();
                             applyAndRefresh(config, runtimeStatusButton);
                         });
-        qualityButton.active = backendReady;
-        screen.addSettingsWidget(
-                qualityButton,
-                screen.rayTracingTooltip(
-                        capabilities, "dlss_fg.tooltip.rt.quality")
-        );
+        qualityButton.active = usable;
+        screen.place(qualityButton, screen.rayTracingTooltip(
+                capabilities, "dlss_fg.tooltip.rt.quality"));
 
-        var distanceButton = CycleButton.builder(
-                        (Integer value) -> Component.translatable(
-                                "dlss_fg.value.blocks", value
-                        ),
-                        config.rayTracingMaxDistance)
-                .withValues(24, 32, 40, 48)
-                .create(leftX, topY + 25, columnWidth, 20,
-                        Component.translatable("dlss_fg.option.rt.distance"), (button, value) -> {
-                            config.rayTracingMaxDistance = value;
-                            config.save();
-                            applyAndRefresh(config, runtimeStatusButton);
-                        });
-        distanceButton.active = backendReady;
-        screen.addSettingsWidget(
-                distanceButton,
-                screen.rayTracingTooltip(
-                        capabilities, "dlss_fg.tooltip.rt.distance")
-        );
+        var distance = new SteppedSlider(
+                columnWidth,
+                FrameGenConfig.MIN_RAY_TRACING_DISTANCE,
+                FrameGenConfig.MAX_RAY_TRACING_DISTANCE,
+                4,
+                config.rayTracingMaxDistance,
+                value -> Component.translatable("dlss_fg.option.rt.distance_slider", value),
+                value -> {
+                    config.rayTracingMaxDistance = value;
+                    config.saveSoon();
+                },
+                value -> {
+                    config.save();
+                    applyAndRefresh(config, runtimeStatusButton);
+                });
+        distance.active = usable;
+        screen.place(distance, screen.rayTracingTooltip(
+                capabilities, "dlss_fg.tooltip.rt.distance"));
 
-        var raysButton = CycleButton.builder(
-                        (Integer value) -> Component.translatable(
-                                value == 1
-                                        ? "dlss_fg.value.ray_per_pixel"
-                                        : "dlss_fg.value.rays_per_pixel",
-                                value
-                        ),
-                        config.rayTracingRaysPerPixel)
-                .withValues(1, 2, 4, 8)
-                .create(rightX, topY + 25, columnWidth, 20,
-                        Component.translatable("dlss_fg.option.rt.samples"), (button, value) -> {
-                            config.rayTracingRaysPerPixel = value;
-                            config.save();
-                            applyAndRefresh(config, runtimeStatusButton);
-                        });
-        raysButton.active = backendReady;
-        screen.addSettingsWidget(
-                raysButton,
-                screen.rayTracingTooltip(
-                        capabilities, "dlss_fg.tooltip.rt.samples")
-        );
+        var samples = new SteppedSlider(
+                columnWidth, 1, 8, 1,
+                config.rayTracingRaysPerPixel,
+                value -> Component.translatable("dlss_fg.option.rt.samples_slider", value),
+                value -> {
+                    config.rayTracingRaysPerPixel = value;
+                    config.saveSoon();
+                },
+                value -> {
+                    config.save();
+                    applyAndRefresh(config, runtimeStatusButton);
+                });
+        samples.active = usable;
+        screen.place(samples, screen.rayTracingTooltip(
+                capabilities, "dlss_fg.tooltip.rt.samples"));
 
         var denoiserButton = CycleButton.onOffBuilder(config.rayTracingDenoiserEnabled)
-                .create(leftX, topY + 50, columnWidth, 20,
+                .create(0, 0, columnWidth, 20,
                         Component.translatable("dlss_fg.option.rt.stable_sampling"), (button, value) -> {
                             config.rayTracingDenoiserEnabled = value;
                             config.save();
                             applyAndRefresh(config, runtimeStatusButton);
                         });
-        denoiserButton.active = backendReady;
-        screen.addSettingsWidget(
-                denoiserButton,
-                screen.rayTracingTooltip(
-                        capabilities,
-                        "dlss_fg.tooltip.rt.stable_sampling")
-        );
-
-        Button backendButton = Button.builder(
-                        runtimeLabel(config),
-                        button -> {})
-                .bounds(rightX, topY + 50, columnWidth, 20)
-                .build();
-        runtimeStatusButton[0] = backendButton;
-        backendButton.active = false;
-        screen.addSettingsWidget(backendButton, "dlss_fg.tooltip.rt.runtime_status");
+        denoiserButton.active = usable;
+        screen.place(denoiserButton, screen.rayTracingTooltip(
+                capabilities, "dlss_fg.tooltip.rt.stable_sampling"));
 
         var rayReconstructionButton = CycleButton.onOffBuilder(config.dlssRayReconstructionEnabled)
-                .create(leftX, topY + 75, columnWidth, 20,
+                .create(0, 0, columnWidth, 20,
                         Component.translatable("dlss_fg.option.rt.ray_reconstruction"), (button, value) -> {
                             config.dlssRayReconstructionEnabled = value;
                             if (value && config.dlssUpscalingMode < 2) {
@@ -172,23 +143,23 @@ public final class RayTracingSettingsPanel {
                             applyAndRefresh(config, runtimeStatusButton);
                         });
         rayReconstructionButton.active = rayReconstructionSupported;
-        screen.addSettingsWidget(
-                rayReconstructionButton,
-                backendReady
-                        ? screen.capabilityTooltip(
-                                FrameGenerationBackend.GpuVendor.NVIDIA,
-                                rayReconstructionSupported
-                                        ? StreamlineBridge
-                                                .CAP_RAY_RECONSTRUCTION
-                                        : 0,
-                                StreamlineBridge.CAP_RAY_RECONSTRUCTION,
-                                "dlss_fg.tooltip.rt.ray_reconstruction"
-                        )
-                        : screen.rayTracingTooltip(
-                                capabilities,
-                                "dlss_fg.tooltip.rt.ray_reconstruction"
-                        )
-        );
+        screen.place(rayReconstructionButton, usable
+                ? screen.capabilityTooltip(
+                        FrameGenerationBackend.GpuVendor.NVIDIA,
+                        rayReconstructionSupported
+                                ? StreamlineBridge.CAP_RAY_RECONSTRUCTION
+                                : 0,
+                        StreamlineBridge.CAP_RAY_RECONSTRUCTION,
+                        "dlss_fg.tooltip.rt.ray_reconstruction")
+                : screen.rayTracingTooltip(
+                        capabilities, "dlss_fg.tooltip.rt.ray_reconstruction"));
+
+        Button backendButton = Button.builder(runtimeLabel(config), button -> {})
+                .bounds(0, 0, columnWidth, 20)
+                .build();
+        runtimeStatusButton[0] = backendButton;
+        backendButton.active = false;
+        screen.place(backendButton, Component.translatable("dlss_fg.tooltip.rt.runtime_status"));
 
         Button pipelineButton = Button.builder(
                         Component.translatable(
@@ -197,12 +168,10 @@ public final class RayTracingSettingsPanel {
                                         : "dlss_fg.status.rt_pipeline.unavailable"
                         ),
                         button -> {})
-                .bounds(rightX, topY + 75, columnWidth, 20)
+                .bounds(0, 0, columnWidth, 20)
                 .build();
         pipelineButton.active = false;
-        screen.addSettingsWidget(pipelineButton, "dlss_fg.tooltip.rt.pipeline_status");
-
-        return topY + 95;
+        screen.place(pipelineButton, Component.translatable("dlss_fg.tooltip.rt.pipeline_status"));
     }
 
     private static void applyAndRefresh(
@@ -218,6 +187,9 @@ public final class RayTracingSettingsPanel {
     }
 
     private static Component runtimeLabel(FrameGenConfig config) {
+        if (ForeignShaderPipeline.active()) {
+            return Component.translatable("dlss_fg.status.rt_runtime.shader_pack");
+        }
         if (config.rayTracingMode == FrameGenConfig.RayTracingMode.OFF) {
             return Component.translatable("dlss_fg.status.rt_runtime.off");
         }

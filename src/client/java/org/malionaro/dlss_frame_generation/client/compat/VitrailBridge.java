@@ -97,6 +97,13 @@ public final class VitrailBridge {
         if (resolved) {
             return;
         }
+        if (!net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("vitrail")) {
+            // Other shader engines (Iris on Vulkan, Vulcade) have no render
+            // scale to drive; stay unavailable without a misleading warning.
+            available = false;
+            resolved = true;
+            return;
+        }
         try {
             Class<?> renderScale = Class.forName(
                     RENDER_SCALE, false, VitrailBridge.class.getClassLoader());

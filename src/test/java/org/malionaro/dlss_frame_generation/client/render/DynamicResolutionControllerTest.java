@@ -24,8 +24,9 @@ public class DynamicResolutionControllerTest {
                 controller.apply(base, true);
         assertTrue(reduced.renderWidth() < 1920);
         assertTrue(reduced.renderHeight() < 1080);
-        assertEquals(0, reduced.renderWidth() % 8);
-        assertEquals(0, reduced.renderHeight() % 8);
+        // DRS keeps the exact window aspect: the projection uses the window
+        // size, so any aspect drift shows up as a wobbling image.
+        assertEquals(1920L * reduced.renderHeight(), 1080L * reduced.renderWidth());
 
         float loadedScale = controller.scale();
         for (int index = 0; index < 12; index++) {

@@ -60,7 +60,10 @@ public class NvidiaBackend implements FrameGenerationBackend {
             StreamlineBridge.nSetDlssMode(effectiveMode, 0.0f);
             boolean fgEnabled = fallback.frameGenerationEnabled() && config.dlssFgEnabled;
             StreamlineBridge.nSetFgMode(fgEnabled, config.frameMultiplier, config.uiRecomposition);
-            StreamlineBridge.nSetReflexMode(config.reflexMode, config.targetFps);
+            // The Reflex frame limiter only applies with pacing on; otherwise it
+            // capped the base frame rate and kept the GPU below full load.
+            StreamlineBridge.nSetReflexMode(config.reflexMode,
+                    config.reflexPacingEnabled ? config.targetFps : 0);
         } catch (UnsatisfiedLinkError e) {
             LOGGER.debug("NVIDIA native applyConfig unavailable: {}", e.getMessage());
         }

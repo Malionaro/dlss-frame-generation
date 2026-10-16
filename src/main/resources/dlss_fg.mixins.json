@@ -21,7 +21,9 @@
     "VideoSettingsScreenMixin",
     "GuiHudMixin",
     "DebugEntryFpsMixin",
-    "GuiRendererMixin"
+    "GuiRendererMixin",
+    "LevelRendererSamplerMixin",
+    "VulkanGpuSamplerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

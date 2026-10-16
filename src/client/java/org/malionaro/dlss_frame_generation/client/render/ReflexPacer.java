@@ -17,7 +17,18 @@ public class ReflexPacer {
 
     public static void paceFrame() {
         FrameGenConfig config = FrameGenConfig.getInstance();
-        if (!config.reflexPacingEnabled) return;
+        if (!config.reflexPacingEnabled) {
+            // Turning pacing off must also lift the driver-side limiter set
+            // while it was on.
+            if (configuredNvidiaTargetFps.getAndSet(-1) > 0) {
+                try {
+                    StreamlineBridge.nSetReflexMode(config.reflexMode, 0);
+                } catch (UnsatisfiedLinkError ignored) {
+                    // No native Reflex: nothing to lift.
+                }
+            }
+            return;
+        }
 
         long now = System.nanoTime();
         long frameDurationNano = now - lastFrameTimeNano.getAndSet(now);

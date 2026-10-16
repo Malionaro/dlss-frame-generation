@@ -175,26 +175,17 @@ public final class DynamicResolutionController {
         }
         // M3: Persistente Max-Size Images - outputWidth/Height bleibt die Allokationsgröße,
         // renderWidth/renderHeight ist nur der Viewport (kein Realloc).
-        int renderWidth = alignToEight((int) Math.round(
-                base.renderWidth() * scale
-        ));
-        int renderHeight = alignToEight((int) Math.round(
-                base.renderHeight() * scale
-        ));
-        int minimumWidth = alignToEight((int) Math.round(
-                base.outputWidth() * MIN_OUTPUT_RATIO
-        ));
-        int minimumHeight = alignToEight((int) Math.round(
-                base.outputHeight() * MIN_OUTPUT_RATIO
-        ));
-        renderWidth = Math.max(
-                Math.max(32, minimumWidth),
-                Math.min(base.outputWidth(), renderWidth)
+        // One ratio for both sides, sized by the shared helper so every DRS
+        // step keeps the window's aspect ratio (independent rounding made
+        // the image stretch a little differently at each step: a wobble).
+        double ratio = Math.max(
+                MIN_OUTPUT_RATIO,
+                Math.min(1.0, base.renderWidth() * (double) scale / Math.max(1, base.outputWidth()))
         );
-        renderHeight = Math.max(
-                Math.max(32, minimumHeight),
-                Math.min(base.outputHeight(), renderHeight)
-        );
+        int[] size = NvidiaDlssRenderResolution.aspectPreservingSize(
+                base.outputWidth(), base.outputHeight(), ratio);
+        int renderWidth = size[0];
+        int renderHeight = size[1];
         return new NvidiaDlssRenderResolution.Resolution(
                 renderWidth,
                 renderHeight,
@@ -227,7 +218,4 @@ public final class DynamicResolutionController {
         return Math.max(MIN_SCALE, Math.min(1.0f, value));
     }
 
-    private static int alignToEight(int value) {
-        return Math.max(8, (value + 7) & ~7);
-    }
 }

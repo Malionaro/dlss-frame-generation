@@ -48,13 +48,12 @@ public record RendererDetection(
             return "The active GpuDevice is not Mojang's VulkanDevice";
         }
         return switch (shaderPipelineState) {
-            case IRIS_NOT_INSTALLED, IRIS_VULKAN_SHADERPACK_OFF -> "";
+            case IRIS_NOT_INSTALLED, IRIS_VULKAN_SHADERPACK_OFF,
+                 IRIS_VULKAN_SHADERPACK_ACTIVE -> "";
             case IRIS_OPENGL_SHADERPACK_OFF ->
                     "Iris is running with OpenGL; Vulkan resources are unavailable";
             case IRIS_OPENGL_SHADERPACK_ACTIVE ->
                     "An Iris OpenGL shader pack is active";
-            case IRIS_VULKAN_SHADERPACK_UNKNOWN ->
-                    "Iris reports an active Vulkan shader pack without a supported integration";
             case APERTURE_VULKAN_UNVERIFIED ->
                     "Aperture was detected, but no stable frame-resource API is available";
             case IRIS_API_UNAVAILABLE ->

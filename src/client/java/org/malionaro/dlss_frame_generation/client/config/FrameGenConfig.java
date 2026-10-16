@@ -102,6 +102,8 @@ public class FrameGenConfig {
     // Common / Global Config
     public int activeVendorId = 0; // 0 = Auto-detect GPU, 0x10DE = NVIDIA, 0x1002 = AMD, 0x8086 = Intel
     public boolean uiRecomposition = true; // Separate UI overlay rendering
+    /** Switch FG and upscaling on when a shader pack starts (see ShaderPackBoost). */
+    public boolean shaderPackAutoBoost = true;
     // Enables a session-only degradation chain. When the requested
     // frame-generation feature is known to be unavailable, rendering continues
     // through temporal reconstruction or the native Vulkan presenter.
@@ -218,8 +220,15 @@ public class FrameGenConfig {
     public boolean reflexInputMarkerEnabled = false;
     public boolean dlssRayReconstructionEnabled = false;
 
-    // A11 single source for the hybrid-RT scene radius. RayTracingScene caps
+    // A11 single source for the hybrid-RT scene radius. the RT scene caps
     // effectiveDistance with the same constant; sanitize clamps to it.
+    /**
+     * Highest DLSS-G multiplier the config accepts. DLSS 4.5 dynamic multi
+     * frame generation reaches 6x on RTX 50; the native bridge still clamps
+     * every request to numFramesToGenerateMax + 1 the driver reports, so
+     * older cards never get more than they support.
+     */
+    public static final int MAX_FRAME_MULTIPLIER = 6;
     public static final int MAX_RAY_TRACING_DISTANCE = 48;
     public static final int MIN_RAY_TRACING_DISTANCE = 16;
 
@@ -252,7 +261,7 @@ public class FrameGenConfig {
      */
     @Deprecated(since = "1.0", forRemoval = false)
     public float dlssSharpness = 0.0f;
-    public int frameMultiplier = 2; // 2x, 3x or 4x when reported by the driver
+    public int frameMultiplier = 2; // 2x up to 6x; native clamps to the driver-reported maximum
 
     // AMD renderer options. FSR 4.1.1 upscaling and FSR 4.0.1 frame
     // generation are currently D3D12-only in AMD's public SDK. The bundled
@@ -632,7 +641,7 @@ public class FrameGenConfig {
             }
         }
         int oldFrameMult = frameMultiplier;
-        frameMultiplier = clamp(frameMultiplier, 2, 4);
+        frameMultiplier = clamp(frameMultiplier, 2, MAX_FRAME_MULTIPLIER);
         if (oldFrameMult != frameMultiplier) {
             LOGGER.warn("Sanitize: frameMultiplier clamped from {} to {}", oldFrameMult, frameMultiplier);
         }

@@ -40,6 +40,8 @@ public class GameRendererMixin {
     @Unique private int dlss_fg$shaderPackFullWidth;
     @Unique private int dlss_fg$shaderPackFullHeight;
     @Unique private boolean dlss_fg$shaderPackCopyPending;
+    /** Decided once per frame so the swap and its restore always match. */
+    @Unique private boolean dlss_fg$engineOwnsTarget;
 
     // 26.3 changed GameRenderer#render from (DeltaTracker, boolean) to (), so every
     // handler below takes only the CallbackInfo. The DeltaTracker that used to be
@@ -50,7 +52,8 @@ public class GameRendererMixin {
         // GuiRenderer.endFrame; drop it if an interrupted frame left it set.
         UiLayerRedirect.end();
         dlss_fg$separateUiForFrame = false;
-        if (ForeignShaderPipeline.active()) {
+        dlss_fg$engineOwnsTarget = ForeignShaderPipeline.ownsWorldTarget();
+        if (dlss_fg$engineOwnsTarget) {
             // The shader-pack engine owns the world target and recovers it
             // itself; this mode never assigns mainRenderTarget.
             dlss_fg$displayTarget = null;
@@ -90,7 +93,7 @@ public class GameRendererMixin {
         )
     )
     private void prepareReducedResolutionWorld(CallbackInfo ci) {
-        if (ForeignShaderPipeline.active()) {
+        if (dlss_fg$engineOwnsTarget) {
             // Never swap mainRenderTarget here: Vitrail has already put its
             // scaled world textures into this very object (beginWorld at the
             // first clear) and restores them through the field at endWorld.
@@ -154,9 +157,15 @@ public class GameRendererMixin {
             dlss_fg$shaderPackFullWidth = minecraft.getWindow().getWidth();
             dlss_fg$shaderPackFullHeight = minecraft.getWindow().getHeight();
         }
-        if (!VitrailBridge.available()
-                || dlss_fg$shaderPackFullWidth <= 0
-                || dlss_fg$shaderPackFullHeight <= 0) {
+        if (dlss_fg$shaderPackFullWidth <= 0 || dlss_fg$shaderPackFullHeight <= 0) {
+            return;
+        }
+        if (!VitrailBridge.available()) {
+            // No scale hook (Iris, Vulcade): the world arrives at window size. Say
+            // so explicitly; a stale reduced size from before the engine took
+            // over made DLSS reject every frame and froze the picture.
+            VulkanRegistry.useNativeWorldResolution(
+                    dlss_fg$shaderPackFullWidth, dlss_fg$shaderPackFullHeight);
             return;
         }
         NvidiaDlssRenderResolution.Resolution resolution =
@@ -230,7 +239,7 @@ public class GameRendererMixin {
         )
     )
     private void dlss_fg$afterShaderPackWorld(CallbackInfo ci) {
-        if (!ForeignShaderPipeline.active()) {
+        if (!dlss_fg$engineOwnsTarget) {
             return;
         }
         RenderTarget display = mainRenderTarget;
@@ -303,7 +312,7 @@ public class GameRendererMixin {
         )
     )
     private void captureSceneBeforeHud(CallbackInfo ci) {
-        if (ForeignShaderPipeline.active()) {
+        if (dlss_fg$engineOwnsTarget) {
             // Still before Vitrail's endWorld: mainRenderTarget holds the
             // pack's finished (possibly scaled) world. The HUD redirect waits
             // for dlss_fg$afterShaderPackWorld, after the engine restored it.
@@ -325,7 +334,12 @@ public class GameRendererMixin {
 
         // H4: guaranteed composite fallback – if capture bailed (no CmdBuffer, slot busy, validation fail)
         // and we are rendering at reduced resolution, blit worldTarget -> displayTarget via Java so HUD never composites over black.
-        boolean frameResourcesCaptured = VulkanRegistry.getCurrentFrameResources() != null;
+        // A captured frame only counts when the pipeline really wrote the
+        // display target. After a swapchain rebuild (alt-tab) it skips frames
+        // while its slots are still in flight; without this the screen kept
+        // the last image and the camera looked frozen.
+        boolean frameResourcesCaptured = VulkanRegistry.getCurrentFrameResources() != null
+                && VulkanRegistry.lastFrameOutputWritten();
         boolean worldTargetDiffersFromDisplay = worldTarget != displayTarget
                 && worldTarget.getColorTexture() != null
                 && displayTarget.getColorTexture() != null;

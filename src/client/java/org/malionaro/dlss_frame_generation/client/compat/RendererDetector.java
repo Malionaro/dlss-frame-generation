@@ -147,7 +147,7 @@ public final class RendererDetector {
         } else if (aperturePresent) {
             shaderState = ShaderPipelineState.APERTURE_VULKAN_UNVERIFIED;
         } else {
-            shaderState = ShaderPipelineState.IRIS_VULKAN_SHADERPACK_UNKNOWN;
+            shaderState = ShaderPipelineState.IRIS_VULKAN_SHADERPACK_ACTIVE;
         }
         return new RendererDetection(
                 backend,

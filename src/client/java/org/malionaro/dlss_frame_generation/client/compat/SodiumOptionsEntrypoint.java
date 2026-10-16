@@ -60,17 +60,19 @@ public final class SodiumOptionsEntrypoint implements ConfigEntryPoint {
 
         builder.registerOwnModOptions()
                 .setName("Frame Generation")
+                // Same tabs as the in-game screen: Frame Generation,
+                // Upscaling, Graphics.
                 .addPage(builder.createOptionPage()
                         .setName(Component.translatable("dlss_fg.section.frame_generation"))
                         .addOptionGroup(frameGenerationGroup(builder, config))
-                        .addOptionGroup(upscalingGroup(builder, config))
                         .addOptionGroup(displayGroup(builder, config)))
                 .addPage(builder.createOptionPage()
-                        .setName(Component.translatable("dlss_fg.tab.ray_tracing"))
-                        .addOptionGroup(rayTracingGroup(builder, config)))
+                        .setName(Component.translatable("dlss_fg.tab.upscaling"))
+                        .addOptionGroup(upscalingGroup(builder, config))
+                        .addOptionGroup(effectsGroup(builder, config)))
                 .addPage(builder.createOptionPage()
                         .setName(Component.translatable("dlss_fg.section.graphics"))
-                        .addOptionGroup(effectsGroup(builder, config))
+                        .addOptionGroup(rayTracingGroup(builder, config))
                         .addOptionGroup(builder.createOptionGroup()
                                 .addOption(builder.createExternalButtonOption(id("full_settings"))
                                         .setName(Component.translatable("dlss_fg.option.sodium.full_settings"))
@@ -101,7 +103,7 @@ public final class SodiumOptionsEntrypoint implements ConfigEntryPoint {
                         .setTooltip(Component.translatable("dlss_fg.tooltip.nvidia.fg_multiplier"))
                         .setImpact(OptionImpact.MEDIUM)
                         .setStorageHandler(STORAGE)
-                        .setRange(2, 4, 1)
+                        .setRange(2, FrameGenConfig.MAX_FRAME_MULTIPLIER, 1)
                         .setDefaultValue(2)
                         .setValueFormatter(value -> Component.translatable("dlss_fg.value.multiplier", value))
                         .setBinding(value -> {
@@ -110,7 +112,7 @@ public final class SodiumOptionsEntrypoint implements ConfigEntryPoint {
                                 config.frameMultiplier = Math.min(value, nvidiaMaxMultiplier());
                             }
                         }, () -> activeVendor() == GpuVendor.NVIDIA
-                                ? Math.max(2, Math.min(config.frameMultiplier, 4))
+                                ? Math.max(2, Math.min(config.frameMultiplier, FrameGenConfig.MAX_FRAME_MULTIPLIER))
                                 : 2))
                 .addOption(builder.createEnumOption(id("reflex"), ReflexMode.class)
                         .setName(Component.translatable("dlss_fg.option.nvidia.reflex"))
@@ -210,7 +212,16 @@ public final class SodiumOptionsEntrypoint implements ConfigEntryPoint {
     private static OptionGroupBuilder rayTracingGroup(ConfigBuilder builder, FrameGenConfig config) {
         return builder.createOptionGroup()
                 .setName(Component.translatable("dlss_fg.tab.ray_tracing"))
+                .addOption(builder.createBooleanOption(id("shader_pack_auto_boost"))
+                        .setName(Component.translatable("dlss_fg.option.shader_pack_auto_boost"))
+                        .setTooltip(Component.translatable("dlss_fg.tooltip.shader_pack_auto_boost"))
+                        .setImpact(OptionImpact.LOW)
+                        .setStorageHandler(STORAGE)
+                        .setDefaultValue(true)
+                        .setBinding(value -> config.shaderPackAutoBoost = value,
+                                () -> config.shaderPackAutoBoost))
                 .addOption(builder.createEnumOption(id("rt_mode"), RayTracingMode.class)
+                        .setEnabledProvider(state -> !ForeignShaderPipeline.active())
                         .setName(Component.translatable("dlss_fg.option.rt.mode"))
                         .setTooltip(Component.translatable("dlss_fg.tooltip.rt.mode"))
                         .setImpact(OptionImpact.HIGH)
@@ -220,6 +231,7 @@ public final class SodiumOptionsEntrypoint implements ConfigEntryPoint {
                                 "dlss_fg.value.rt_mode." + mode.name().toLowerCase(java.util.Locale.ROOT)))
                         .setBinding(mode -> config.rayTracingMode = mode, () -> config.rayTracingMode))
                 .addOption(builder.createEnumOption(id("rt_quality"), RayTracingQuality.class)
+                        .setEnabledProvider(state -> !ForeignShaderPipeline.active())
                         .setName(Component.translatable("dlss_fg.option.rt.quality"))
                         .setTooltip(Component.translatable("dlss_fg.tooltip.rt.quality"))
                         .setImpact(OptionImpact.HIGH)
@@ -230,6 +242,7 @@ public final class SodiumOptionsEntrypoint implements ConfigEntryPoint {
                         .setBinding(quality -> config.rayTracingQuality = quality,
                                 () -> config.rayTracingQuality))
                 .addOption(builder.createIntegerOption(id("rt_distance"))
+                        .setEnabledProvider(state -> !ForeignShaderPipeline.active())
                         .setName(Component.translatable("dlss_fg.option.rt.distance"))
                         .setTooltip(Component.translatable("dlss_fg.tooltip.rt.distance"))
                         .setImpact(OptionImpact.HIGH)
@@ -241,6 +254,7 @@ public final class SodiumOptionsEntrypoint implements ConfigEntryPoint {
                         .setBinding(value -> config.rayTracingMaxDistance = value,
                                 () -> config.rayTracingMaxDistance))
                 .addOption(builder.createIntegerOption(id("rt_samples"))
+                        .setEnabledProvider(state -> !ForeignShaderPipeline.active())
                         .setName(Component.translatable("dlss_fg.option.rt.samples"))
                         .setTooltip(Component.translatable("dlss_fg.tooltip.rt.samples"))
                         .setImpact(OptionImpact.HIGH)
@@ -253,6 +267,7 @@ public final class SodiumOptionsEntrypoint implements ConfigEntryPoint {
                         .setBinding(value -> config.rayTracingRaysPerPixel = value,
                                 () -> config.rayTracingRaysPerPixel))
                 .addOption(builder.createBooleanOption(id("ray_reconstruction"))
+                        .setEnabledProvider(state -> !ForeignShaderPipeline.active())
                         .setName(Component.translatable("dlss_fg.option.rt.ray_reconstruction"))
                         .setTooltip(Component.translatable("dlss_fg.tooltip.rt.ray_reconstruction"))
                         .setImpact(OptionImpact.MEDIUM)
@@ -319,7 +334,7 @@ public final class SodiumOptionsEntrypoint implements ConfigEntryPoint {
 
     private static int nvidiaMaxMultiplier() {
         try {
-            return Math.max(2, Math.min(4,
+            return Math.max(2, Math.min(FrameGenConfig.MAX_FRAME_MULTIPLIER,
                     StreamlineBridge.nGetMaxFrameMultiplier(GpuVendor.NVIDIA.vendorId())));
         } catch (UnsatisfiedLinkError ignored) {
             return 2;

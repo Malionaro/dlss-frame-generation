@@ -76,6 +76,8 @@ public final class VulkanRegistry {
     private static String lastSubmissionFailure = "";
     private static long lastSubmissionFailureLogNanos;
     private static long submissionFailureFrames;
+    /** Frame serial the pipeline's output flag belongs to (see lastFrameOutputWritten). */
+    private static long outputWrittenSerial = -1L;
     private static volatile NvidiaDlssRenderResolution.Resolution activeResolution =
             new NvidiaDlssRenderResolution.Resolution(1, 1, 1, 1, 0, false);
     private static final DynamicResolutionController DYNAMIC_RESOLUTION =
@@ -653,6 +655,11 @@ public final class VulkanRegistry {
         return r;
     }
 
+    static int jitterPhaseCount(int renderWidth, int outputWidth) {
+        double upscale = Math.max(1.0, outputWidth / (double) Math.max(1, renderWidth));
+        return Math.max(8, Math.min(128, (int) Math.ceil(8.0 * upscale * upscale)));
+    }
+
     private static void updateSubPixelJitter(int renderWidth, int renderHeight) {
         previousJitterX = jitterX;
         previousJitterY = jitterY;
@@ -661,7 +668,12 @@ public final class VulkanRegistry {
             jitterY = 0.0f;
             return;
         }
-        jitterIndex = (jitterIndex + 1) % 8;
+        // DLSS guide: the sequence must cover every output pixel, so its
+        // length grows with the upscale factor squared (8 at native, 32 at
+        // 2x / Performance, 72 at 3x / Ultra Performance). A fixed 8-phase
+        // cycle leaves output pixels unsampled at low render scales and the
+        // distance stays blurry.
+        jitterIndex = (jitterIndex + 1) % jitterPhaseCount(renderWidth, activeResolution.outputWidth());
         jitterX = halton(jitterIndex + 1, 2) - 0.5f;
         jitterY = halton(jitterIndex + 1, 3) - 0.5f;
     }
@@ -714,11 +726,19 @@ public final class VulkanRegistry {
                     outputWidth, outputHeight, 0, false
             );
         };
+        // Iris resizes all of a pack's render targets whenever the world
+        // target changes size, so DRS steps would rebuild them constantly.
         activeResolution = DYNAMIC_RESOLUTION.apply(
                 activeResolution,
-                config.drsEnabled && upscalingSupported
+                config.drsEnabled && upscalingSupported && !ForeignShaderPipeline.active()
         );
         return activeResolution;
+    }
+
+    /** World rendered at window size by an engine without a scale hook. */
+    public static void useNativeWorldResolution(int width, int height) {
+        activeResolution = new NvidiaDlssRenderResolution.Resolution(
+                width, height, width, height, 0, false);
     }
 
     private static RuntimeFallbackPolicy.Decision fallbackDecision(
@@ -763,6 +783,11 @@ public final class VulkanRegistry {
         }
     }
 
+    /** Render and output size of the current world frame. */
+    public static NvidiaDlssRenderResolution.Resolution activeResolution() {
+        return activeResolution;
+    }
+
     public static float dynamicResolutionScale() {
         return DYNAMIC_RESOLUTION.scale();
     }
@@ -790,15 +815,22 @@ public final class VulkanRegistry {
     }
 
     public static void beginWorldFrame(GameRenderState gameRenderState) {
+        org.malionaro.dlss_frame_generation.client.compat.ShaderPackBoost.update();
         currentFrameSerial.incrementAndGet();
         currentFrameResources = null;
         updateCameraState(gameRenderState);
         // H2: jitter must only be reported when projection is actually mutated; otherwise keep 0.
         // A shader-pack engine (Vitrail) runs its own temporal passes on this
         // projection, so it is never jittered there.
+        // Jitter is only invisible when the upscaler resolves it. If the last
+        // frame fell back to the plain blit (DLSS rejected it, provider still
+        // starting), a jittered projection shows up as the whole picture
+        // shaking by up to half a pixel every frame.
         if (!FrameGenConfig.getInstance().projectionJitterEnabled
                 || activeResolution.mode() == 0
-                || ForeignShaderPipeline.active()) {
+                || ForeignShaderPipeline.active()
+                || !lastFrameUpscaled()
+                || menuCoversWorld(Minecraft.getInstance())) {
             previousJitterX = jitterX;
             previousJitterY = jitterY;
             jitterX = 0.0f;
@@ -821,6 +853,20 @@ public final class VulkanRegistry {
                 + 2.0f * jitterY / activeResolution.renderHeight());
     }
 
+    /**
+     * A screen that draws over the world (pause menu, options, Sodium). Chat
+     * and inventories keep the world in focus, so FG and jitter stay on there.
+     */
+    static boolean menuCoversWorld(Minecraft minecraft) {
+        if (minecraft == null) {
+            return false;
+        }
+        net.minecraft.client.gui.screens.Screen screen = minecraft.gui != null ? minecraft.gui.screen() : null;
+        return screen != null
+                && !(screen instanceof net.minecraft.client.gui.screens.ChatScreen)
+                && !(screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>);
+    }
+
     public static boolean shouldSeparateUi() {
         FrameGenConfig config = FrameGenConfig.getInstance();
         Minecraft minecraft = Minecraft.getInstance();
@@ -828,7 +874,8 @@ public final class VulkanRegistry {
         FrameGenerationBackend backend = compatibility != null
                 ? compatibility.activeVendorBackend()
                 : null;
-        if (backend == null || !config.isFrameGenerationEnabled(backend.vendor()) || minecraft == null || minecraft.isPaused()) {
+        if (backend == null || !config.isFrameGenerationEnabled(backend.vendor()) || minecraft == null
+                || minecraft.isPaused() || menuCoversWorld(minecraft)) {
             return false;
         }
         return config.uiRecomposition && vendorFeatureSupported(backend.vendor(), StreamlineBridge.CAP_FRAME_GENERATION);
@@ -929,7 +976,14 @@ public final class VulkanRegistry {
             );
             return;
         }
-        boolean paused = minecraft.isPaused();
+        // A menu over the world is handled like a pause even when the game
+        // keeps running (multiplayer): generated frames between a blurred
+        // background and a full-screen UI only add flicker.
+        boolean paused = minecraft.isPaused() || menuCoversWorld(minecraft);
+        // Shader-pack images (TAA, bloom, fog) defeat the colour search the
+        // same way; their depth is the real scene depth, so camera
+        // reprojection alone is the stable choice there.
+        frameGenerationPipeline.setCameraOnlyMotion(paused || ForeignShaderPipeline.active());
         if (paused) {
             try {
                 // D1: lifecycle ÔÇô delegate to backend so VulkanRegistry has no direct nSet* path
@@ -1021,9 +1075,10 @@ public final class VulkanRegistry {
 
         try {
             RayReconstructionResources rayReconstructionResources = null;
-            // With a shader pack this runs on the pack's finished (possibly
-            // Vitrail-scaled) world image, before DLSS/FSR upscaling.
-            if (FrameGenMod.rayTracingManager() != null) {
+            // A shader pack (Iris on Vulkan, Vitrail, Vulcade) does its own
+            // lighting; our RT pass stays off while one runs.
+            if (FrameGenMod.rayTracingManager() != null
+                    && !ForeignShaderPipeline.active()) {
                 rayReconstructionResources =
                         FrameGenMod.rayTracingManager().renderBeforeUpscale(
                         commandBuffer,
@@ -1035,6 +1090,7 @@ public final class VulkanRegistry {
                     && FrameGenMod.motionVectorDebugRenderer().getDebugMode()
                     != org.malionaro.dlss_frame_generation.client.motion.MotionVectorDebugRenderer.DebugMode.OFF;
             long acceptedBefore = frameGenerationPipeline.providerAcceptedFrameCount();
+            outputWrittenSerial = -1L;
             activeMotionVectors = frameGenerationPipeline.captureAndDispatch(
                     resources,
                     commandBuffer,
@@ -1073,6 +1129,7 @@ public final class VulkanRegistry {
                     config.motionBlurIntensity,
                     config.motionBlurSamples
             );
+            outputWrittenSerial = currentFrameSerial.get();
             activeMotionVectorSnapshot = frameGenerationPipeline.latestDebugSnapshot();
             motionVectorValidation = MOTION_VECTOR_VALIDATOR.validate(activeMotionVectors);
             boolean providerAccepted =
@@ -1241,6 +1298,17 @@ public final class VulkanRegistry {
     public static long getCapturedFrameCount() {
         return frameGenerationPipeline == null
                 ? 0L : frameGenerationPipeline.capturedFrameCount();
+    }
+
+    /**
+     * Whether this frame's capture put a current image into the display
+     * target. Checked after capture: when false the caller must blit.
+     */
+    public static boolean lastFrameOutputWritten() {
+        return frameGenerationPipeline != null
+                && currentFrameResources != null
+                && frameGenerationPipeline.lastOutputWritten()
+                && outputWrittenSerial == currentFrameSerial.get();
     }
 
     /** Whether the last pre-HUD capture wrote a DLSS/FSR result to its output target. */

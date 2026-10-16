@@ -85,6 +85,13 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private long providerAcceptedFrameCount;
     /** Whether the last capture wrote a DLSS/FSR (or DLSS-RR) result to the output. */
     private boolean lastUpscalingAccepted;
+    /**
+     * Whether the last capture left a current image in the output target.
+     * False whenever it bailed out early (slot still in flight after a
+     * swapchain rebuild, resource rebuild, failure); the caller then has to
+     * blit the world itself or the screen keeps showing an old frame.
+     */
+    private boolean lastOutputWritten;
     private int pendingUiSlot = -1;
     private FrameIdentity pendingUiIdentity = FrameIdentity.INVALID;
     private long activeSwapchainGeneration;
@@ -94,6 +101,24 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
     private final java.util.ArrayDeque<Retired> retiredResources = new java.util.ArrayDeque<>();
     /** Set by a resize; the new render images get their initial layout next frame. */
     private boolean renderImagesNeedInit;
+    /**
+     * Set by a resize until the next captured frame: the previous slot's
+     * colour and depth have the old size, so that frame uses camera
+     * reprojection only. Temporal history stays valid on purpose, because
+     * DLSS and FSR handle dynamic resolution themselves and a reset on every
+     * DRS step made the picture visibly pulse.
+     */
+    private boolean renderSizeChanged;
+    /**
+     * Set per frame by the registry while a menu covers the world. The
+     * background is blurred and flat, so the colour search only finds noise
+     * that makes the picture swim; camera reprojection alone is exact there.
+     */
+    private boolean cameraOnlyMotion;
+
+    public void setCameraOnlyMotion(boolean cameraOnly) {
+        cameraOnlyMotion = cameraOnly;
+    }
 
     public VulkanFrameGenerationPipeline(VulkanDevice minecraftDevice, Logger logger) {
         this.logger = logger;
@@ -152,6 +177,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             int motionBlurSamples
     ) {
         lastUpscalingAccepted = false;
+        lastOutputWritten = false;
         // Phase 3 M2: lazy OOM-retry – if previous failure was OOM and generation has changed, clear latch
         if (failed && failedDueToOutOfMemory && failedAtSwapchainGeneration != activeSwapchainGeneration) {
             logger.info("OOM recovery: clearing retryable latch (failed at gen {} -> now gen {})",
@@ -252,6 +278,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     jitterY,
                     previousJitterX,
                     previousJitterY,
+                    renderSizeChanged || cameraOnlyMotion,
                     // D7: fast camera turns invalidate temporal matching — reset
                     // history while the artifact corrector reports dampening
                     // instead of smearing stale vectors across providers.
@@ -325,8 +352,12 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                 }
             }
 
+            // Mode 0: the world arrives at window size with nothing to
+            // reconstruct (DLSS off, or a shader pack without a scale hook).
+            // Running DLSS there anyway stacked its temporal accumulation on
+            // the pack's own TAA and made the picture swim.
             boolean upscalingAccepted = rayReconstructionAccepted
-                    || StreamlineBridge.nSubmitUpscalingInputs(
+                    || reconstructionMode != 0 && StreamlineBridge.nSubmitUpscalingInputs(
                             vendorId,
                             commandBuffer.address(),
                             current.color.image, current.color.memory,
@@ -383,6 +414,8 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                         frameResources.output()
                 );
             }
+            // Either copied above or rendered in place (same image).
+            lastOutputWritten = true;
 
             NativeImage hudlessColor = finalColor;
             int hudlessWidth = outputWidth;
@@ -437,6 +470,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             // leaves one spare slot per frame in steady state).
             current.inUseUntilPresentSerial = completedPresentSerial + 2;
             historyValid = true;
+            renderSizeChanged = false;
             status = accepted
                     ? "Dense GPU motion vectors accepted by native provider"
                             + (rayReconstructionAccepted
@@ -623,6 +657,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
 
     public boolean lastUpscalingAccepted() {
         return lastUpscalingAccepted;
+    }
+
+    public boolean lastOutputWritten() {
+        return lastOutputWritten;
     }
 
     public long completedPresentCount() {
@@ -908,9 +946,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             status = "Frame-generation resize failed: " + error.getMessage();
             throw error;
         }
-        // The previous slot's history now has a different size; the motion
-        // search and temporal providers must not compare across it.
-        historyValid = false;
+        // The previous slot's colour/depth now has a different size: the next
+        // frame skips the image search (camera reprojection only). History
+        // stays valid so DLSS/FSR keep accumulating across the DRS step.
+        renderSizeChanged = true;
         renderImagesNeedInit = true;
         latestDebugSnapshot = null;
         logger.debug(
@@ -2178,6 +2217,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             float jitterY,
             float previousJitterX,
             float previousJitterY,
+            boolean cameraOnly,
             boolean reset
     ) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -2198,7 +2238,8 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             // search window (4 at 1080p, up to 8 at 4K; the shader clamps to
             // 0..8) instead of a fixed radius that over-searches low
             // resolutions and under-searches high ones.
-            int searchRadius = Math.max(
+            // 0 = camera reprojection only (first frame after a resize).
+            int searchRadius = cameraOnly ? 0 : Math.max(
                     2, Math.min(8, (Math.max(width, height) + 135) / 270));
             target.putInt(84, searchRadius);
             target.putLong(88, 0L);

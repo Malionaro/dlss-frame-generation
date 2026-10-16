@@ -4,186 +4,94 @@ import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationCompati
 import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
 import org.malionaro.dlss_frame_generation.client.StreamlineBridge;
 
-import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.network.chat.Component;
 
 public final class IntelSettingsPanel {
+    private static final FrameGenerationBackend.GpuVendor INTEL =
+            FrameGenerationBackend.GpuVendor.INTEL;
+
     private IntelSettingsPanel() {}
 
-    public static void addWidgets(MultiVendorSettingsScreen screen, FrameGenConfig config, int capabilities, int topY) {
-        int leftX = screen.settingsLeftX();
-        int rightX = screen.settingsRightX();
+    /** Frame Generation tab: FSR 3.1 fallback, fixed 2x, UI layer, transport status. */
+    public static void addFrameGeneration(MultiVendorSettingsScreen screen, FrameGenConfig config, int capabilities) {
         int columnWidth = screen.settingsColumnWidth();
         boolean fsrFallbackReady =
                 (capabilities & StreamlineBridge.CAP_FRAME_GENERATION) != 0;
-        boolean xessUpscalingSupported =
-                (capabilities & StreamlineBridge.CAP_UPSCALING) != 0;
         boolean fsrProxyReady = (capabilities & StreamlineBridge.CAP_PROXY_SWAPCHAIN) != 0;
         boolean frameGenerationConflict =
-                config.conflictingFrameGenerationVendor(
-                        FrameGenerationBackend.GpuVendor.INTEL
-                ) != FrameGenerationBackend.GpuVendor.UNKNOWN;
+                config.conflictingFrameGenerationVendor(INTEL)
+                        != FrameGenerationBackend.GpuVendor.UNKNOWN;
+        boolean fgUsable = fsrFallbackReady
+                && !frameGenerationConflict
+                && !config.hybridD3D12PresentationEnabled;
         FrameGenerationCompatibilityLayer.Route route =
-                FrameGenerationCompatibilityLayer.queryVulkanRoute(
-                        FrameGenerationBackend.GpuVendor.INTEL
-                );
+                FrameGenerationCompatibilityLayer.queryVulkanRoute(INTEL);
 
         // True XeSS-FG is D3D12-only. On Minecraft's Vulkan renderer this
         // control activates the explicitly named FSR 3.1 fallback instead.
         var btnFgXeSS = CycleButton.onOffBuilder(config.intelXessFgEnabled)
-                .create(leftX, topY, columnWidth, 20,
+                .create(0, 0, columnWidth, 20,
                         Component.translatable("dlss_fg.option.intel.frame_generation"), (button, value) -> {
-                            config.setFrameGenerationEnabled(
-                                    FrameGenerationBackend.GpuVendor.INTEL,
-                                    value
-                            );
+                            config.setFrameGenerationEnabled(INTEL, value);
                             config.save();
                             // D1: native push only via backend.
                             FrameGenerationBackend.applyActiveConfig(config);
                             screen.refreshSettingsWidgets();
                         });
-        btnFgXeSS.active = fsrFallbackReady
-                && !frameGenerationConflict
-                && !config.hybridD3D12PresentationEnabled;
-        screen.addSettingsWidget(
-                btnFgXeSS,
-                screen.frameGenerationTooltip(
-                        FrameGenerationBackend.GpuVendor.INTEL,
-                        "dlss_fg.tooltip.intel.frame_generation"
-                )
-        );
+        btnFgXeSS.active = fgUsable;
+        screen.place(btnFgXeSS, screen.frameGenerationTooltip(
+                INTEL, "dlss_fg.tooltip.intel.frame_generation"));
 
         // FSR 3.1 inserts one interpolated frame and therefore exposes 2x only.
-        // The multiplier is shown as a read-only fixed value instead of a
-        // cycle button.
-        var lblMfgFixed = net.minecraft.client.gui.components.Button.builder(
-                        Component.translatable("dlss_fg.option.frame_multiplier_fixed", 2),
-                        button -> {})
-                .bounds(rightX, topY, columnWidth, 20)
-                .build();
-        lblMfgFixed.active = false;
-        screen.addSettingsWidget(lblMfgFixed, "dlss_fg.tooltip.frame_multiplier_fixed");
+        screen.place(screen.fixedMultiplierSlider(),
+                Component.translatable("dlss_fg.tooltip.frame_multiplier_fixed"));
 
-        // OptiScaler consumes the standard FFX Vulkan input on Intel. The
-        // renderer-owned world target can run below the display resolution.
-        // Only 0=Off and 1=Native-AA are real (C2, see AmdSettingsPanel).
-        var btnXessMode = CycleButton.builder((Integer value) -> {
-                    return switch (value) {
-                        case 0 -> Component.translatable("dlss_fg.value.off");
-                        case 1 -> Component.translatable("dlss_fg.value.native_aa");
-                        default -> Component.translatable("dlss_fg.value.unknown");
-                    };
+        screen.addUiRecomposition(config, INTEL, fgUsable && config.intelXessFgEnabled);
+
+        // XeSS-FG cannot consume a Vulkan swapchain. Show the compatible
+        // cross-vendor FSR transport separately so it is never mislabeled.
+        var fsrFallbackStatus = CycleButton.onOffBuilder(fsrProxyReady)
+                .create(0, 0, columnWidth, 20,
+                        Component.translatable(route.isFallback()
+                                ? "dlss_fg.status.provider.cross_vendor"
+                                : "dlss_fg.status.provider.fallback"), (button, value) -> {});
+        fsrFallbackStatus.active = false;
+        screen.place(fsrFallbackStatus, Component.translatable("dlss_fg.tooltip.provider_status"));
+    }
+
+    /** Upscaling tab: XeSS/FSR mode (Off / Native AA) and sharpness. */
+    public static void addUpscaling(MultiVendorSettingsScreen screen, FrameGenConfig config, int capabilities) {
+        int columnWidth = screen.settingsColumnWidth();
+        boolean xessUpscalingSupported =
+                (capabilities & StreamlineBridge.CAP_UPSCALING) != 0;
+
+        // OptiScaler consumes the standard FFX Vulkan input on Intel. Only
+        // 0=Off and 1=Native-AA are real (C2, see AmdSettingsPanel).
+        var btnXessMode = CycleButton.builder((Integer value) -> switch (value) {
+                    case 0 -> Component.translatable("dlss_fg.value.off");
+                    case 1 -> Component.translatable("dlss_fg.value.native_aa");
+                    default -> Component.translatable("dlss_fg.value.unknown");
                 }, Math.min(config.intelXessMode, 1))
                 .withValues(0, 1)
-                .create(leftX, topY + 25, columnWidth, 20,
+                .create(0, 0, columnWidth, 20,
                         Component.translatable("dlss_fg.option.intel.upscaling"), (button, value) -> {
-                            config.setUpscalerMode(
-                                    FrameGenerationBackend.GpuVendor.INTEL,
-                                    value
-                            );
+                            config.setUpscalerMode(INTEL, value);
                             config.save();
                             // D1: native push only via backend.
                             FrameGenerationBackend.applyActiveConfig(config);
                         });
         btnXessMode.active = xessUpscalingSupported;
-        screen.addSettingsWidget(
-                btnXessMode,
-                screen.capabilityTooltip(
-                        FrameGenerationBackend.GpuVendor.INTEL,
-                        capabilities,
-                        StreamlineBridge.CAP_UPSCALING,
-                        "dlss_fg.tooltip.intel.upscaling"
-                )
-        );
+        screen.place(btnXessMode, screen.capabilityTooltip(
+                INTEL, capabilities, StreamlineBridge.CAP_UPSCALING,
+                "dlss_fg.tooltip.intel.upscaling"));
 
-        // Row 2 Right: XeSS Sharpness Slider
-        var sliderXessSharpness = new AbstractSliderButton(
-                rightX, topY + 25, columnWidth, 20,
-                Component.translatable(
-                        "dlss_fg.option.aa_sharpness",
-                        (int)(config.intelXessSharpness * 100)
-                ),
-                config.intelXessSharpness) {
-            {
-                this.updateMessage();
-            }
-            @Override
-            protected void updateMessage() {
-                this.setMessage(Component.translatable(
-                        "dlss_fg.option.aa_sharpness",
-                        (int)(this.value * 100)
-                ));
-            }
-            @Override
-            protected void applyValue() {
-                // D2/D3: cheap per-tick field update only (finite + clamped).
-                // Disk persists coalesced (C9 saveSoon, flushed on release);
-                // native apply stays throttled to avoid per-pixel JNI flapping.
-                double raw = this.value;
-                if (!Double.isFinite(raw)) {
-                    return;
-                }
-                config.intelXessSharpness = (float) Math.max(0.0, Math.min(1.0, raw));
-                config.saveSoon();
-                long now = System.nanoTime();
-                if (now - lastSharpnessApplyNanos < 200_000_000L) {
-                    return;
-                }
-                lastSharpnessApplyNanos = now;
-                // D1: native push only via backend.
-                FrameGenerationBackend.applyActiveConfig(config);
-            }
-            @Override
-            public void onRelease(net.minecraft.client.input.MouseButtonEvent event) {
-                super.onRelease(event);
-                lastSharpnessApplyNanos = 0L;
-                config.save();
-                // D1: native push only via backend.
-                FrameGenerationBackend.applyActiveConfig(config);
-            }
-            private long lastSharpnessApplyNanos;
-        };
-        sliderXessSharpness.active = xessUpscalingSupported;
-        screen.addSettingsWidget(
-                sliderXessSharpness,
-                screen.capabilityTooltip(
-                        FrameGenerationBackend.GpuVendor.INTEL,
-                        capabilities,
-                        StreamlineBridge.CAP_UPSCALING,
-                        "dlss_fg.tooltip.aa_sharpness"
-                )
-        );
-
-        // Row 3 Left: UI Recomposition
-        var btnRecomp = CycleButton.onOffBuilder(config.uiRecomposition)
-                .create(leftX, topY + 50, columnWidth, 20,
-                        Component.translatable("dlss_fg.option.ui_recomposition"), (button, value) -> {
-                            config.uiRecomposition = value;
-                            config.save();
-                            // D1: native push only via backend.
-                            FrameGenerationBackend.applyActiveConfig(config);
-                        });
-        btnRecomp.active = fsrFallbackReady
-                && config.intelXessFgEnabled
-                && !frameGenerationConflict
-                && !config.hybridD3D12PresentationEnabled;
-        screen.addSettingsWidget(
-                btnRecomp,
-                screen.frameGenerationDependentTooltip(
-                        FrameGenerationBackend.GpuVendor.INTEL,
-                        "dlss_fg.tooltip.ui_recomposition"
-                )
-        );
-
-        // XeSS-FG cannot consume a Vulkan swapchain. Show the compatible
-        // cross-vendor FSR transport separately so it is never mislabeled.
-        var fsrFallbackStatus = CycleButton.onOffBuilder(fsrProxyReady)
-                .create(rightX, topY + 50, columnWidth, 20,
-                        Component.translatable(route.isFallback()
-                                ? "dlss_fg.status.provider.cross_vendor"
-                                : "dlss_fg.status.provider.fallback"), (button, value) -> {});
-        fsrFallbackStatus.active = false;
-        screen.addSettingsWidget(fsrFallbackStatus, "dlss_fg.tooltip.provider_status");
+        var sharpness = screen.sharpnessSlider(
+                () -> config.intelXessSharpness,
+                value -> config.intelXessSharpness = value);
+        sharpness.active = xessUpscalingSupported;
+        screen.place(sharpness, screen.capabilityTooltip(
+                INTEL, capabilities, StreamlineBridge.CAP_UPSCALING,
+                "dlss_fg.tooltip.aa_sharpness"));
     }
 }

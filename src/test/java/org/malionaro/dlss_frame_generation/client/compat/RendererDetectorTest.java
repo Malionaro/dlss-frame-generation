@@ -36,6 +36,27 @@ class RendererDetectorTest {
     }
 
     @Test
+    void irisVulkanSnapshotVersionMeetsMinimum() {
+        // First Iris build that runs shader packs on Vulkan.
+        assertTrue(RendererDetector.isVersionAtLeast("1.12.0-snapshot+mc26.3-local", "1.11.2"));
+        assertFalse(RendererDetector.isVersionAtLeast("1.11.1+mc26.3", "1.11.2"));
+    }
+
+    @Test
+    void irisVulkanShaderPackCooperates() {
+        RendererDetection detection = RendererDetector.classifyForTest(
+                true, true, true, true, true, false
+        );
+
+        assertEquals(
+                ShaderPipelineState.IRIS_VULKAN_SHADERPACK_ACTIVE,
+                detection.shaderPipelineState()
+        );
+        assertTrue(detection.allowsVulkanFeatures());
+        assertEquals("", detection.blockingReason());
+    }
+
+    @Test
     void irisOpenGlShaderPackFailsClosed() {
         RendererDetection detection = RendererDetector.classifyForTest(
                 false, true, true, true, true, false

@@ -104,7 +104,8 @@ void main() {
     // already match and avoid all optical-flow work. A mismatching pixel gets
     // a coarse pass plus 3x3 refinement (at most 34 candidates for radius 4,
     // instead of the previous 81 candidates at every render pixel).
-    if (seedScore > 0.04) {
+    // radius 0: camera reprojection only (previous frame has another size).
+    if (radius > 0 && seedScore > 0.04) {
         for (int y = -radius; y <= radius; y += coarseStep) {
             for (int x = -radius; x <= radius; x += coarseStep) {
                 ivec2 candidate = clamp(
