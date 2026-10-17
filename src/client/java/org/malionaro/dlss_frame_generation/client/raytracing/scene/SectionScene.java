@@ -254,7 +254,7 @@ public final class SectionScene implements AutoCloseable {
             generations.put(key, generation);
             if (snapshot == SectionSnapshot.Result.EMPTY) {
                 // Nothing to trace; drop an older mesh of this section.
-                ready.add(new SectionMesher.SectionMesh(key, generation, null, 0, List.of(), false));
+                ready.add(SectionMesher.SectionMesh.empty(key, generation));
                 continue;
             }
             SectionSnapshot section = (SectionSnapshot) snapshot;
@@ -266,7 +266,7 @@ public final class SectionScene implements AutoCloseable {
                     completed.add(SectionMesher.mesh(section, generation, looks, blockColors, tintLevel));
                 } catch (Throwable error) {
                     LOGGER.warn("RT section mesh failed at {}: {}", SectionPos.of(key), error.toString());
-                    completed.add(new SectionMesher.SectionMesh(key, generation, null, 0, List.of(), false));
+                    completed.add(SectionMesher.SectionMesh.empty(key, generation));
                 } finally {
                     inFlight.decrementAndGet();
                 }

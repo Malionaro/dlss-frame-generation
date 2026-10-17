@@ -14,6 +14,7 @@ import org.lwjgl.vulkan.*;
 import org.malionaro.dlss_frame_generation.client.config.FrameGenConfig;
 import org.malionaro.dlss_frame_generation.client.access.VulkanDeviceAccess;
 import org.malionaro.dlss_frame_generation.client.raytracing.scene.RtBoxFormat;
+import org.malionaro.dlss_frame_generation.client.raytracing.scene.RtTriangleFormat;
 import org.malionaro.dlss_frame_generation.client.raytracing.scene.SceneLights;
 import org.malionaro.dlss_frame_generation.client.raytracing.scene.SectionMesher;
 import org.malionaro.dlss_frame_generation.client.raytracing.scene.SectionScene;
@@ -776,7 +777,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             for (SectionMesher.SectionMesh mesh : meshes) {
                 GpuSection previous;
-                if (mesh.boxes() == null || mesh.boxCount() == 0) {
+                if (mesh.isEmpty()) {
                     previous = sections.remove(mesh.key());
                 } else {
                     GpuSection section = createSection(mesh, stack);
@@ -803,54 +804,124 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private GpuSection createSection(SectionMesher.SectionMesh mesh, MemoryStack stack) {
         GpuSection section = new GpuSection();
         try {
-            section.boxCount = mesh.boxCount();
-            long bytes = (long) mesh.boxCount() * RtBoxFormat.BYTES_PER_BOX;
-            // Read by traversal on every candidate hit: device-local when the
-            // GPU exposes host-visible VRAM (resizable BAR), else system memory.
-            section.boxes = createHostVisibleBuffer(
-                    bytes,
-                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-                            | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                            | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-            );
-            upload(section.boxes, mesh.boxes());
-            section.boxesAddress = bufferAddress(section.boxes.buffer, stack);
-
-            VkAccelerationStructureBuildGeometryInfoKHR build = blasBuildInfo(stack, section.boxesAddress);
-            VkAccelerationStructureBuildSizesInfoKHR sizes =
-                    VkAccelerationStructureBuildSizesInfoKHR.calloc(stack).sType$Default();
-            vkGetAccelerationStructureBuildSizesKHR(
-                    device,
-                    VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-                    build,
-                    stack.ints(section.boxCount),
-                    sizes
-            );
-            section.storage = createBuffer(
-                    sizes.accelerationStructureSize(),
-                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
-                            | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                    true
-            );
-            section.blas = createAccelerationStructure(
-                    section.storage.buffer,
-                    sizes.accelerationStructureSize(),
-                    VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-                    stack
-            );
-            section.scratchSize = sizes.buildScratchSize();
-            section.blasAddress = vkGetAccelerationStructureDeviceAddressKHR(
-                    device,
-                    VkAccelerationStructureDeviceAddressInfoKHR.calloc(stack)
-                            .sType$Default()
-                            .accelerationStructure(section.blas)
-            );
+            int usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+                    | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                    | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+            if (mesh.boxCount() > 0) {
+                section.boxCount = mesh.boxCount();
+                long bytes = (long) mesh.boxCount() * RtBoxFormat.BYTES_PER_BOX;
+                // Read by traversal on every candidate hit: device-local when the
+                // GPU exposes host-visible VRAM (resizable BAR), else system memory.
+                section.boxes = createHostVisibleBuffer(bytes, usage);
+                upload(section.boxes, mesh.boxes());
+                section.boxesAddress = bufferAddress(section.boxes.buffer, stack);
+                VkAccelerationStructureBuildSizesInfoKHR sizes = buildSizes(
+                        blasBuildInfo(stack, section.boxesAddress), section.boxCount, stack);
+                section.storage = createBlasStorage(sizes);
+                section.blas = createAccelerationStructure(
+                        section.storage.buffer,
+                        sizes.accelerationStructureSize(),
+                        VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+                        stack
+                );
+                section.scratchSize = sizes.buildScratchSize();
+                section.blasAddress = accelerationStructureAddress(section.blas, stack);
+            }
+            if (mesh.triangleCount() > 0) {
+                // Model triangles of the blocks that are not full cubes.
+                section.triangleCount = mesh.triangleCount();
+                section.trianglePositions = createHostVisibleBuffer(
+                        (long) mesh.triangleCount() * RtTriangleFormat.BYTES_PER_POSITION, usage);
+                upload(section.trianglePositions, mesh.trianglePositions());
+                section.trianglePositionsAddress = bufferAddress(section.trianglePositions.buffer, stack);
+                section.triangleAttributes = createHostVisibleBuffer(
+                        (long) mesh.triangleCount() * RtTriangleFormat.BYTES_PER_ATTRIBUTE, usage);
+                upload(section.triangleAttributes, mesh.triangleAttributes());
+                section.triangleAttributesAddress = bufferAddress(section.triangleAttributes.buffer, stack);
+                VkAccelerationStructureBuildSizesInfoKHR sizes = buildSizes(
+                        triangleBlasBuildInfo(stack, section.trianglePositionsAddress, section.triangleCount),
+                        section.triangleCount, stack);
+                section.triangleStorage = createBlasStorage(sizes);
+                section.triangleBlas = createAccelerationStructure(
+                        section.triangleStorage.buffer,
+                        sizes.accelerationStructureSize(),
+                        VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+                        stack
+                );
+                section.triangleScratchSize = sizes.buildScratchSize();
+                section.triangleBlasAddress = accelerationStructureAddress(section.triangleBlas, stack);
+            }
             return section;
         } catch (RuntimeException error) {
             destroySection(section);
             throw error;
         }
+    }
+
+    private VkAccelerationStructureBuildSizesInfoKHR buildSizes(
+            VkAccelerationStructureBuildGeometryInfoKHR build,
+            int primitiveCount,
+            MemoryStack stack
+    ) {
+        VkAccelerationStructureBuildSizesInfoKHR sizes =
+                VkAccelerationStructureBuildSizesInfoKHR.calloc(stack).sType$Default();
+        vkGetAccelerationStructureBuildSizesKHR(
+                device,
+                VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                build,
+                stack.ints(primitiveCount),
+                sizes
+        );
+        return sizes;
+    }
+
+    private Allocation createBlasStorage(VkAccelerationStructureBuildSizesInfoKHR sizes) {
+        return createBuffer(
+                sizes.accelerationStructureSize(),
+                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+                        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                true
+        );
+    }
+
+    private long accelerationStructureAddress(long structure, MemoryStack stack) {
+        return vkGetAccelerationStructureDeviceAddressKHR(
+                device,
+                VkAccelerationStructureDeviceAddressInfoKHR.calloc(stack)
+                        .sType$Default()
+                        .accelerationStructure(structure)
+        );
+    }
+
+    /**
+     * Not opaque: cutout textures (leaves, plants) are alpha-tested per
+     * candidate in the shader.
+     */
+    private static VkAccelerationStructureBuildGeometryInfoKHR triangleBlasBuildInfo(
+            MemoryStack stack,
+            long positionsAddress,
+            int triangleCount
+    ) {
+        VkAccelerationStructureGeometryKHR.Buffer geometry =
+                VkAccelerationStructureGeometryKHR.calloc(1, stack);
+        geometry.get(0)
+                .sType$Default()
+                .geometryType(VK_GEOMETRY_TYPE_TRIANGLES_KHR)
+                .flags(0);
+        geometry.get(0).geometry().triangles()
+                .sType$Default()
+                .vertexFormat(VK_FORMAT_R32G32B32_SFLOAT)
+                .vertexData(data -> data.deviceAddress(positionsAddress))
+                .vertexStride(12L)
+                .maxVertex(triangleCount * 3 - 1)
+                .indexType(VK_INDEX_TYPE_NONE_KHR);
+        return VkAccelerationStructureBuildGeometryInfoKHR.calloc(stack)
+                .sType$Default()
+                .type(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR)
+                .flags(VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR)
+                .mode(VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR)
+                .pGeometries(geometry);
     }
 
     private static VkAccelerationStructureBuildGeometryInfoKHR blasBuildInfo(
@@ -875,6 +946,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         long total = 0L;
         for (GpuSection section : built) {
             total += align(section.scratchSize, scratchAlignment);
+            total += align(section.triangleScratchSize, scratchAlignment);
         }
         if (slotScene.blasScratch == null || slotScene.blasScratch.size < total) {
             destroyAllocation(slotScene.blasScratch, true);
@@ -901,12 +973,23 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         }
         long offset = 0L;
         for (GpuSection section : built) {
-            long scratchAddress = scratchBase + offset;
-            VkAccelerationStructureBuildGeometryInfoKHR build = blasBuildInfo(stack, section.boxesAddress)
-                    .dstAccelerationStructure(section.blas)
-                    .scratchData(address -> address.deviceAddress(scratchAddress));
-            recordBuild(commandBuffer, build, section.boxCount, stack);
-            offset += align(section.scratchSize, scratchAlignment);
+            if (section.blas != NULL) {
+                long scratchAddress = scratchBase + offset;
+                VkAccelerationStructureBuildGeometryInfoKHR build = blasBuildInfo(stack, section.boxesAddress)
+                        .dstAccelerationStructure(section.blas)
+                        .scratchData(address -> address.deviceAddress(scratchAddress));
+                recordBuild(commandBuffer, build, section.boxCount, stack);
+                offset += align(section.scratchSize, scratchAlignment);
+            }
+            if (section.triangleBlas != NULL) {
+                long scratchAddress = scratchBase + offset;
+                VkAccelerationStructureBuildGeometryInfoKHR build = triangleBlasBuildInfo(
+                        stack, section.trianglePositionsAddress, section.triangleCount)
+                        .dstAccelerationStructure(section.triangleBlas)
+                        .scratchData(address -> address.deviceAddress(scratchAddress));
+                recordBuild(commandBuffer, build, section.triangleCount, stack);
+                offset += align(section.triangleScratchSize, scratchAlignment);
+            }
         }
         // The slot TLAS build reads these BLAS.
         memoryBarrier(
@@ -921,7 +1004,10 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
 
     /** Rewrites this slot's instances and section table and rebuilds its TLAS. */
     private void rebuildSlotTlas(VkCommandBuffer commandBuffer, SlotScene slotScene) {
-        int count = sections.size();
+        int count = 0;
+        for (GpuSection section : sections.values()) {
+            count += (section.blas != NULL ? 1 : 0) + (section.triangleBlas != NULL ? 1 : 0);
+        }
         ensureSlotCapacity(slotScene, count);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             PointerBuffer mapped = stack.mallocPointer(1);
@@ -937,27 +1023,23 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             slotScene.originY = sceneOriginY;
             slotScene.originZ = sceneOriginZ;
             for (GpuSection section : sections.values()) {
-                VkAccelerationStructureInstanceKHR instance = VkAccelerationStructureInstanceKHR.create(
-                        instanceBase + (long) index * VkAccelerationStructureInstanceKHR.SIZEOF);
-                // Section-local boxes, placed relative to the scene origin:
+                // Section-local geometry, placed relative to the scene origin:
                 // small integers, exact in float anywhere in the world.
                 float offsetX = SectionPos.sectionToBlockCoord(SectionPos.x(section.key)) - sceneOriginX;
                 float offsetY = SectionPos.sectionToBlockCoord(SectionPos.y(section.key)) - sceneOriginY;
                 float offsetZ = SectionPos.sectionToBlockCoord(SectionPos.z(section.key)) - sceneOriginZ;
-                instance.transform().matrix(stack.floats(
-                        1, 0, 0, offsetX,
-                        0, 1, 0, offsetY,
-                        0, 0, 1, offsetZ
-                ));
-                instance.instanceCustomIndex(index)
-                        .mask(0xff)
-                        .instanceShaderBindingTableRecordOffset(0)
-                        .flags(VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR)
-                        .accelerationStructureReference(section.blasAddress);
-                // uvec2 in the shader: little-endian 64-bit address.
-                MemoryUtil.memPutLong(tableBase + (long) index * Long.BYTES, section.boxesAddress);
+                // Box instances point the table at the box list, triangle
+                // instances at the triangle attributes; the shader tells them
+                // apart by the intersection type.
+                if (section.blas != NULL) {
+                    writeInstance(instanceBase, tableBase, index++, offsetX, offsetY, offsetZ,
+                            section.blasAddress, section.boxesAddress, stack);
+                }
+                if (section.triangleBlas != NULL) {
+                    writeInstance(instanceBase, tableBase, index++, offsetX, offsetY, offsetZ,
+                            section.triangleBlasAddress, section.triangleAttributesAddress, stack);
+                }
                 section.lastUsedFrame = frameNumber;
-                index++;
             }
             vkUnmapMemory(device, slotScene.instances.memory);
             vkUnmapMemory(device, slotScene.sectionTable.memory);
@@ -1027,6 +1109,25 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             );
         }
         slotScene.version = sceneVersion;
+    }
+
+    private static void writeInstance(long instanceBase, long tableBase, int index,
+                                      float offsetX, float offsetY, float offsetZ,
+                                      long blasAddress, long dataAddress, MemoryStack stack) {
+        VkAccelerationStructureInstanceKHR instance = VkAccelerationStructureInstanceKHR.create(
+                instanceBase + (long) index * VkAccelerationStructureInstanceKHR.SIZEOF);
+        instance.transform().matrix(stack.floats(
+                1, 0, 0, offsetX,
+                0, 1, 0, offsetY,
+                0, 0, 1, offsetZ
+        ));
+        instance.instanceCustomIndex(index)
+                .mask(0xff)
+                .instanceShaderBindingTableRecordOffset(0)
+                .flags(VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR)
+                .accelerationStructureReference(blasAddress);
+        // uvec2 in the shader: little-endian 64-bit address.
+        MemoryUtil.memPutLong(tableBase + (long) index * Long.BYTES, dataAddress);
     }
 
     private void ensureSlotCapacity(SlotScene slotScene, int count) {
@@ -1120,10 +1221,20 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             vkDestroyAccelerationStructureKHR(device, section.blas, null);
             section.blas = NULL;
         }
+        if (section.triangleBlas != NULL) {
+            vkDestroyAccelerationStructureKHR(device, section.triangleBlas, null);
+            section.triangleBlas = NULL;
+        }
         destroyAllocation(section.storage, true);
         destroyAllocation(section.boxes, true);
+        destroyAllocation(section.triangleStorage, true);
+        destroyAllocation(section.trianglePositions, true);
+        destroyAllocation(section.triangleAttributes, true);
         section.storage = null;
         section.boxes = null;
+        section.triangleStorage = null;
+        section.trianglePositions = null;
+        section.triangleAttributes = null;
     }
 
     private void destroySlotScene(SlotScene slotScene) {
@@ -2214,6 +2325,15 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         private long blas;
         private long blasAddress;
         private long scratchSize;
+        private int triangleCount;
+        private Allocation trianglePositions;
+        private long trianglePositionsAddress;
+        private Allocation triangleAttributes;
+        private long triangleAttributesAddress;
+        private Allocation triangleStorage;
+        private long triangleBlas;
+        private long triangleBlasAddress;
+        private long triangleScratchSize;
         private long lastUsedFrame;
     }
 

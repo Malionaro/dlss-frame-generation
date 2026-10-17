@@ -39,6 +39,71 @@ public final class BlockAppearances {
     private final BlockStateModelSet models;
     private final SpriteTable sprites;
     private final ConcurrentHashMap<BlockState, Appearance> cache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<BlockState, ModelQuads> quadCache = new ConcurrentHashMap<>();
+
+    /**
+     * Baked quads of a block state: {@code culled[face]} (order of
+     * {@link #faces()}) are hidden when that neighbour is a full cube,
+     * {@code unculled} always show.
+     */
+    public record ModelQuads(List<BakedQuad>[] culled, List<BakedQuad> unculled) {
+        @SuppressWarnings("unchecked")
+        static final ModelQuads NONE = new ModelQuads(new List[0], List.of());
+
+        public boolean isEmpty() {
+            if (!unculled.isEmpty()) {
+                return false;
+            }
+            for (List<BakedQuad> quads : culled) {
+                if (!quads.isEmpty()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    public static Direction[] faces() {
+        return FACES.clone();
+    }
+
+    public ModelQuads quadsOf(BlockState state) {
+        ModelQuads cached = quadCache.get(state);
+        if (cached != null) {
+            return cached;
+        }
+        ModelQuads resolved;
+        try {
+            resolved = resolveQuads(state);
+        } catch (RuntimeException | LinkageError error) {
+            resolved = ModelQuads.NONE;
+        }
+        quadCache.putIfAbsent(state, resolved);
+        return resolved;
+    }
+
+    @SuppressWarnings("unchecked")
+    private ModelQuads resolveQuads(BlockState state) {
+        BlockStateModel model = models.get(state);
+        if (model == null) {
+            return ModelQuads.NONE;
+        }
+        List<BlockStateModelPart> parts = new ArrayList<>();
+        model.collectParts(RandomSource.create(42L), parts);
+        List<BakedQuad>[] culled = new List[FACES.length];
+        for (int face = 0; face < FACES.length; face++) {
+            List<BakedQuad> quads = new ArrayList<>();
+            for (BlockStateModelPart part : parts) {
+                quads.addAll(part.getQuads(FACES[face]));
+            }
+            culled[face] = List.copyOf(quads);
+        }
+        List<BakedQuad> unculled = new ArrayList<>();
+        for (BlockStateModelPart part : parts) {
+            unculled.addAll(part.getQuads(null));
+        }
+        return new ModelQuads(culled, List.copyOf(unculled));
+    }
 
     public BlockAppearances(BlockStateModelSet models, SpriteTable sprites) {
         this.models = models;

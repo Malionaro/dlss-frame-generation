@@ -72,12 +72,40 @@ layout(std430, set = 0, binding = 13) buffer ExposureState {
     float exposure[2];
 } exposureState;
 
+// Model triangles of non-cube blocks (RtTriangleFormat.java): atlas UVs,
+// tint rgb | cutout << 24, flags as for boxes, face normal.
+struct TriangleAttributes {
+    vec4 uv01;
+    vec4 uv2TintFlags;
+    vec4 normal;
+};
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer TriangleList {
+    TriangleAttributes triangles[];
+};
+const uint TRIANGLE_CUTOUT = 1u << 24u;
+
+// A hit on a box or on a model triangle. For triangles, box only carries the
+// flags (so material and sky-light lookups work the same) and uv/tint hold
+// the texture lookup.
 struct Hit {
     float distance;
     BlockAabb box;
     vec3 normal;
     bool valid;
+    bool triangle;
+    vec2 uv;
+    uint tint;
 };
+
+TriangleAttributes fetchTriangle(uint section, uint primitive) {
+    return TriangleList(sectionBoxes[section]).triangles[primitive];
+}
+
+vec2 triangleUv(TriangleAttributes triangle, vec2 barycentrics) {
+    return triangle.uv01.xy * (1.0 - barycentrics.x - barycentrics.y)
+        + triangle.uv01.zw * barycentrics.x
+        + triangle.uv2TintFlags.xy * barycentrics.y;
+}
 
 BlockAabb fetchBox(uint section, uint primitive) {
     return BoxList(sectionBoxes[section]).boxes[primitive];
@@ -184,6 +212,22 @@ Hit traceRay(vec3 origin, vec3 direction, float minimumDistance, float maximumDi
 
     while (rayQueryProceedEXT(query)) {
         if (rayQueryGetIntersectionTypeEXT(query, false)
+                == gl_RayQueryCandidateIntersectionTriangleEXT) {
+            // Model triangle: skip by material, alpha-test cutout textures.
+            TriangleAttributes triangle = fetchTriangle(
+                rayQueryGetIntersectionInstanceCustomIndexEXT(query, false),
+                rayQueryGetIntersectionPrimitiveIndexEXT(query, false));
+            if ((floatBitsToUint(triangle.uv2TintFlags.w) & skipFlags) != 0u) {
+                continue;
+            }
+            if ((floatBitsToUint(triangle.uv2TintFlags.z) & TRIANGLE_CUTOUT) == 0u
+                    || textureLod(blockAtlas, triangleUv(triangle,
+                        rayQueryGetIntersectionBarycentricsEXT(query, false)), 0.0).a >= 0.5) {
+                rayQueryConfirmIntersectionEXT(query);
+            }
+            continue;
+        }
+        if (rayQueryGetIntersectionTypeEXT(query, false)
                 == gl_RayQueryCandidateIntersectionAABBEXT) {
             BlockAabb box = toScene(fetchBox(
                 rayQueryGetIntersectionInstanceCustomIndexEXT(query, false),
@@ -216,6 +260,9 @@ Hit traceRay(vec3 origin, vec3 direction, float minimumDistance, float maximumDi
     }
 
     Hit hit;
+    hit.triangle = false;
+    hit.uv = vec2(0.0);
+    hit.tint = 0xFFFFFFu;
     hit.valid = rayQueryGetIntersectionTypeEXT(query, true)
             != gl_RayQueryCommittedIntersectionNoneEXT;
     if (!hit.valid) {
@@ -225,6 +272,22 @@ Hit traceRay(vec3 origin, vec3 direction, float minimumDistance, float maximumDi
     }
 
     hit.distance = rayQueryGetIntersectionTEXT(query, true);
+    if (rayQueryGetIntersectionTypeEXT(query, true)
+            == gl_RayQueryCommittedIntersectionTriangleEXT) {
+        TriangleAttributes triangle = fetchTriangle(
+            rayQueryGetIntersectionInstanceCustomIndexEXT(query, true),
+            rayQueryGetIntersectionPrimitiveIndexEXT(query, true));
+        hit.triangle = true;
+        hit.uv = triangleUv(triangle, rayQueryGetIntersectionBarycentricsEXT(query, true));
+        hit.tint = floatBitsToUint(triangle.uv2TintFlags.z);
+        hit.box.minimumAndMaximumX = vec4(0.0);
+        hit.box.maximumYZColorFlags = vec4(0.0, 0.0, 0.0, triangle.uv2TintFlags.w);
+        hit.box.faces = uvec4(0u);
+        // Two-sided: the side the ray came from.
+        vec3 normal = normalize(triangle.normal.xyz);
+        hit.normal = dot(normal, direction) > 0.0 ? -normal : normal;
+        return hit;
+    }
     hit.box = toScene(fetchBox(
         rayQueryGetIntersectionInstanceCustomIndexEXT(query, true),
         rayQueryGetIntersectionPrimitiveIndexEXT(query, true)),
@@ -245,17 +308,18 @@ Hit traceRay(vec3 origin, vec3 direction, float minimumDistance, float maximumDi
     return hit;
 }
 
-// Closest hit: what the ray sees.
+// Closest hit: what the ray sees. No opaque override, so cutout triangles
+// reach the alpha test.
 Hit traceScene(vec3 origin, vec3 direction, float minimumDistance, float maximumDistance, uint skipFlags) {
     return traceRay(origin, direction, minimumDistance, maximumDistance, skipFlags,
-        gl_RayFlagsOpaqueEXT);
+        gl_RayFlagsNoneEXT);
 }
 
 // Any hit: enough for shadows and much cheaper, the traversal stops at the
 // first blocker instead of searching for the nearest one.
 Hit traceAny(vec3 origin, vec3 direction, float minimumDistance, float maximumDistance, uint skipFlags) {
     return traceRay(origin, direction, minimumDistance, maximumDistance, skipFlags,
-        gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT);
+        gl_RayFlagsTerminateOnFirstHitEXT);
 }
 
 vec3 unpackColor(float packedAsFloat) {
@@ -647,6 +711,19 @@ vec3 jitterTowards(vec3 direction, float radius) {
     return normalize(direction + tangent * (cos(angle) * r) + bitangent * (sin(angle) * r));
 }
 
+// Linear albedo at a hit: the atlas texel at the triangle's UV (tinted), or
+// the box face texture.
+vec3 albedoOfHit(Hit hit, vec3 point, vec3 normal) {
+    if (hit.triangle) {
+        vec3 texel = textureLod(blockAtlas, hit.uv, 0.0).rgb;
+        if ((hit.tint & 0xFFFFFFu) != 0xFFFFFFu) {
+            texel *= unpackRgb(hit.tint & 0xFFFFFFu);
+        }
+        return srgbToLinear(texel);
+    }
+    return srgbToLinear(surfaceColor(hit.box, point, normal).rgb);
+}
+
 vec3 albedoOf(BlockAabb box, vec3 point, vec3 normal) {
     return srgbToLinear(surfaceColor(box, point, normal).rgb);
 }
@@ -685,7 +762,7 @@ vec3 blockLighting(vec3 point, vec3 normal, int maximumLights) {
 // direct light with one shadow ray, sky ambient, block lights and emission.
 vec3 shadeSecondary(Hit hit, vec3 origin, vec3 direction, int maximumLights) {
     vec3 point = origin + direction * hit.distance;
-    vec3 albedo = albedoOf(hit.box, point, hit.normal);
+    vec3 albedo = albedoOfHit(hit, point, hit.normal);
     vec3 lightDirection = mainLightDirection();
     float nDotL = max(dot(hit.normal, lightDirection), 0.0);
     float sky = skyAccess(hit.box);
@@ -904,7 +981,7 @@ void main() {
     bool isGlass = (flags & FLAG_GLASS) != 0u;
     bool isMetallic = (flags & FLAG_METALLIC) != 0u;
     bool isReflective = (flags & FLAG_REFLECTIVE) != 0u;
-    vec3 albedo = albedoOf(primary.box, point, normal);
+    vec3 albedo = albedoOfHit(primary, point, normal);
     float sky = skyAccess(primary.box);
     float sun = sunAccess(primary.box);
 

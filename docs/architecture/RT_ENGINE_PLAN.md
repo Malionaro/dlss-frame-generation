@@ -9,11 +9,11 @@ active the RT engine stays off (as today).
 
 ## Stages
 
-1. **Sky and clouds** *(in progress)*: vanilla clouds are switched off while
+1. **Sky and clouds** *(done)*: vanilla clouds are switched off while
    RT runs in the overworld; volumetric clouds are ray-marched in the RT pass
    and lit by the sun with self-shadowing. Analytic sky for reflections and
    bounce light, light shafts, auto exposure, fog (done).
-2. **Real block geometry**: triangle BLAS from the baked block models (stairs,
+2. **Real block geometry** *(done, untested)*: triangle BLAS from the baked block models (stairs,
    plants, torches, cross models, rotated faces) instead of one box per
    collision shape; UVs from the model quads, so textures match the raster
    exactly.
