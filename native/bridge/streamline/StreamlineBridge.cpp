@@ -1209,6 +1209,10 @@ extern "C" JNIEXPORT jintArray JNICALL Java_org_malionaro_dlss_1frame_1generatio
     const int selectedMode = std::clamp(static_cast<int>(mode), 0, 6);
     uint32_t renderWidth = static_cast<uint32_t>(outputWidth);
     uint32_t renderHeight = static_cast<uint32_t>(outputHeight);
+    // Smallest render size the mode accepts for dynamic resolution; NGX
+    // rejects every frame below it (FAIL_InvalidParameter).
+    uint32_t minimumWidth = 0;
+    uint32_t minimumHeight = 0;
     sl::Result result = sl::Result::eErrorFeatureNotSupported;
 
     if (rayReconstruction == JNI_TRUE) {
@@ -1229,6 +1233,8 @@ extern "C" JNIEXPORT jintArray JNICALL Java_org_malionaro_dlss_1frame_1generatio
         result = slDLSSDGetOptimalSettings(options, settings);
         renderWidth = settings.optimalRenderWidth;
         renderHeight = settings.optimalRenderHeight;
+        minimumWidth = settings.renderWidthMin;
+        minimumHeight = settings.renderHeightMin;
     } else {
         if (!g_dlssSupported || selectedMode == 0) {
             jintArray empty = env->NewIntArray(0);
@@ -1248,6 +1254,8 @@ extern "C" JNIEXPORT jintArray JNICALL Java_org_malionaro_dlss_1frame_1generatio
         result = slDLSSGetOptimalSettings(options, settings);
         renderWidth = settings.optimalRenderWidth;
         renderHeight = settings.optimalRenderHeight;
+        minimumWidth = settings.renderWidthMin;
+        minimumHeight = settings.renderHeightMin;
     }
 
     if (result != sl::Result::eOk || renderWidth == 0 || renderHeight == 0) {
@@ -1258,16 +1266,23 @@ extern "C" JNIEXPORT jintArray JNICALL Java_org_malionaro_dlss_1frame_1generatio
         }
         return empty;
     }
+    if (minimumWidth == 0 || minimumHeight == 0) {
+        minimumWidth = renderWidth;
+        minimumHeight = renderHeight;
+    }
+    // optimal width, optimal height, minimum width, minimum height
     const jint values[] = {
         static_cast<jint>(renderWidth),
-        static_cast<jint>(renderHeight)
+        static_cast<jint>(renderHeight),
+        static_cast<jint>(minimumWidth),
+        static_cast<jint>(minimumHeight)
     };
-    jintArray dimensions = env->NewIntArray(2);
+    jintArray dimensions = env->NewIntArray(4);
     if (dimensions == nullptr || env->ExceptionCheck()) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         return nullptr;
     }
-    env->SetIntArrayRegion(dimensions, 0, 2, values);
+    env->SetIntArrayRegion(dimensions, 0, 4, values);
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
         return nullptr;

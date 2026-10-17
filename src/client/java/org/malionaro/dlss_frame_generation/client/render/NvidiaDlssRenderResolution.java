@@ -19,6 +19,8 @@ public final class NvidiaDlssRenderResolution {
     private static int cachedMode = -1;
     private static boolean cachedRayReconstruction;
     private static Resolution cachedResolution;
+    private static int cachedMinimumWidth;
+    private static int cachedMinimumHeight;
 
     private NvidiaDlssRenderResolution() {
     }
@@ -55,6 +57,7 @@ public final class NvidiaDlssRenderResolution {
                 && cachedRayReconstruction == useRayReconstruction) {
             return cachedResolution;
         }
+        cachedResolution = null;
 
         int[] optimal = null;
         try {
@@ -99,6 +102,9 @@ public final class NvidiaDlssRenderResolution {
             cachedMode = mode;
             cachedRayReconstruction = useRayReconstruction;
             cachedResolution = resolved;
+            boolean hasMinimum = optimal.length >= 4 && optimal[2] > 0 && optimal[3] > 0;
+            cachedMinimumWidth = hasMinimum ? Math.min(renderWidth, optimal[2]) : renderWidth;
+            cachedMinimumHeight = hasMinimum ? Math.min(renderHeight, optimal[3]) : renderHeight;
         }
         return resolved;
     }
@@ -164,6 +170,25 @@ public final class NvidiaDlssRenderResolution {
      * whole number of those units and the ratio is exact; otherwise both sides
      * come from the same scale, rounded to even values.</p>
      */
+    /**
+     * Smallest render size dynamic resolution may use for {@code resolution},
+     * or null when the upscaler accepts any size (FSR). DLSS reports a range
+     * per mode and rejects every frame outside it; DLAA allows no scaling, and
+     * without the native query DRS stays at the optimal size.
+     */
+    public static int[] minimumRenderSize(Resolution resolution) {
+        if (resolution == null) {
+            return null;
+        }
+        if (resolution == cachedResolution) {
+            return new int[] {cachedMinimumWidth, cachedMinimumHeight};
+        }
+        if (resolution.mode() == 1) {
+            return new int[] {resolution.outputWidth(), resolution.outputHeight()};
+        }
+        return null;
+    }
+
     public static int[] aspectPreservingSize(int outputWidth, int outputHeight, double ratio) {
         int safeWidth = Math.max(1, outputWidth);
         int safeHeight = Math.max(1, outputHeight);

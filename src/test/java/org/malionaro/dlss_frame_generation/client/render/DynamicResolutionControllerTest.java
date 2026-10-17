@@ -14,7 +14,7 @@ public class DynamicResolutionControllerTest {
                 new DynamicResolutionController();
         NvidiaDlssRenderResolution.Resolution base =
                 NvidiaDlssRenderResolution.resolveTemporal(
-                        1920, 1080, 1, true
+                        1920, 1080, 2, true
                 );
 
         for (int index = 0; index < 36; index++) {
@@ -22,8 +22,8 @@ public class DynamicResolutionControllerTest {
         }
         NvidiaDlssRenderResolution.Resolution reduced =
                 controller.apply(base, true);
-        assertTrue(reduced.renderWidth() < 1920);
-        assertTrue(reduced.renderHeight() < 1080);
+        assertTrue(reduced.renderWidth() < base.renderWidth());
+        assertTrue(reduced.renderHeight() < base.renderHeight());
         // DRS keeps the exact window aspect: the projection uses the window
         // size, so any aspect drift shows up as a wobbling image.
         assertEquals(1920L * reduced.renderHeight(), 1080L * reduced.renderWidth());
@@ -33,6 +33,20 @@ public class DynamicResolutionControllerTest {
             controller.recordFrameTime(2.0f, 120, true);
         }
         assertTrue(controller.scale() <= loadedScale + 0.0251f);
+    }
+
+    @Test
+    public void dlaaIsNeverScaledBelowNative() {
+        DynamicResolutionController controller = new DynamicResolutionController();
+        NvidiaDlssRenderResolution.Resolution base =
+                NvidiaDlssRenderResolution.resolveTemporal(1920, 1080, 1, true);
+        for (int index = 0; index < 36; index++) {
+            controller.recordFrameTime(20.0f, 120, true);
+        }
+        NvidiaDlssRenderResolution.Resolution applied = controller.apply(base, true);
+        // NGX rejects DLAA frames below its minimum and the image freezes.
+        assertEquals(1920, applied.renderWidth());
+        assertEquals(1080, applied.renderHeight());
     }
 
     @Test

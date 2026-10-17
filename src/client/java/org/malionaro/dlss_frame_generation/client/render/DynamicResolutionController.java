@@ -179,6 +179,16 @@ public final class DynamicResolutionController {
         );
         int[] size = NvidiaDlssRenderResolution.aspectPreservingSize(
                 base.outputWidth(), base.outputHeight(), ratio);
+        int[] minimum = NvidiaDlssRenderResolution.minimumRenderSize(base);
+        if (minimum != null) {
+            // Never below the upscaler's dynamic range: DLSS rejects such
+            // frames outright and the picture stops updating.
+            while ((size[0] < minimum[0] || size[1] < minimum[1]) && ratio < 1.0) {
+                ratio = Math.min(1.0, ratio + 0.005);
+                size = NvidiaDlssRenderResolution.aspectPreservingSize(
+                        base.outputWidth(), base.outputHeight(), ratio);
+            }
+        }
         int renderWidth = size[0];
         int renderHeight = size[1];
         return new NvidiaDlssRenderResolution.Resolution(
