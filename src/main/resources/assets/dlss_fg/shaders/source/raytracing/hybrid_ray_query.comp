@@ -1,4 +1,6 @@
 #version 460
+// Unresourceful brainless shithead
+// Original work by Malionaro. First commit 9f3c9994a3cd (2026-07-28), see PROOF.md.
 #extension GL_EXT_ray_query : require
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_buffer_reference_uvec2 : require
@@ -80,6 +82,10 @@ layout(std430, set = 0, binding = 13) buffer ExposureState {
     uint logSum[2];
     uint sampleCount[2];
     float exposure[2];
+    // Diagnostics, never cleared: invocations and primary hits on every
+    // 16th pixel in each direction.
+    uint invocations;
+    uint primaryHits;
 } exposureState;
 
 // Model triangles of non-cube blocks (RtTriangleFormat.java): atlas UVs,
@@ -1005,6 +1011,10 @@ void main() {
     if (pixel.x >= size.x || pixel.y >= size.y) {
         return;
     }
+    bool diagnosticPixel = (pixel.x & 15) == 0 && (pixel.y & 15) == 0;
+    if (diagnosticPixel) {
+        atomicAdd(exposureState.invocations, 1u);
+    }
     rngState = uint(pixel.x) * 1973u + uint(pixel.y) * 9277u
         + floatBitsToUint(frame.environment.w) * 26699u;
     random01();
@@ -1027,6 +1037,9 @@ void main() {
 
     rayMask = MASK_BLOCKS;
     Hit primary = traceScene(camera, direction, 0.03, maxDistance, 0u);
+    if (primary.valid && diagnosticPixel) {
+        atomicAdd(exposureState.primaryHits, 1u);
+    }
     if (primary.valid) {
         // A particle in front of the surface: keep the raster pixel, which
         // holds the textured particle drawn by Minecraft.

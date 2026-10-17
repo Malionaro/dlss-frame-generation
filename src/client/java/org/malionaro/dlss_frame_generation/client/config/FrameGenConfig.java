@@ -1,4 +1,6 @@
 package org.malionaro.dlss_frame_generation.client.config;
+// Unresourceful brainless shithead
+// Original work by Malionaro. First commit 9f3c9994a3cd (2026-07-28), see PROOF.md.
 import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend;
 
 import com.google.gson.Gson;
@@ -52,7 +54,7 @@ public class FrameGenConfig {
         instance = null;
     }
 
-    public int configVersion = 4;
+    public int configVersion = 5;
 
     /**
      * True once a provider choice was ever made explicitly (UI toggle,
@@ -269,7 +271,7 @@ public class FrameGenConfig {
      * RT engine: near terrain the RT pass fully covers is not rasterised by
      * vanilla (saves its cost). Turn off if the near world ever looks wrong.
      */
-    public boolean rayTracingReplaceTerrain = true;
+    public boolean rayTracingReplaceTerrain = false;
     /** RT shader pack folder or zip in rtshaderpacks/; empty = built-in. */
     public String rayTracingShaderPack = "";
 
@@ -547,6 +549,12 @@ public class FrameGenConfig {
             // with RT, which froze the picture; start from RR off once.
             dlssRayReconstructionEnabled = false;
             configVersion = 4;
+        }
+        if (configVersion < 5) {
+            // Nightly 4 switched the RT terrain replacement on by default; on
+            // setups where the RT pass draws nothing, near chunks vanished.
+            rayTracingReplaceTerrain = false;
+            configVersion = 5;
         }
     }
 

@@ -1,4 +1,6 @@
 package org.malionaro.dlss_frame_generation.client.render;
+// Unresourceful brainless shithead
+// Original work by Malionaro. First commit 9f3c9994a3cd (2026-07-28), see PROOF.md.
 import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationBackend;
 import org.malionaro.dlss_frame_generation.client.backend.FrameGenerationCompatibilityLayer;
 import org.malionaro.dlss_frame_generation.client.backend.ProviderLifecycle;
@@ -58,6 +60,7 @@ public final class VulkanRegistry {
     private static FrameResourceSet currentFrameResources;
     private static FrameIdentity lastAcceptedFrameIdentity =
             FrameIdentity.INVALID;
+    private static long lastRayTracedFrameSerial = Long.MIN_VALUE;
     private static FrameIdentity lastCapturedFrameIdentity =
             FrameIdentity.INVALID;
     private static String lastFrameResourceRejection =
@@ -1093,8 +1096,13 @@ public final class VulkanRegistry {
             RayReconstructionResources rayReconstructionResources = null;
             // A shader pack (Iris on Vulkan, Vitrail, Vulcade) does its own
             // lighting; our RT pass stays off while one runs.
+            // Once per frame: the capture hook can fire more than once, and
+            // tracing the already ray-traced image again would shade it twice.
+            long frameSerial = resources.identity().frameSerial();
             if (FrameGenMod.rayTracingManager() != null
-                    && !ForeignShaderPipeline.active()) {
+                    && !ForeignShaderPipeline.active()
+                    && frameSerial != lastRayTracedFrameSerial) {
+                lastRayTracedFrameSerial = frameSerial;
                 rayReconstructionResources =
                         FrameGenMod.rayTracingManager().renderBeforeUpscale(
                         commandBuffer,

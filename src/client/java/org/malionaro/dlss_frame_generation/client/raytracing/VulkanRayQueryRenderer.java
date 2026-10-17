@@ -1,4 +1,6 @@
 package org.malionaro.dlss_frame_generation.client.raytracing;
+// Unresourceful brainless shithead
+// Original work by Malionaro. First commit 9f3c9994a3cd (2026-07-28), see PROOF.md.
 
 import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
 import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
@@ -109,7 +111,14 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
      * float exposure[2]. Frame parity p accumulates into [p] while the shader
      * exposes with what frame p-1 left in [1-p].
      */
-    private static final int EXPOSURE_BYTES = 24;
+    /**
+     * Plus two monotonic diagnostic counters (never cleared): shader
+     * invocations and primary hits, each sampled on every 16th pixel in
+     * both directions. Read back for the timing log.
+     */
+    private static final int EXPOSURE_BYTES = 32;
+    private long lastInvocations;
+    private long lastPrimaryHits;
     /** GPU timestamps around the trace, two per slot, read once the slot is idle. */
     private long timestampPool = NULL;
     private double timestampPeriodNanos = 1.0;
@@ -449,11 +458,30 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             return;
         }
         double seconds = (now - lastTimingLogNanos) / 1.0e9;
-        logger.info("RT pass: {} frames/s, GPU {} ms, CPU {} ms per frame; {}",
+        long invocations = 0;
+        long primaryHits = 0;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            PointerBuffer mapped = stack.mallocPointer(1);
+            if (vkMapMemory(device, exposureBuffer.memory, 0, EXPOSURE_BYTES, 0, mapped) == VK_SUCCESS) {
+                invocations = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 24));
+                primaryHits = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 28));
+                vkUnmapMemory(device, exposureBuffer.memory);
+            }
+        }
+        long frames = Math.max(1, cpuSamples);
+        // Expected per frame: (width / 16) * (height / 16) sampled invocations.
+        logger.info("RT pass: {} frames/s, GPU {} ms, CPU {} ms per frame; {} x {} px, "
+                        + "{} sampled invocations and {} primary hits per frame (expected {}); {}",
                 String.format(java.util.Locale.ROOT, "%.1f", cpuSamples / seconds),
                 gpuSamples > 0 ? String.format(java.util.Locale.ROOT, "%.2f", gpuMillisSum / gpuSamples) : "n/a",
                 String.format(java.util.Locale.ROOT, "%.2f", cpuMillisSum / cpuSamples),
+                outputWidth, outputHeight,
+                (invocations - lastInvocations) / frames,
+                (primaryHits - lastPrimaryHits) / frames,
+                ((outputWidth + 15) / 16) * ((outputHeight + 15) / 16),
                 sceneStatus());
+        lastInvocations = invocations;
+        lastPrimaryHits = primaryHits;
         lastTimingLogNanos = now;
         gpuMillisSum = 0.0;
         cpuMillisSum = 0.0;
