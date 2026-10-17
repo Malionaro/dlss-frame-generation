@@ -2,6 +2,9 @@ package org.malionaro.dlss_frame_generation.client.raytracing;
 
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -12,6 +15,8 @@ import org.malionaro.dlss_frame_generation.client.mixin.GameRendererAccessor;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.List;
 
 public record RayTracingFrameData(
         float cameraX, float cameraY, float cameraZ,
@@ -21,9 +26,16 @@ public record RayTracingFrameData(
         float nearPlane, float farPlane,
         boolean reflections, int samples, int quality,
         float reflectionRange, // meters
-        float jitterX, float jitterY
+        float jitterX, float jitterY,
+        float rain, float thunder, float timeSeconds, int frameIndex,
+        int originX, int originY, int originZ, boolean overworld,
+        float[] entityBoxes, int entityCount
 ) {
-    public static final int BYTE_SIZE = 112;
+    /** Entities cast RT shadows as boxes; the nearest ones are kept. */
+    public static final int MAX_ENTITIES = 32;
+    public static final int BYTE_SIZE = 112 + 48 + MAX_ENTITIES * 32;
+    private static final long START_NANOS = System.nanoTime();
+    private static int frameCounter;
 
     /** Camera position of the current frame, or null without a camera. */
     public static Vec3 cameraPosition(Minecraft minecraft) {
@@ -75,19 +87,16 @@ public record RayTracingFrameData(
                 24_000L
         ) / 24_000.0;
         double sunAngle = (dayFraction - 0.25) * Math.PI * 2.0;
+        // Below the horizon at night; the shader lights with the moon then.
         Vector3f sunDirection = new Vector3f(
                 (float) Math.sin(sunAngle),
                 (float) Math.cos(sunAngle),
                 0.22f
         ).normalize();
-        // Clamped horizon - when sun is below horizon (<0) clamp Y to keep shading stable (ambient fallback)
-        if (sunDirection.y < 0.0f) {
-            sunDirection.y = Math.max(sunDirection.y, 0.05f);
-            if (sunDirection.y < 0.05f) {
-                sunDirection.y = 0.05f;
-            }
-            sunDirection.normalize();
-        }
+        float partialTick = minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(true);
+        float[] entityBoxes = new float[MAX_ENTITIES * 6];
+        int entityCount = collectEntityBoxes(minecraft, position, config.rayTracingMaxDistance,
+                partialTick, originX, originY, originZ, entityBoxes);
 
         float maxDistance = config.rayTracingMaxDistance;
         // Quality selects an explicit reflection range instead of leaking
@@ -126,8 +135,52 @@ public record RayTracingFrameData(
                 maxDistance * reflectionFraction,
                 // Rays go through the same jittered sample point as the raster.
                 VulkanRegistry.jitterPixelsX(),
-                VulkanRegistry.jitterPixelsY()
+                VulkanRegistry.jitterPixelsY(),
+                minecraft.level.getRainLevel(partialTick),
+                minecraft.level.getThunderLevel(partialTick),
+                (float) (((System.nanoTime() - START_NANOS) / 1.0e9) % 3600.0),
+                frameCounter++,
+                originX, originY, originZ,
+                minecraft.level.dimension() == Level.OVERWORLD,
+                entityBoxes,
+                entityCount
         );
+    }
+
+    /** Writes the nearest entity boxes, relative to the scene origin, and returns their count. */
+    private static int collectEntityBoxes(Minecraft minecraft, Vec3 camera, float range, float partialTick,
+                                          int originX, int originY, int originZ, float[] boxes) {
+        List<AABB> candidates = new ArrayList<>();
+        List<Double> distances = new ArrayList<>();
+        for (Entity entity : minecraft.level.entitiesForRendering()) {
+            if (entity.isRemoved() || entity.isInvisible()) {
+                continue;
+            }
+            Vec3 position = entity.getPosition(partialTick);
+            double distanceSquared = position.distanceToSqr(camera);
+            if (distanceSquared > range * (double) range) {
+                continue;
+            }
+            candidates.add(entity.getBoundingBox().move(position.subtract(entity.position())));
+            distances.add(distanceSquared);
+        }
+        Integer[] order = new Integer[candidates.size()];
+        for (int index = 0; index < order.length; index++) {
+            order[index] = index;
+        }
+        java.util.Arrays.sort(order, (a, b) -> Double.compare(distances.get(a), distances.get(b)));
+        int count = Math.min(MAX_ENTITIES, order.length);
+        for (int slot = 0; slot < count; slot++) {
+            AABB box = candidates.get(order[slot]);
+            int at = slot * 6;
+            boxes[at] = (float) (box.minX - originX);
+            boxes[at + 1] = (float) (box.minY - originY);
+            boxes[at + 2] = (float) (box.minZ - originZ);
+            boxes[at + 3] = (float) (box.maxX - originX);
+            boxes[at + 4] = (float) (box.maxY - originY);
+            boxes[at + 5] = (float) (box.maxZ - originZ);
+        }
+        return count;
     }
 
     public ByteBuffer toNativeBuffer() {
@@ -146,6 +199,17 @@ public record RayTracingFrameData(
                 samples
         );
         putVec4(data, reflectionRange, jitterX, jitterY, 0.0f);
+        putVec4(data, rain, thunder, timeSeconds, Float.intBitsToFloat(frameIndex));
+        putVec4(data, originX, originY, originZ, Float.intBitsToFloat(entityCount));
+        putVec4(data, overworld ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+        for (int slot = 0; slot < MAX_ENTITIES; slot++) {
+            int at = slot * 6;
+            boolean used = slot < entityCount;
+            putVec4(data, used ? entityBoxes[at] : 0, used ? entityBoxes[at + 1] : 0,
+                    used ? entityBoxes[at + 2] : 0, 0.0f);
+            putVec4(data, used ? entityBoxes[at + 3] : 0, used ? entityBoxes[at + 4] : 0,
+                    used ? entityBoxes[at + 5] : 0, 0.0f);
+        }
         return data.flip();
     }
 

@@ -38,6 +38,10 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 renderParameters; // tanHalfFov, aspect, maxDistance, reflection enabled
     vec4 sunDirectionAndSamples;
     vec4 reflectionParams; // x = reflection range in meters, yz = sub-pixel jitter
+    vec4 environment; // rain, thunder, seconds, frame index (uint bits)
+    vec4 worldOrigin; // scene origin in world blocks, w = entity count (int bits)
+    vec4 skyParams; // x = overworld (has sun and sky)
+    vec4 entities[64]; // per entity: min.xyz, max.xyz relative to the scene origin
 } frame;
 layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D noisyColorImage;
 layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D diffuseAlbedoImage;
@@ -153,7 +157,9 @@ bool slabs(vec3 origin, vec3 direction, vec3 minimum, vec3 maximum,
 }
 
 
-Hit traceScene(vec3 origin, vec3 direction, float minimumDistance, float maximumDistance) {
+// skipFlags: boxes with any of these flags are passed through (refraction
+// through water or glass).
+Hit traceScene(vec3 origin, vec3 direction, float minimumDistance, float maximumDistance, uint skipFlags) {
     rayQueryEXT query;
     rayQueryInitializeEXT(
         query,
@@ -173,6 +179,9 @@ Hit traceScene(vec3 origin, vec3 direction, float minimumDistance, float maximum
                 rayQueryGetIntersectionInstanceCustomIndexEXT(query, false),
                 rayQueryGetIntersectionPrimitiveIndexEXT(query, false)),
                 origin - rayQueryGetIntersectionObjectRayOriginEXT(query, false));
+            if ((floatBitsToUint(box.maximumYZColorFlags.w) & skipFlags) != 0u) {
+                continue;
+            }
             float nearDistance;
             float farDistance;
             vec3 nearNormal;
@@ -335,237 +344,487 @@ vec3 reconstructRasterNormal(
 // values z-fight at grazing angles.
 const float RASTER_DEPTH_TOLERANCE_METERS = 0.15;
 
+// ---------------------------------------------------------------------------
+// Lighting. Everything inside the RT range is lit here from the block
+// textures (albedo) instead of reusing vanilla's baked lighting: sun or moon
+// with soft shadows, sky light with one bounce, block lights, emission,
+// specular from water, metals, glass and rain-wet ground, and atmospheric
+// fog. Outside the range the raster image stays, blended at the edge.
+// ---------------------------------------------------------------------------
+
+const uint FLAG_REFLECTIVE = 1u;
+const uint FLAG_WATER = 2u;
+const uint FLAG_GLASS = 4u;
+const uint FLAG_EMISSIVE = 8u;
+const uint FLAG_METALLIC = 16u;
+const float CLOUD_HEIGHT = 192.33;
+const float PI = 3.14159265;
+
+uint boxFlags(BlockAabb box) {
+    return floatBitsToUint(box.maximumYZColorFlags.w);
+}
+
+bool overworld() {
+    return frame.skyParams.x > 0.5;
+}
+
+float rainLevel() {
+    return frame.environment.x;
+}
+
+uint rngState;
+
+float random01() {
+    rngState = rngState * 747796405u + 2891336453u;
+    uint word = ((rngState >> ((rngState >> 28u) + 4u)) ^ rngState) * 277803737u;
+    return float((word >> 22u) ^ word) / 4294967296.0;
+}
+
+vec3 cosineHemisphere(vec3 normal) {
+    float u = random01();
+    float v = random01();
+    float radius = sqrt(u);
+    float angle = 2.0 * PI * v;
+    vec3 tangent = normalize(abs(normal.y) < 0.95
+        ? cross(normal, vec3(0.0, 1.0, 0.0))
+        : cross(normal, vec3(1.0, 0.0, 0.0)));
+    vec3 bitangent = cross(normal, tangent);
+    return normalize(tangent * (radius * cos(angle))
+        + bitangent * (radius * sin(angle))
+        + normal * sqrt(max(0.0, 1.0 - u)));
+}
+
+float hash2(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float valueNoise(vec2 p) {
+    vec2 cell = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(hash2(cell), hash2(cell + vec2(1.0, 0.0)), f.x),
+        mix(hash2(cell + vec2(0.0, 1.0)), hash2(cell + vec2(1.0, 1.0)), f.x),
+        f.y);
+}
+
+float fbm(vec2 p) {
+    float sum = 0.0;
+    float amplitude = 0.5;
+    for (int octave = 0; octave < 4; octave++) {
+        sum += amplitude * valueNoise(p);
+        p = p * 2.03 + vec2(17.1, 9.7);
+        amplitude *= 0.5;
+    }
+    return sum;
+}
+
+// Direction towards the light that currently lights the world: the sun by
+// day, the moon (opposite side) by night.
+vec3 mainLightDirection() {
+    vec3 sun = normalize(frame.sunDirectionAndSamples.xyz);
+    return sun.y > -0.05 ? sun : -sun;
+}
+
+vec3 mainLightColor() {
+    if (!overworld()) {
+        return vec3(0.0);
+    }
+    vec3 sun = normalize(frame.sunDirectionAndSamples.xyz);
+    float weather = 1.0 - 0.75 * rainLevel() - 0.15 * frame.environment.y;
+    if (sun.y > -0.05) {
+        float height = clamp(sun.y, 0.0, 1.0);
+        vec3 tint = mix(vec3(1.0, 0.45, 0.2), vec3(1.0, 0.96, 0.9), smoothstep(0.0, 0.35, height));
+        return tint * 2.6 * smoothstep(-0.05, 0.12, sun.y) * weather;
+    }
+    return vec3(0.35, 0.42, 0.6) * 0.18 * smoothstep(0.05, 0.25, -sun.y) * weather;
+}
+
+// Analytic sky: Rayleigh-like gradient, Mie glow around the sun, sunset
+// tint, rain grey, dark night sky. Linear radiance.
+vec3 skyRadiance(vec3 direction) {
+    if (!overworld()) {
+        return vec3(0.05, 0.03, 0.03);
+    }
+    vec3 sun = normalize(frame.sunDirectionAndSamples.xyz);
+    float day = smoothstep(-0.15, 0.2, sun.y);
+    float up = clamp(direction.y, 0.0, 1.0);
+    vec3 zenith = vec3(0.18, 0.38, 0.85);
+    vec3 horizon = vec3(0.65, 0.78, 0.95);
+    vec3 sky = mix(horizon, zenith, pow(up, 0.55));
+    float sunset = (1.0 - smoothstep(0.0, 0.35, abs(sun.y))) * day;
+    float towardsSun = max(dot(direction, sun), 0.0);
+    sky = mix(sky, vec3(1.0, 0.5, 0.25), sunset * pow(1.0 - up, 3.0) * (0.3 + 0.7 * towardsSun));
+    sky += vec3(1.0, 0.85, 0.6) * pow(towardsSun, 8.0) * 0.6 * day;
+    sky *= mix(0.012, 1.2, day);
+    vec3 grey = vec3(0.42, 0.45, 0.5) * mix(0.01, 0.7, day);
+    sky = mix(sky, grey, clamp(rainLevel(), 0.0, 1.0) * 0.85);
+    if (direction.y < 0.0) {
+        // Below the horizon: darker ground bounce instead of a mirrored sky.
+        sky *= mix(1.0, 0.35, clamp(-direction.y * 3.0, 0.0, 1.0));
+    }
+    return sky;
+}
+
+// Cloud layer at vanilla cloud height, drifting with time.
+vec4 cloudLayer(vec3 origin, vec3 direction) {
+    if (!overworld() || abs(direction.y) < 1.0e-3) {
+        return vec4(0.0);
+    }
+    float planeY = CLOUD_HEIGHT - frame.worldOrigin.y;
+    float t = (planeY - origin.y) / direction.y;
+    if (t <= 0.0 || t > 4000.0) {
+        return vec4(0.0);
+    }
+    vec2 world = (origin.xz + direction.xz * t + frame.worldOrigin.xz) / 96.0
+        + vec2(frame.environment.z * 0.012, 0.0);
+    float density = fbm(world);
+    float cover = mix(0.55, 0.3, rainLevel());
+    float alpha = smoothstep(cover, cover + 0.2, density) * (1.0 - smoothstep(1500.0, 4000.0, t));
+    vec3 sun = normalize(frame.sunDirectionAndSamples.xyz);
+    float day = smoothstep(-0.15, 0.2, sun.y);
+    vec3 lit = mix(vec3(0.02), vec3(1.25, 1.22, 1.18), day) * mix(1.0, 0.5, rainLevel());
+    vec3 shade = lit * mix(0.65, 1.0, fbm(world * 2.0 + 3.0));
+    return vec4(shade, alpha);
+}
+
+vec3 skyWithClouds(vec3 origin, vec3 direction) {
+    vec3 sky = skyRadiance(direction);
+    vec4 clouds = cloudLayer(origin, direction);
+    return mix(sky, clouds.rgb, clouds.a);
+}
+
+// Ray against the entity boxes (shadow casters only).
+bool hitsEntity(vec3 origin, vec3 direction, float maximumDistance) {
+    int count = min(floatBitsToInt(frame.worldOrigin.w), 32);
+    for (int index = 0; index < count; index++) {
+        vec3 minimum = frame.entities[index * 2].xyz;
+        vec3 maximum = frame.entities[index * 2 + 1].xyz;
+        float nearDistance;
+        float farDistance;
+        vec3 nearNormal;
+        vec3 farNormal;
+        if (slabs(origin, direction, minimum, maximum,
+                nearDistance, farDistance, nearNormal, farNormal)
+                && nearDistance > 0.05 && nearDistance < maximumDistance) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Light that reaches the point from the main light along lightDirection;
+// water and glass let part of it through.
+float lightVisibility(vec3 point, vec3 normal, vec3 lightDirection, bool entities) {
+    vec3 origin = point + normal * 0.03;
+    Hit blocker = traceScene(origin, lightDirection, 0.03, frame.renderParameters.z, 0u);
+    float visibility = 1.0;
+    if (blocker.valid) {
+        uint flags = boxFlags(blocker.box);
+        visibility = (flags & FLAG_GLASS) != 0u ? 0.7 : ((flags & FLAG_WATER) != 0u ? 0.55 : 0.0);
+    }
+    if (visibility > 0.0 && entities && hitsEntity(origin, lightDirection, frame.renderParameters.z)) {
+        visibility = 0.0;
+    }
+    return visibility;
+}
+
+vec3 jitterTowards(vec3 direction, float radius) {
+    float angle = 2.0 * PI * random01();
+    float r = radius * sqrt(random01());
+    vec3 tangent = normalize(abs(direction.y) < 0.95
+        ? cross(direction, vec3(0.0, 1.0, 0.0))
+        : cross(direction, vec3(1.0, 0.0, 0.0)));
+    vec3 bitangent = cross(direction, tangent);
+    return normalize(direction + tangent * (cos(angle) * r) + bitangent * (sin(angle) * r));
+}
+
+vec3 albedoOf(BlockAabb box, vec3 point, vec3 normal) {
+    return srgbToLinear(surfaceColor(box, point, normal).rgb);
+}
+
+// Block lights (torches, lanterns, lava) with shadow rays.
+vec3 blockLighting(vec3 point, vec3 normal, int maximumLights) {
+    vec3 sum = vec3(0.0);
+    uint count = min(lightCount, uint(maximumLights));
+    for (uint index = 0u; index < count; index++) {
+        vec3 toLight = lights[index].positionAndRadius.xyz - point;
+        float radius = lights[index].positionAndRadius.w;
+        float distanceToLight = length(toLight);
+        if (distanceToLight >= radius || distanceToLight < 0.02) {
+            continue;
+        }
+        vec3 direction = toLight / distanceToLight;
+        float nDotL = max(dot(normal, direction), 0.0);
+        if (nDotL < 0.001) {
+            continue;
+        }
+        Hit blocker = traceScene(point + normal * 0.03, direction, 0.03, distanceToLight - 0.04, 0u);
+        float visibility = blocker.valid
+            ? ((boxFlags(blocker.box) & FLAG_GLASS) != 0u ? 0.65 : 0.0) : 1.0;
+        if (visibility <= 0.0) {
+            continue;
+        }
+        float falloff = clamp(1.0 - pow(distanceToLight / radius, 2.0), 0.0, 1.0);
+        falloff = falloff * falloff / (1.0 + 0.35 * distanceToLight * distanceToLight);
+        sum += lights[index].colorAndIntensity.rgb * lights[index].colorAndIntensity.w
+            * (nDotL * falloff * visibility);
+    }
+    return sum;
+}
+
+// Cheap shading for secondary hits (bounce light, reflections, refraction):
+// direct light with one shadow ray, sky ambient, block lights and emission.
+vec3 shadeSecondary(Hit hit, vec3 origin, vec3 direction) {
+    vec3 point = origin + direction * hit.distance;
+    vec3 albedo = albedoOf(hit.box, point, hit.normal);
+    vec3 lightDirection = mainLightDirection();
+    float nDotL = max(dot(hit.normal, lightDirection), 0.0);
+    vec3 light = vec3(0.0);
+    if (nDotL > 0.0) {
+        light += mainLightColor() * nDotL * lightVisibility(point, hit.normal, lightDirection, false);
+    }
+    float skyFacing = 0.35 + 0.65 * clamp(hit.normal.y * 0.5 + 0.5, 0.0, 1.0);
+    light += skyRadiance(vec3(0.0, 1.0, 0.0)) * 0.35 * skyFacing;
+    light += blockLighting(point, hit.normal, 4);
+    vec3 color = albedo * light;
+    if ((boxFlags(hit.box) & FLAG_EMISSIVE) != 0u) {
+        color += albedo * 2.0;
+    }
+    return color;
+}
+
+// Sky light and one bounce, cosine-sampled. Denoised by Ray Reconstruction,
+// accumulated by DLSS otherwise.
+vec3 indirectLighting(vec3 point, vec3 normal, int sampleCount) {
+    vec3 sum = vec3(0.0);
+    for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+        vec3 direction = cosineHemisphere(normal);
+        Hit bounce = traceScene(point + normal * 0.03, direction, 0.03, 32.0, 0u);
+        if (!bounce.valid) {
+            sum += skyRadiance(direction);
+        } else if ((boxFlags(bounce.box) & (FLAG_WATER | FLAG_GLASS)) != 0u) {
+            sum += skyRadiance(direction) * 0.6;
+        } else {
+            sum += shadeSecondary(bounce, point + normal * 0.03, direction);
+        }
+    }
+    return sum / float(sampleCount);
+}
+
+vec3 applyFog(vec3 color, vec3 direction, float distanceToPoint) {
+    float density = mix(0.0022, 0.012, rainLevel());
+    if (!overworld()) {
+        density = 0.006;
+    }
+    float fog = 1.0 - exp(-distanceToPoint * density);
+    vec3 fogColor = skyRadiance(normalize(vec3(direction.x, max(direction.y, 0.02), direction.z)));
+    return mix(color, fogColor, clamp(fog, 0.0, 0.85));
+}
+
+float fresnelSchlick(float f0, float cosine) {
+    return f0 + (1.0 - f0) * pow(1.0 - clamp(cosine, 0.0, 1.0), 5.0);
+}
+
+// Animated water surface normal (small waves), anchored in world space.
+vec3 waterNormal(vec3 point) {
+    vec2 world = point.xz + frame.worldOrigin.xz;
+    vec2 drift = vec2(frame.environment.z * 0.35, frame.environment.z * 0.21);
+    float eps = 0.08;
+    float h = fbm(world * 0.9 + drift);
+    float hx = fbm((world + vec2(eps, 0.0)) * 0.9 + drift);
+    float hz = fbm((world + vec2(0.0, eps)) * 0.9 + drift);
+    float strength = mix(0.06, 0.12, rainLevel());
+    return normalize(vec3((h - hx) / eps * strength, 1.0, (h - hz) / eps * strength));
+}
+
 void main() {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(targetImage);
     if (pixel.x >= size.x || pixel.y >= size.y) {
         return;
     }
+    rngState = uint(pixel.x) * 1973u + uint(pixel.y) * 9277u
+        + floatBitsToUint(frame.environment.w) * 26699u;
+    random01();
 
     vec3 direction = rayDirectionForPixel(pixel, size);
+    vec3 camera = frame.cameraPosition.xyz;
+    float maxDistance = frame.renderParameters.z;
+    int sampleCount = clamp(int(frame.sunDirectionAndSamples.w), 1, 8);
+    vec3 lightDirection = mainLightDirection();
+    vec3 lightColor = mainLightColor();
 
-    Hit primary = traceScene(
-        frame.cameraPosition.xyz,
-        direction,
-        0.03,
-        frame.renderParameters.z
-    );
+    Hit primary = traceScene(camera, direction, 0.03, maxDistance, 0u);
     vec4 raster = imageLoad(targetImage, pixel);
     vec3 linearRaster = srgbToLinear(max(raster.rgb, vec3(0.0)));
     float hardwareDepth = texelFetch(rasterDepth, pixel, 0).r;
-    float rasterRayDistance =
-        rayDistanceForDepth(hardwareDepth, direction);
-    bool rasterGeometryIsCloser = hardwareDepth > 0.0
-        && primary.valid
-        && rasterRayDistance + RASTER_DEPTH_TOLERANCE_METERS < primary.distance;
-    if (rasterGeometryIsCloser) {
+    float rasterRayDistance = rayDistanceForDepth(hardwareDepth, direction);
+    if (hardwareDepth > 0.0 && primary.valid
+            && rasterRayDistance + RASTER_DEPTH_TOLERANCE_METERS < primary.distance) {
         primary.valid = false;
     }
+
     if (!primary.valid) {
-        imageStore(noisyColorImage, pixel, vec4(linearRaster, 1.0));
-        imageStore(diffuseAlbedoImage, pixel, vec4(linearRaster, 1.0));
+        // Raster only: entities, the hand, particles, sky and everything
+        // beyond the RT range. Entities still receive RT shadows.
+        vec3 normal = reconstructRasterNormal(pixel, size, hardwareDepth, direction);
+        vec3 result = linearRaster;
+        if (hardwareDepth > 0.0 && rasterRayDistance < maxDistance * 0.9 && overworld()) {
+            vec3 point = camera + direction * rasterRayDistance;
+            float visibility = lightVisibility(point, normal,
+                jitterTowards(lightDirection, 0.012), false);
+            float shadowStrength = 0.45 * smoothstep(0.0, 0.3, lightColor.r)
+                * (1.0 - smoothstep(maxDistance * 0.6, maxDistance * 0.9, rasterRayDistance));
+            result *= 1.0 - shadowStrength * (1.0 - visibility);
+            imageStore(targetImage, pixel, vec4(linearToSrgb(result), raster.a));
+        }
+        imageStore(noisyColorImage, pixel, vec4(result, 1.0));
+        imageStore(diffuseAlbedoImage, pixel, vec4(result, 1.0));
         imageStore(specularAlbedoImage, pixel, vec4(0.0, 0.0, 0.0, 1.0));
-        imageStore(
-            normalRoughnessImage,
-            pixel,
-            vec4(
-                reconstructRasterNormal(
-                    pixel,
-                    size,
-                    hardwareDepth,
-                    direction
-                ),
-                1.0
-            )
-        );
-        // SpecularHitDistance on miss = maxDistance (not 0) for correct denoiser / reprojection
-        imageStore(specularHitDistanceImage, pixel, vec4(frame.renderParameters.z));
+        imageStore(normalRoughnessImage, pixel, vec4(normal, 1.0));
+        imageStore(specularHitDistanceImage, pixel, vec4(maxDistance));
         return;
     }
 
-    vec3 point = frame.cameraPosition.xyz + direction * primary.distance;
-    vec3 sunDirection = normalize(frame.sunDirectionAndSamples.xyz);
-    int sampleCount = clamp(int(frame.sunDirectionAndSamples.w), 1, 8);
-    float visibility = 0.0;
-    for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
-        float angle = 6.2831853 * (
-            float(sampleIndex) + fract(sin(dot(vec2(pixel), vec2(12.9898, 78.233))) * 43758.5453)
-        ) / float(sampleCount);
-        float radius = 0.012 * sqrt((float(sampleIndex) + 0.5) / float(sampleCount));
-        vec3 tangent = normalize(abs(sunDirection.y) < 0.95
-            ? cross(sunDirection, vec3(0.0, 1.0, 0.0))
-            : cross(sunDirection, vec3(1.0, 0.0, 0.0)));
-        vec3 bitangent = cross(sunDirection, tangent);
-        vec3 sampleDirection = normalize(
-            sunDirection
-            + tangent * cos(angle) * radius
-            + bitangent * sin(angle) * radius
-        );
-        Hit shadow = traceScene(
-            point + primary.normal * 0.03,
-            sampleDirection,
-            0.03,
-            frame.renderParameters.z
-        );
-        if (shadow.valid) {
-            uint shadowFlags = floatBitsToUint(shadow.box.maximumYZColorFlags.w);
-            if ((shadowFlags & 4u) != 0u) {
-                visibility += 0.65; // Colored glass transparency attenuation
-            }
-        } else {
-            visibility += 1.0;
-        }
-    }
-    visibility /= float(sampleCount);
+    vec3 point = camera + direction * primary.distance;
+    vec3 normal = primary.normal;
+    uint flags = boxFlags(primary.box);
+    bool isWater = (flags & FLAG_WATER) != 0u;
+    bool isGlass = (flags & FLAG_GLASS) != 0u;
+    bool isMetallic = (flags & FLAG_METALLIC) != 0u;
+    bool isReflective = (flags & FLAG_REFLECTIVE) != 0u;
+    vec3 albedo = albedoOf(primary.box, point, normal);
 
-    // Ray-Traced Ambient Occlusion (RT-AO) for contact shadows in corners
-    float rtAo = 1.0;
-    vec3 aoDirections[2] = vec3[2](
-        normalize(primary.normal + vec3(0.577, 0.577, 0.577)),
-        normalize(primary.normal + vec3(-0.577, 0.577, -0.577))
-    );
-    for (int aoIdx = 0; aoIdx < 2; aoIdx++) {
-        Hit aoHit = traceScene(
-            point + primary.normal * 0.02,
-            aoDirections[aoIdx],
-            0.02,
-            1.2
-        );
-        if (aoHit.valid) {
-            rtAo -= 0.3 * (1.0 - clamp(aoHit.distance / 1.2, 0.0, 1.0));
-        }
-    }
-    rtAo = clamp(rtAo, 0.25, 1.0);
-
-    float ambient = 0.38 * rtAo;
-    float directLight = ambient + (1.0 - ambient) * visibility;
-    directLight *= 0.55 + 0.45 * max(dot(primary.normal, sunDirection), 0.0);
-    vec3 result = linearRaster * directLight;
-
-    // Material properties and flags
-    uint flags = floatBitsToUint(primary.box.maximumYZColorFlags.w);
-    bool isReflective = (flags & 1u) != 0u;
-    bool isWater = (flags & 2u) != 0u;
-    bool isGlass = (flags & 4u) != 0u;
-    bool isEmissive = (flags & 8u) != 0u;
-    bool isMetallic = (flags & 16u) != 0u;
-
-    float roughness = 0.82;
+    float roughness = 0.85;
+    float f0 = 0.04;
     vec3 specularAlbedo = vec3(0.04);
+
+    // Rain: sky-exposed upward faces get wet, darker and glossy, with puddles.
+    if (rainLevel() > 0.01 && normal.y > 0.5 && !isWater && overworld()) {
+        Hit cover = traceScene(point + normal * 0.03, vec3(0.0, 1.0, 0.0), 0.03, 64.0, 0u);
+        if (!cover.valid) {
+            vec2 world = point.xz + frame.worldOrigin.xz;
+            float puddle = smoothstep(0.45, 0.65, fbm(world * 0.35));
+            float wet = rainLevel() * mix(0.55, 1.0, puddle);
+            albedo *= mix(1.0, 0.55, wet);
+            roughness = mix(roughness, 0.08, wet);
+            f0 = mix(f0, 0.02 + 0.1 * puddle, wet);
+            specularAlbedo = vec3(f0);
+        }
+    }
+    if (isMetallic) {
+        roughness = 0.2;
+        f0 = 0.7;
+        specularAlbedo = albedo;
+    } else if (isReflective && !isWater) {
+        roughness = 0.25;
+        f0 = 0.35;
+        specularAlbedo = vec3(0.35);
+    }
     if (isWater) {
-        roughness = 0.04;
+        normal = waterNormal(point);
+        roughness = 0.03;
+        f0 = 0.02;
         specularAlbedo = vec3(0.02);
-    } else if (isMetallic) {
-        roughness = 0.15;
-        specularAlbedo = linearRaster;
-    } else if (isReflective) {
-        roughness = 0.22;
-        specularAlbedo = vec3(0.55);
+    }
+    if (isGlass) {
+        roughness = 0.05;
+        f0 = 0.04;
     }
 
-    // Dynamic Point Light Illumination (torches, lanterns, lava)
-    vec3 pointLightDiffuse = vec3(0.0);
-    vec3 pointLightSpecular = vec3(0.0);
-    uint numLights = min(lightCount, 32u);
-    for (uint i = 0u; i < numLights; i++) {
-        vec3 lightPos = lights[i].positionAndRadius.xyz;
-        float lightRadius = lights[i].positionAndRadius.w;
-        vec3 toLight = lightPos - point;
-        float dist = length(toLight);
-        if (dist < lightRadius && dist > 0.02) {
-            vec3 lightDir = toLight / dist;
-            float nDotL = max(dot(primary.normal, lightDir), 0.0);
-            if (nDotL > 0.001) {
-                Hit lightShadow = traceScene(
-                    point + primary.normal * 0.03,
-                    lightDir,
-                    0.03,
-                    dist - 0.04
-                );
-                float lightVis = 1.0;
-                if (lightShadow.valid) {
-                    uint shadowFlags = floatBitsToUint(lightShadow.box.maximumYZColorFlags.w);
-                    if ((shadowFlags & 4u) != 0u) {
-                        lightVis = 0.65;
-                    } else {
-                        lightVis = 0.0;
-                    }
-                }
-                if (lightVis > 0.0) {
-                    float normalizedDist = dist / lightRadius;
-                    float atten = clamp(1.0 - normalizedDist * normalizedDist, 0.0, 1.0);
-                    atten = (atten * atten) / (1.0 + 0.35 * dist * dist);
-                    vec3 lightColor = lights[i].colorAndIntensity.rgb * lights[i].colorAndIntensity.w;
-                    pointLightDiffuse += lightColor * (nDotL * atten * lightVis);
-
-                    vec3 halfVector = normalize(lightDir - direction);
-                    float nDotH = max(dot(primary.normal, halfVector), 0.0);
-                    float specTerm = pow(nDotH, mix(64.0, 8.0, roughness));
-                    pointLightSpecular += lightColor * (specTerm * atten * lightVis);
-                }
-            }
+    // Diffuse: main light with soft shadows, sky light + one bounce, block
+    // lights and emission.
+    vec3 diffuseLight = vec3(0.0);
+    float nDotL = max(dot(normal, lightDirection), 0.0);
+    if (nDotL > 0.0 && lightColor.r > 0.0) {
+        float visibility = 0.0;
+        for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+            visibility += lightVisibility(point, primary.normal,
+                jitterTowards(lightDirection, 0.012), true);
         }
+        diffuseLight += lightColor * nDotL * (visibility / float(sampleCount));
     }
-    result += pointLightDiffuse * (linearRaster * 0.95 + vec3(0.05));
-
-    // Emissive block self-illumination (torches, lava, glowstone)
-    if (isEmissive) {
-        result += linearRaster * 1.5;
+    diffuseLight += indirectLighting(point, primary.normal, sampleCount);
+    diffuseLight += blockLighting(point, primary.normal, 16);
+    // Never pitch black, like vanilla's minimum brightness.
+    diffuseLight += vec3(0.012);
+    vec3 result = albedo * diffuseLight;
+    if ((flags & FLAG_EMISSIVE) != 0u) {
+        result += albedo * 2.0;
     }
 
-    float specularHitDistance = frame.renderParameters.z;
-    if (frame.renderParameters.w > 0.5) {
-        vec3 reflectionDirection = reflect(direction, primary.normal);
-        Hit reflection = traceScene(
-            point + primary.normal * 0.04,
-            reflectionDirection,
-            0.04,
-            frame.reflectionParams.x
-        );
-        // Reflections show the reflected block's real texture.
-        vec3 reflectionPoint = point + primary.normal * 0.04
-            + reflectionDirection * reflection.distance;
-        vec3 reflectionColor = reflection.valid
-            ? srgbToLinear(surfaceColor(reflection.box, reflectionPoint, reflection.normal).rgb)
-            // Reflection miss = escaped ray. Use the pixel's own raster
-            // color (which already holds sky/fog) instead of a fixed sky blue
-            // that tinted every grazing angle.
-            : linearRaster;
-        
-        float reflectivity = 0.08;
+    float cosine = max(dot(normal, -direction), 0.0);
+    float fresnel = fresnelSchlick(f0, cosine);
+
+    // Water and glass: what is behind, refracted and absorbed.
+    if (isWater || isGlass) {
+        vec3 refracted = refract(direction, normal, isWater ? 1.0 / 1.33 : 1.0 / 1.5);
+        if (dot(refracted, refracted) < 1.0e-4) {
+            refracted = direction;
+        }
+        uint skip = isWater ? FLAG_WATER : FLAG_GLASS;
+        vec3 inside = point - primary.normal * 0.02;
+        Hit behind = traceScene(inside, refracted, 0.02, 48.0, skip);
+        vec3 behindColor = behind.valid
+            ? shadeSecondary(behind, inside, refracted)
+            : skyWithClouds(point, refracted);
         if (isWater) {
-            float nDotV = max(dot(primary.normal, -direction), 0.0);
-            float fresnel = 0.02 + 0.98 * pow(1.0 - nDotV, 5.0);
-            reflectivity = mix(0.12, 0.88, fresnel);
-        } else if (isMetallic) {
-            reflectivity = 0.65;
-            reflectionColor *= linearRaster;
-        } else if (isReflective) {
-            reflectivity = 0.38;
+            float depth = behind.valid ? behind.distance : 48.0;
+            vec3 absorption = exp(-vec3(0.45, 0.12, 0.08) * depth);
+            vec3 scatter = vec3(0.02, 0.09, 0.12) * (lightColor.r * 0.4 + 0.08);
+            result = behindColor * absorption + scatter * (1.0 - absorption);
+        } else {
+            result = mix(behindColor, result, 0.25) * mix(vec3(1.0), albedo, 0.5);
         }
-        result = mix(result, reflectionColor, reflectivity) + pointLightSpecular * specularAlbedo;
-        // On reflection miss report the searched range instead
-        // of 0 — the ray found nothing within [0.04, reflectionRange], so the
-        // range itself is the truthful lower bound for the hit distance.
+    }
+
+    // Specular reflection: always for water, glass and wet ground, for other
+    // surfaces with the reflection setting.
+    float specularHitDistance = maxDistance;
+    bool wantReflection = frame.renderParameters.w > 0.5 || isWater || isGlass || roughness < 0.3;
+    if (wantReflection && (fresnel > 0.03 || isMetallic || isReflective)) {
+        vec3 reflectionDirection = reflect(direction, normal);
+        if (roughness > 0.1) {
+            reflectionDirection = normalize(mix(reflectionDirection,
+                cosineHemisphere(normal), roughness * roughness * 0.5));
+        }
+        if (dot(reflectionDirection, primary.normal) < 0.0) {
+            reflectionDirection = reflect(reflectionDirection, primary.normal);
+        }
+        vec3 reflectionOrigin = point + primary.normal * 0.04;
+        Hit reflection = traceScene(reflectionOrigin, reflectionDirection,
+            0.04, frame.reflectionParams.x, 0u);
+        vec3 reflectionColor = reflection.valid
+            ? shadeSecondary(reflection, reflectionOrigin, reflectionDirection)
+            : skyWithClouds(point, reflectionDirection);
+        // Highlight of the sun or moon.
+        vec3 halfVector = normalize(lightDirection - direction);
+        float highlight = pow(max(dot(normal, halfVector), 0.0), mix(400.0, 16.0, roughness));
+        if (highlight > 1.0e-3) {
+            reflectionColor += lightColor * highlight * 4.0
+                * lightVisibility(point, primary.normal, lightDirection, false);
+        }
+        // Water and ice also carry the reflective flag; they follow Fresnel.
+        float weight = isMetallic ? 0.7
+            : (isWater || isGlass ? fresnel : (isReflective ? 0.35 : fresnel));
+        vec3 tint = isMetallic ? albedo : vec3(1.0);
+        result = mix(result, reflectionColor * tint, clamp(weight, 0.0, 1.0));
         specularHitDistance = reflection.valid ? reflection.distance : frame.reflectionParams.x;
     }
 
-    imageStore(
-        targetImage,
-        pixel,
-        vec4(linearToSrgb(toneMapAces(result)), raster.a)
-    );
-    imageStore(noisyColorImage, pixel, vec4(result, 1.0));
-    imageStore(diffuseAlbedoImage, pixel, vec4(linearRaster, 1.0));
+    result = applyFog(result, direction, primary.distance);
+
+    // Fade into the raster image at the edge of the RT range.
+    float edge = smoothstep(maxDistance * 0.75, maxDistance, primary.distance);
+    vec3 displayed = mix(toneMapAces(result), linearRaster, edge);
+
+    imageStore(targetImage, pixel, vec4(linearToSrgb(displayed), raster.a));
+    imageStore(noisyColorImage, pixel, vec4(mix(result, linearRaster, edge), 1.0));
+    imageStore(diffuseAlbedoImage, pixel, vec4(mix(albedo, linearRaster, edge), 1.0));
     imageStore(specularAlbedoImage, pixel, vec4(specularAlbedo, 1.0));
-    imageStore(
-        normalRoughnessImage,
-        pixel,
-        vec4(normalize(primary.normal), roughness)
-    );
-    imageStore(
-        specularHitDistanceImage,
-        pixel,
-        vec4(specularHitDistance, 0.0, 0.0, 0.0)
-    );
+    imageStore(normalRoughnessImage, pixel, vec4(normalize(normal), roughness));
+    imageStore(specularHitDistanceImage, pixel, vec4(specularHitDistance, 0.0, 0.0, 0.0));
 }
