@@ -23,16 +23,16 @@ public final class NativeLoader {
     private static final String LIBRARY_BASE_NAME = "dlss_fg_native";
     private static final Map<String, String> TRUSTED_RUNTIME_SHA256 =
             Map.ofEntries(
-                    Map.entry("sl.interposer.dll", "8c87c9499461da561edd529aa9bf7831d67d7b94ebb1c1a5ed54ef4934e1ea4c"),
-                    Map.entry("sl.common.dll", "82924a8954dd671e09351c5de0eb87ad0eb25b944cc9f9ab955ca1d9950de15d"),
-                    Map.entry("sl.dlss_g.dll", "f4a6b2b14dcc0b1485989e430d3b4e3a44ac1800b92ba1ad74f476e64fb2b09c"),
-                    Map.entry("sl.dlss.dll", "73bf52c0cfaa5900a8f3f4a91306e4625e7cca696dfb305aae44c9f97b582e1f"),
-                    Map.entry("sl.dlss_d.dll", "026b9f4f9ea848f2f5aa0e2024fc6b1c885f57eea5d41078124dba14f873b86b"),
-                    Map.entry("sl.reflex.dll", "0ce9725e3e03ea9e7f81d008b57f33ee365973d2e349131c8b1c3e3378fe2db0"),
-                    Map.entry("sl.pcl.dll", "f13d51cfa05f4cd514df2026049e2db8adf359221713170ad386fd499915b582"),
-                    Map.entry("nvngx_dlssg.dll", "ff6e90eb78b827927dff5b4ecc6b1c870c2e9bca29ed9f48c7d348cc9e170b82"),
-                    Map.entry("nvngx_dlss.dll", "3975567b8943c53acce397f2b72380092f84f162d00b0d2c7d08a1025c563983"),
-                    Map.entry("nvngx_dlssd.dll", "4bc7ea5fcb2f32cf86bc2cb072e8d2860914a0be511cbdcb2fc206c1d9d83b80"),
+                    Map.entry("sl.interposer.dll", "b1d7395aebd7b9722841d64dcf7433680020b6a8e421f851c16d5ba0c2182edf"),
+                    Map.entry("sl.common.dll", "38eea3b4209afc455636ea372b5933d65fcc13becec6c84d101dcfc4d8648f75"),
+                    Map.entry("sl.dlss_g.dll", "3ed9538df724993bea8a050195a6a78b9c8c8a566d5b05ade477aab3c390e90f"),
+                    Map.entry("sl.dlss.dll", "18871eea87c90345da97d8109faa81ea7d5840e8d99b51b55b0e46cfa177f84e"),
+                    Map.entry("sl.dlss_d.dll", "8dff36fd063094eb1f659e8d4dcd52c7423859a9c4a3df3796084c48412d60ac"),
+                    Map.entry("sl.reflex.dll", "443577e869352436ff7ec8f4d9c90418d3e95368436ce219261e0f4f07a38122"),
+                    Map.entry("sl.pcl.dll", "5698c38e722318681f215c9fe68e45b9bedd51378acc699d8eee26e961e57770"),
+                    Map.entry("nvngx_dlssg.dll", "8d59d49b36410dd6b62fef2503a5871d347415bd85d943fa0848563a95dd50c7"),
+                    Map.entry("nvngx_dlss.dll", "d00b5b0ab29c3ca101b70c3a5ecb3a01b7ef33766a3383a28a18623083e6123e"),
+                    Map.entry("nvngx_dlssd.dll", "b49435ae346f227feafe7bbe937d88277ea0ee7323975ec06488f377fdb46cee"),
                     Map.entry("NvLowLatencyVk.dll", "2a77dc3e1c724b7eea5755be0ae7423752e79a2459fae72181a9f00e3507e5d6"),
                     Map.entry("amd_fidelityfx_vk.dll", "a1624cc4238fef046f30c4d80ce3f47be63fc5f5373f49e3ee9edb9960f54c78")
             );
@@ -40,6 +40,11 @@ public final class NativeLoader {
     private static boolean earlyLoadDone = false;
 
     private NativeLoader() {
+    }
+
+    /** Expected SHA-256 per bundled runtime file; tests check it against the repo copies. */
+    static Map<String, String> trustedRuntimeHashes() {
+        return TRUSTED_RUNTIME_SHA256;
     }
 
     /**
