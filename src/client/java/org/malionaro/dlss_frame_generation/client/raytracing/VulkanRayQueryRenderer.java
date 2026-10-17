@@ -241,11 +241,12 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             }
             SlotScene slotScene = slotScenes[frameSlot];
             // Mobs and players: their model parts as triangles, every frame.
-            if (updateEntityGeometry(commandBuffer, slotScene,
-                    RayTracingFrameData.cameraPosition(minecraft))) {
+            if (updateDynamicGeometry(commandBuffer, slotScene, minecraft,
+                    RayTracingFrameData.cameraPosition(minecraft), config.rayTracingMaxDistance)) {
                 recordedBuilds = true;
             }
-            boolean entitiesInTlas = slotScene.entityTriangles > 0 || slotScene.entityTrianglesInTlas > 0;
+            boolean entitiesInTlas = slotScene.entities.triangles > 0 || slotScene.entities.trianglesInTlas > 0
+                    || slotScene.particles.triangles > 0 || slotScene.particles.trianglesInTlas > 0;
             if (slotScene.version != sceneVersion || entitiesInTlas) {
                 rebuildSlotTlas(commandBuffer, slotScene);
                 recordedBuilds = true;
@@ -1068,7 +1069,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
 
     /** Rewrites this slot's instances and section table and rebuilds its TLAS. */
     private void rebuildSlotTlas(VkCommandBuffer commandBuffer, SlotScene slotScene) {
-        int count = slotScene.entityTriangles > 0 ? 1 : 0;
+        int count = (slotScene.entities.triangles > 0 ? 1 : 0) + (slotScene.particles.triangles > 0 ? 1 : 0);
         for (GpuSection section : sections.values()) {
             count += (section.blas != NULL ? 1 : 0) + (section.triangleBlas != NULL ? 1 : 0);
         }
@@ -1105,13 +1106,18 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 }
                 section.lastUsedFrame = frameNumber;
             }
-            if (slotScene.entityTriangles > 0) {
-                // Already in scene space; own mask so primary rays skip them
-                // (the raster draws entities itself).
+            // Already in scene space; own masks so primary rays skip them
+            // (the raster draws entities and particles itself).
+            if (slotScene.entities.triangles > 0) {
                 writeInstance(instanceBase, tableBase, index++, 0.0f, 0.0f, 0.0f,
-                        slotScene.entityBlasAddress, slotScene.entityAttributesAddress, MASK_ENTITIES, stack);
+                        slotScene.entities.blasAddress, slotScene.entities.attributesAddress, MASK_ENTITIES, stack);
             }
-            slotScene.entityTrianglesInTlas = slotScene.entityTriangles;
+            if (slotScene.particles.triangles > 0) {
+                writeInstance(instanceBase, tableBase, index++, 0.0f, 0.0f, 0.0f,
+                        slotScene.particles.blasAddress, slotScene.particles.attributesAddress, MASK_PARTICLES, stack);
+            }
+            slotScene.entities.trianglesInTlas = slotScene.entities.triangles;
+            slotScene.particles.trianglesInTlas = slotScene.particles.triangles;
             vkUnmapMemory(device, slotScene.instances.memory);
             vkUnmapMemory(device, slotScene.sectionTable.memory);
 
@@ -1186,83 +1192,101 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private static final int MASK_BLOCKS = 0x01;
     private static final int MASK_ENTITIES = 0x02;
     private static final int MAX_ENTITY_TRIANGLES = 16_384;
-    private ByteBuffer entityPositionScratch;
-    private ByteBuffer entityAttributeScratch;
+    private static final int MASK_PARTICLES = 0x04;
+    private ByteBuffer dynamicPositionScratch;
+    private ByteBuffer dynamicAttributeScratch;
+
+    private void ensureDynamicScratch() {
+        if (dynamicPositionScratch == null) {
+            dynamicPositionScratch = MemoryUtil.memAlloc(MAX_ENTITY_TRIANGLES * RtTriangleFormat.BYTES_PER_POSITION)
+                    .order(java.nio.ByteOrder.nativeOrder());
+            dynamicAttributeScratch = MemoryUtil.memAlloc(MAX_ENTITY_TRIANGLES * RtTriangleFormat.BYTES_PER_ATTRIBUTE)
+                    .order(java.nio.ByteOrder.nativeOrder());
+        }
+        dynamicPositionScratch.clear();
+        dynamicAttributeScratch.clear();
+    }
 
     /**
-     * Writes this frame's entity part cuboids as triangles into the slot (idle
-     * after the fence wait) and records their BLAS build.
+     * This frame's entity part cuboids and particles, each as triangles in
+     * its own per-slot BLAS (the slot is idle after the fence wait).
      *
      * @return whether a build was recorded
      */
-    private boolean updateEntityGeometry(VkCommandBuffer commandBuffer, SlotScene slotScene,
-                                         net.minecraft.world.phys.Vec3 camera) {
-        slotScene.entityTriangles = 0;
+    private boolean updateDynamicGeometry(VkCommandBuffer commandBuffer, SlotScene slotScene,
+                                          Minecraft minecraft, net.minecraft.world.phys.Vec3 camera,
+                                          float range) {
+        slotScene.entities.triangles = 0;
+        slotScene.particles.triangles = 0;
         if (camera == null) {
             return false;
         }
+        float offsetX = (float) (camera.x - slotScene.originX);
+        float offsetY = (float) (camera.y - slotScene.originY);
+        float offsetZ = (float) (camera.z - slotScene.originZ);
+        boolean built = false;
         List<org.malionaro.dlss_frame_generation.client.motion.EntityPartMotion.Pose> poses =
                 org.malionaro.dlss_frame_generation.client.motion.EntityPartMotion.INSTANCE.currentPoses();
-        if (poses.isEmpty()) {
-            return false;
+        if (!poses.isEmpty()) {
+            ensureDynamicScratch();
+            int triangles = EntityGeometry.write(poses, offsetX, offsetY, offsetZ,
+                    dynamicPositionScratch, dynamicAttributeScratch, MAX_ENTITY_TRIANGLES);
+            built |= buildDynamic(commandBuffer, slotScene.entities, triangles);
         }
-        if (entityPositionScratch == null) {
-            entityPositionScratch = MemoryUtil.memAlloc(MAX_ENTITY_TRIANGLES * RtTriangleFormat.BYTES_PER_POSITION)
-                    .order(java.nio.ByteOrder.nativeOrder());
-            entityAttributeScratch = MemoryUtil.memAlloc(MAX_ENTITY_TRIANGLES * RtTriangleFormat.BYTES_PER_ATTRIBUTE)
-                    .order(java.nio.ByteOrder.nativeOrder());
-        }
-        entityPositionScratch.clear();
-        entityAttributeScratch.clear();
-        int triangles = EntityGeometry.write(poses,
-                (float) (camera.x - slotScene.originX),
-                (float) (camera.y - slotScene.originY),
-                (float) (camera.z - slotScene.originZ),
-                entityPositionScratch, entityAttributeScratch, MAX_ENTITY_TRIANGLES);
+        ensureDynamicScratch();
+        int particleTriangles = ParticleGeometry.write(minecraft, camera, range, offsetX, offsetY, offsetZ,
+                dynamicPositionScratch, dynamicAttributeScratch, MAX_ENTITY_TRIANGLES);
+        built |= buildDynamic(commandBuffer, slotScene.particles, particleTriangles);
+        return built;
+    }
+
+    /** Uploads the scratch triangles into {@code target} and records its BLAS build. */
+    private boolean buildDynamic(VkCommandBuffer commandBuffer, DynamicBlas target, int triangles) {
+        target.triangles = 0;
         if (triangles == 0) {
             return false;
         }
-        entityPositionScratch.flip();
-        entityAttributeScratch.flip();
+        dynamicPositionScratch.flip();
+        dynamicAttributeScratch.flip();
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            if (slotScene.entityCapacity < triangles) {
+            if (target.capacity < triangles) {
                 int capacity = Math.min(MAX_ENTITY_TRIANGLES,
                         Math.max(1024, Integer.highestOneBit(triangles - 1) << 1));
-                destroyEntityGeometry(slotScene);
+                destroyDynamic(target);
                 int usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
                         | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
                         | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
-                slotScene.entityPositions = createHostVisibleBuffer(
+                target.positions = createHostVisibleBuffer(
                         (long) capacity * RtTriangleFormat.BYTES_PER_POSITION, usage);
-                slotScene.entityAttributes = createHostVisibleBuffer(
+                target.attributes = createHostVisibleBuffer(
                         (long) capacity * RtTriangleFormat.BYTES_PER_ATTRIBUTE, usage);
-                slotScene.entityPositionsAddress = bufferAddress(slotScene.entityPositions.buffer, stack);
-                slotScene.entityAttributesAddress = bufferAddress(slotScene.entityAttributes.buffer, stack);
+                target.positionsAddress = bufferAddress(target.positions.buffer, stack);
+                target.attributesAddress = bufferAddress(target.attributes.buffer, stack);
                 VkAccelerationStructureBuildSizesInfoKHR sizes = buildSizes(
-                        triangleBlasBuildInfo(stack, slotScene.entityPositionsAddress, capacity),
+                        triangleBlasBuildInfo(stack, target.positionsAddress, capacity),
                         capacity, stack);
-                slotScene.entityStorage = createBlasStorage(sizes);
-                slotScene.entityBlas = createAccelerationStructure(
-                        slotScene.entityStorage.buffer,
+                target.storage = createBlasStorage(sizes);
+                target.blas = createAccelerationStructure(
+                        target.storage.buffer,
                         sizes.accelerationStructureSize(),
                         VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
                         stack
                 );
-                slotScene.entityBlasAddress = accelerationStructureAddress(slotScene.entityBlas, stack);
-                slotScene.entityScratch = createBuffer(
+                target.blasAddress = accelerationStructureAddress(target.blas, stack);
+                target.scratch = createBuffer(
                         sizes.buildScratchSize() + scratchAlignment,
                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                         true
                 );
-                slotScene.entityCapacity = capacity;
+                target.capacity = capacity;
             }
-            upload(slotScene.entityPositions, entityPositionScratch);
-            upload(slotScene.entityAttributes, entityAttributeScratch);
-            long scratchAddress = align(bufferAddress(slotScene.entityScratch.buffer, stack), scratchAlignment);
+            upload(target.positions, dynamicPositionScratch);
+            upload(target.attributes, dynamicAttributeScratch);
+            long scratchAddress = align(bufferAddress(target.scratch.buffer, stack), scratchAlignment);
             VkAccelerationStructureBuildGeometryInfoKHR build = triangleBlasBuildInfo(
-                    stack, slotScene.entityPositionsAddress, triangles)
-                    .dstAccelerationStructure(slotScene.entityBlas)
+                    stack, target.positionsAddress, triangles)
+                    .dstAccelerationStructure(target.blas)
                     .scratchData(address -> address.deviceAddress(scratchAddress));
             recordBuild(commandBuffer, build, triangles, stack);
             memoryBarrier(
@@ -1274,24 +1298,24 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     stack
             );
         }
-        slotScene.entityTriangles = triangles;
+        target.triangles = triangles;
         return true;
     }
 
-    private void destroyEntityGeometry(SlotScene slotScene) {
-        if (slotScene.entityBlas != NULL) {
-            vkDestroyAccelerationStructureKHR(device, slotScene.entityBlas, null);
-            slotScene.entityBlas = NULL;
+    private void destroyDynamic(DynamicBlas target) {
+        if (target.blas != NULL) {
+            vkDestroyAccelerationStructureKHR(device, target.blas, null);
+            target.blas = NULL;
         }
-        destroyAllocation(slotScene.entityStorage, true);
-        destroyAllocation(slotScene.entityScratch, true);
-        destroyAllocation(slotScene.entityPositions, true);
-        destroyAllocation(slotScene.entityAttributes, true);
-        slotScene.entityStorage = null;
-        slotScene.entityScratch = null;
-        slotScene.entityPositions = null;
-        slotScene.entityAttributes = null;
-        slotScene.entityCapacity = 0;
+        destroyAllocation(target.storage, true);
+        destroyAllocation(target.scratch, true);
+        destroyAllocation(target.positions, true);
+        destroyAllocation(target.attributes, true);
+        target.storage = null;
+        target.scratch = null;
+        target.positions = null;
+        target.attributes = null;
+        target.capacity = 0;
     }
 
     private static void writeInstance(long instanceBase, long tableBase, int index,
@@ -1435,14 +1459,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         destroyAllocation(slotScene.sectionTable, true);
         destroyAllocation(slotScene.lights, true);
         destroyAllocation(slotScene.sprites, true);
-        if (slotScene.entityBlas != NULL) {
-            vkDestroyAccelerationStructureKHR(device, slotScene.entityBlas, null);
-            slotScene.entityBlas = NULL;
-        }
-        destroyAllocation(slotScene.entityStorage, true);
-        destroyAllocation(slotScene.entityScratch, true);
-        destroyAllocation(slotScene.entityPositions, true);
-        destroyAllocation(slotScene.entityAttributes, true);
+        destroyDynamic(slotScene.entities);
+        destroyDynamic(slotScene.particles);
     }
 
     /** The block atlas' Vulkan view, or NULL while it is not available. */
@@ -2512,11 +2530,11 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         }
         destroyAllocation(exposureBuffer, true);
         exposureBuffer = null;
-        if (entityPositionScratch != null) {
-            MemoryUtil.memFree(entityPositionScratch);
-            MemoryUtil.memFree(entityAttributeScratch);
-            entityPositionScratch = null;
-            entityAttributeScratch = null;
+        if (dynamicPositionScratch != null) {
+            MemoryUtil.memFree(dynamicPositionScratch);
+            MemoryUtil.memFree(dynamicAttributeScratch);
+            dynamicPositionScratch = null;
+            dynamicAttributeScratch = null;
         }
         exposureCleared = false;
         if (depthSampler != NULL) vkDestroySampler(device, depthSampler, null);
@@ -2571,6 +2589,21 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     }
 
     /** Per frame slot: TLAS over all sections plus the tables the shader reads. */
+    /** Triangle BLAS rebuilt every frame (entity parts, particles). */
+    private static final class DynamicBlas {
+        private Allocation positions;
+        private long positionsAddress;
+        private Allocation attributes;
+        private long attributesAddress;
+        private int capacity;
+        private Allocation storage;
+        private long blas;
+        private long blasAddress;
+        private Allocation scratch;
+        private int triangles;
+        private int trianglesInTlas;
+    }
+
     private static final class SlotScene {
         private Allocation instances;
         private Allocation sectionTable;
@@ -2586,18 +2619,9 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         private long lightsVersion = -1L;
         private long spriteVersion = -1L;
         private boolean descriptorsStale = true;
-        /** Entity part triangles of this slot's frame, rebuilt every frame. */
-        private Allocation entityPositions;
-        private long entityPositionsAddress;
-        private Allocation entityAttributes;
-        private long entityAttributesAddress;
-        private int entityCapacity;
-        private Allocation entityStorage;
-        private long entityBlas;
-        private long entityBlasAddress;
-        private Allocation entityScratch;
-        private int entityTriangles;
-        private int entityTrianglesInTlas;
+        /** Entity parts and particles of this slot's frame, rebuilt every frame. */
+        private final DynamicBlas entities = new DynamicBlas();
+        private final DynamicBlas particles = new DynamicBlas();
         /** Scene origin this slot's TLAS was built for. */
         private int originX;
         private int originY;

@@ -26,7 +26,7 @@ active the RT engine stays off (as today).
 5. **Denoising** *(done, untested: own temporal accumulation)*: working Ray Reconstruction, or an own temporal +
    spatial denoiser (reprojection with our motion vectors, variance-guided
    filter) when RR is off.
-6. **Particles, weather and translucency** *(rain in front of RT surfaces done; particles open)*: particles and rain as RT
+6. **Particles, weather and translucency** *(done, untested: RT rain, particles in reflections, raster particles kept in front of RT)*: particles and rain as RT
    geometry or composited with correct depth; stained glass and water
    layers in order.
 7. **Range and LOD** *(done, untested: up to 96 blocks, coarse meshes beyond 48)*: RT range beyond 48 blocks with coarser sections far

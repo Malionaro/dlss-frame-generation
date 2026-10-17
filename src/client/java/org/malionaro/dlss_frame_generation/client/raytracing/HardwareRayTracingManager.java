@@ -190,8 +190,11 @@ public final class HardwareRayTracingManager {
         if (dx * dx + dy * dy + dz * dz > reach * reach) {
             return false;
         }
-        return manager.renderer.hasSection(net.minecraft.core.SectionPos.asLong(
-                origin.getX() >> 4, origin.getY() >> 4, origin.getZ() >> 4));
+        long key = net.minecraft.core.SectionPos.asLong(
+                origin.getX() >> 4, origin.getY() >> 4, origin.getZ() >> 4);
+        // Around particles the raster terrain stays: the RT pass keeps the
+        // textured raster particle there, and it needs the terrain behind it.
+        return !ParticleGeometry.sectionHasParticles(key) && manager.renderer.hasSection(key);
     }
 
     /**

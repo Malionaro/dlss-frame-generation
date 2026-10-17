@@ -96,10 +96,15 @@ const uint TRIANGLE_CUTOUT = 1u << 24u;
 const uint TRIANGLE_UNTEXTURED = 1u << 25u;
 // Instance masks (VulkanRayQueryRenderer): blocks 1, entity parts 2.
 const uint MASK_BLOCKS = 0x01u;
+const uint MASK_ENTITIES = 0x02u;
+const uint MASK_PARTICLES = 0x04u;
 const uint MASK_ALL = 0xFFu;
-// Primary rays and shadows of raster entities only see blocks: the raster
-// draws entities itself, and an entity must not shadow its own pixels.
-uint rayMask = MASK_ALL;
+// Default for shadows and bounce light: blocks and entities, no particles
+// (speckled smoke shadows). Primary rays only see blocks: the raster draws
+// entities and particles itself, and an entity must not shadow its own
+// pixels. Reflection and refraction rays see everything.
+const uint MASK_LIGHTING = MASK_BLOCKS | MASK_ENTITIES;
+uint rayMask = MASK_LIGHTING;
 
 // A hit on a box or on a model triangle. For triangles, box only carries the
 // flags (so material and sky-light lookups work the same) and uv/tint hold
@@ -1022,7 +1027,16 @@ void main() {
 
     rayMask = MASK_BLOCKS;
     Hit primary = traceScene(camera, direction, 0.03, maxDistance, 0u);
-    rayMask = MASK_ALL;
+    if (primary.valid) {
+        // A particle in front of the surface: keep the raster pixel, which
+        // holds the textured particle drawn by Minecraft.
+        rayMask = MASK_PARTICLES;
+        Hit particle = traceAny(camera, direction, 0.03, primary.distance, 0u);
+        if (particle.valid) {
+            primary.valid = false;
+        }
+    }
+    rayMask = MASK_LIGHTING;
     vec4 raster = imageLoad(targetImage, pixel);
     vec3 linearRaster = srgbToLinear(max(raster.rgb, vec3(0.0)));
     float hardwareDepth = texelFetch(rasterDepth, pixel, 0).r;
@@ -1045,7 +1059,7 @@ void main() {
             rayMask = MASK_BLOCKS;
             float visibility = lightVisibility(point, normal,
                 jitterTowards(lightDirection, 0.012), false);
-            rayMask = MASK_ALL;
+            rayMask = MASK_LIGHTING;
             float shadowStrength = 0.45 * smoothstep(0.0, 0.3, lightColor.r)
                 * (1.0 - smoothstep(maxDistance * 0.6, maxDistance * 0.9, rasterRayDistance));
             result *= 1.0 - shadowStrength * (1.0 - visibility);
@@ -1157,7 +1171,9 @@ void main() {
         }
         uint skip = isWater ? FLAG_WATER : FLAG_GLASS;
         vec3 inside = point - primary.normal * 0.02;
+        rayMask = MASK_ALL;
         Hit behind = traceScene(inside, refracted, 0.02, 48.0, skip);
+        rayMask = MASK_LIGHTING;
         vec3 behindColor = behind.valid
             ? shadeSecondary(behind, inside, refracted, 0)
             : skyWithClouds(point, refracted) * sky;
@@ -1185,8 +1201,10 @@ void main() {
             reflectionDirection = reflect(reflectionDirection, primary.normal);
         }
         vec3 reflectionOrigin = point + primary.normal * 0.04;
+        rayMask = MASK_ALL;
         Hit reflection = traceScene(reflectionOrigin, reflectionDirection,
             0.04, frame.reflectionParams.x, 0u);
+        rayMask = MASK_LIGHTING;
         vec3 reflectionColor = reflection.valid
             ? shadeSecondary(reflection, reflectionOrigin, reflectionDirection, 0)
             : skyWithClouds(point, reflectionDirection) * mix(0.05, 1.0, sky);

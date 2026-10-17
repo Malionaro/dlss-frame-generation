@@ -31,7 +31,11 @@
     "CloudRendererMixin",
     "LevelRendererTerrainMixin",
     "RenderTypeAccessor",
-    "RenderSetupAccessor"
+    "RenderSetupAccessor",
+    "ParticleEngineAccessor",
+    "ParticleGroupAccessor",
+    "ParticleAccessor",
+    "SingleQuadParticleAccessor"
   ],
   "injectors": {
     "defaultRequire": 1
