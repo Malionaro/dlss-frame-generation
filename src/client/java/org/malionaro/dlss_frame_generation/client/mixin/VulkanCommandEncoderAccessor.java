@@ -17,4 +17,8 @@ public interface VulkanCommandEncoderAccessor {
 
     @Accessor("currentRenderPass")
     VulkanRenderPass dlss_fg$getCurrentRenderPass();
+
+    /** The current command buffer, begun on demand (after execute() ended the last one). */
+    @org.spongepowered.asm.mixin.gen.Invoker("commandBuffer")
+    VkCommandBuffer dlss_fg$commandBuffer();
 }

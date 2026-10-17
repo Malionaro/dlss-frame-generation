@@ -272,6 +272,8 @@ public class FrameGenConfig {
      * vanilla (saves its cost). Turn off if the near world ever looks wrong.
      */
     public boolean rayTracingReplaceTerrain = false;
+    /** Debug: always record the RT pass into its own command buffer. */
+    public boolean rayTracingOwnCommandBuffer = false;
     /** RT shader pack folder or zip in rtshaderpacks/; empty = built-in. */
     public String rayTracingShaderPack = "";
 

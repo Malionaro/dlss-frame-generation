@@ -20,6 +20,19 @@ public final class HardwareRayTracingManager {
     private VulkanDevice device;
     private boolean successfulFrameLogged;
     private volatile String runtimeStatus = "RT renderer is disabled";
+    /**
+     * Record the RT pass into its own transient command buffer that the
+     * encoder executes in order (the way AetherRT does), instead of
+     * Minecraft's current one. Switched on automatically when the shader
+     * never starts in the current buffer, or forced by the setting.
+     */
+    private static volatile boolean ownCommandBuffer;
+    private boolean ownCommandBufferChecked;
+
+    public static boolean useOwnCommandBuffer() {
+        return ownCommandBuffer || FrameGenConfig.getInstance().rayTracingOwnCommandBuffer;
+    }
+
     /** System time of the last frame the RT pass recorded. */
     private static volatile long lastRecordedFrameNanos;
 
@@ -117,6 +130,20 @@ public final class HardwareRayTracingManager {
         }
         if (recorded) {
             lastRecordedFrameNanos = System.nanoTime();
+            // 90 recorded frames are at least 87 finished ones (3 slots in
+            // flight): if not one workgroup started, the dispatch is dropped.
+            if (!ownCommandBufferChecked && currentRenderer.recordedFrames() >= 90) {
+                ownCommandBufferChecked = true;
+                if (currentRenderer.startedWorkgroups() == 0 && !useOwnCommandBuffer()) {
+                    ownCommandBuffer = true;
+                    logger.warn("RT shader never started in Minecraft's command buffer after {} frames; "
+                            + "switching the RT pass to its own command buffer", currentRenderer.recordedFrames());
+                } else {
+                    logger.info("RT self-check after {} frames: {} workgroups started ({})",
+                            currentRenderer.recordedFrames(), currentRenderer.startedWorkgroups(),
+                            useOwnCommandBuffer() ? "own command buffer" : "Minecraft's command buffer");
+                }
+            }
         }
         if (recorded && !successfulFrameLogged) {
             successfulFrameLogged = true;

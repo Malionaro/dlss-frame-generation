@@ -121,6 +121,62 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     /** Whether Minecraft had a render pass open while the RT pass was recorded. */
     private volatile boolean renderPassOpenSeen;
 
+    /** Workgroups the RT shader has started so far (diagnostic counter). */
+    public long startedWorkgroups() {
+        if (exposureBuffer == null) {
+            return 0;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            PointerBuffer mapped = stack.mallocPointer(1);
+            if (vkMapMemory(device, exposureBuffer.memory, 0, EXPOSURE_BYTES, 0, mapped) != VK_SUCCESS) {
+                return 0;
+            }
+            long value = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 32));
+            vkUnmapMemory(device, exposureBuffer.memory);
+            return value;
+        }
+    }
+
+    /** Frames whose RT pass was recorded (not necessarily finished). */
+    public long recordedFrames() {
+        return frameNumber;
+    }
+
+    private String lastReport = "";
+
+    /**
+     * Logs the handles and sizes the RT pass records with, whenever they
+     * change (first frame, resize, new TLAS), for remote debugging.
+     */
+    private void reportState(VkCommandBuffer commandBuffer, long colorImage, long depthImage,
+                             int width, int height, int frameSlot, SlotScene slotScene) {
+        int instances = (slotScene.entities.triangles > 0 ? 1 : 0) + (slotScene.particles.triangles > 0 ? 1 : 0);
+        int boxSections = 0;
+        int triangleSections = 0;
+        for (GpuSection section : sections.values()) {
+            boxSections += section.blas != NULL ? 1 : 0;
+            triangleSections += section.triangleBlas != NULL ? 1 : 0;
+        }
+        instances += boxSections + triangleSections;
+        String report = String.format(java.util.Locale.ROOT,
+                "RT debug: %dx%d, dispatch %dx%d groups, slot %d, color image 0x%x, depth image 0x%x, "
+                        + "output image 0x%x view 0x%x, descriptor set 0x%x, pipeline 0x%x, TLAS 0x%x, "
+                        + "%d instances (%d box + %d triangle sections, %d entity, %d particle triangles), "
+                        + "origin %d %d %d, shader pack '%s'",
+                width, height, (width + 7) / 8, (height + 7) / 8, frameSlot, colorImage, depthImage,
+                outputImage, outputView, descriptorSets[frameSlot], pipeline, slotScene.tlas,
+                instances, boxSections, triangleSections, slotScene.entities.triangles,
+                slotScene.particles.triangles, slotScene.originX, slotScene.originY, slotScene.originZ,
+                activeShaderPack);
+        // Handles of the same shape repeat every slot; compare without the
+        // per-slot and per-frame values.
+        String key = width + "x" + height + " " + outputImage + " " + slotScene.tlas + " " + instances;
+        if (!key.equals(lastReport)) {
+            lastReport = key;
+            logger.info("{} (command buffer 0x{})", report, Long.toHexString(commandBuffer.address()));
+        }
+    }
+
     public void noteRenderPassOpen(boolean open) {
         if (open) {
             renderPassOpenSeen = true;
@@ -320,6 +376,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 slotScene.descriptorsStale = false;
             }
 
+            reportState(commandBuffer, colorView.texture().vkImage(), depthView.texture().vkImage(),
+                    width, height, frameSlot, slotScene);
             recordHybridPass(
                     commandBuffer,
                     frame.frameIndex() & 1,

@@ -61,6 +61,27 @@ public final class VulkanRegistry {
     private static FrameIdentity lastAcceptedFrameIdentity =
             FrameIdentity.INVALID;
     private static long lastRayTracedFrameSerial = Long.MIN_VALUE;
+    /** Why the RT pass was not called, counted for the debug log. */
+    private static final java.util.Map<String, Integer> RT_SKIPS = new java.util.LinkedHashMap<>();
+    private static long lastRtSkipLogNanos = System.nanoTime();
+
+    private static void noteRtSkip(String reason) {
+        RT_SKIPS.merge(reason, 1, Integer::sum);
+    }
+
+    private static void logRtSkipsIfDue() {
+        long now = System.nanoTime();
+        if (now - lastRtSkipLogNanos < 5_000_000_000L) {
+            return;
+        }
+        lastRtSkipLogNanos = now;
+        if (!RT_SKIPS.isEmpty()
+                && org.malionaro.dlss_frame_generation.client.config.FrameGenConfig.getInstance().rayTracingMode
+                != org.malionaro.dlss_frame_generation.client.config.FrameGenConfig.RayTracingMode.OFF) {
+            LOGGER.info("RT pass not called in the last 5 s: {}", RT_SKIPS);
+        }
+        RT_SKIPS.clear();
+    }
     private static FrameIdentity lastCapturedFrameIdentity =
             FrameIdentity.INVALID;
     private static String lastFrameResourceRejection =
@@ -1099,17 +1120,45 @@ public final class VulkanRegistry {
             // Once per frame: the capture hook can fire more than once, and
             // tracing the already ray-traced image again would shade it twice.
             long frameSerial = resources.identity().frameSerial();
-            if (FrameGenMod.rayTracingManager() != null
-                    && !ForeignShaderPipeline.active()
-                    && frameSerial != lastRayTracedFrameSerial) {
+            if (FrameGenMod.rayTracingManager() == null) {
+                noteRtSkip("no RT manager");
+            } else if (ForeignShaderPipeline.active()) {
+                noteRtSkip("shader pack active");
+            } else if (frameSerial == lastRayTracedFrameSerial) {
+                noteRtSkip("frame already traced");
+            } else {
                 lastRayTracedFrameSerial = frameSerial;
-                rayReconstructionResources =
-                        FrameGenMod.rayTracingManager().renderBeforeUpscale(
-                        commandBuffer,
-                        colorView,
-                        depthView
-                );
+                org.malionaro.dlss_frame_generation.client.raytracing.HardwareRayTracingManager manager =
+                        FrameGenMod.rayTracingManager();
+                if (manager.isActive()
+                        && org.malionaro.dlss_frame_generation.client.raytracing.HardwareRayTracingManager
+                                .useOwnCommandBuffer()
+                        && encoderAccess.dlss_fg$getCurrentRenderPass() == null) {
+                    // AetherRT-style: own transient command buffer, executed by
+                    // the encoder in order; Minecraft's work continues in a new
+                    // current buffer, which the frame pipeline then records into.
+                    org.lwjgl.vulkan.VkCommandBuffer rtCommandBuffer =
+                            activeEncoder.allocateAndBeginTransientCommandBuffer();
+                    rayReconstructionResources = manager.renderBeforeUpscale(
+                            rtCommandBuffer, colorView, depthView);
+                    org.lwjgl.vulkan.VK10.vkEndCommandBuffer(rtCommandBuffer);
+                    activeEncoder.execute(rtCommandBuffer);
+                    commandBuffer = encoderAccess.dlss_fg$commandBuffer();
+                    resources = new org.malionaro.dlss_frame_generation.client.frame.FrameResourceSet(
+                            resources.identity(), resources.source(), commandBuffer.address(),
+                            resources.color(), resources.depth(), resources.output(), resources.backbuffer(),
+                            resources.acquireSemaphore(), resources.presentSemaphore(),
+                            resources.outsideRenderPass());
+                    currentFrameResources = resources;
+                } else {
+                    rayReconstructionResources = manager.renderBeforeUpscale(
+                            commandBuffer,
+                            colorView,
+                            depthView
+                    );
+                }
             }
+            logRtSkipsIfDue();
             boolean debugReadbackRequested = FrameGenMod.motionVectorDebugRenderer() != null
                     && FrameGenMod.motionVectorDebugRenderer().getDebugMode()
                     != org.malionaro.dlss_frame_generation.client.motion.MotionVectorDebugRenderer.DebugMode.OFF;
