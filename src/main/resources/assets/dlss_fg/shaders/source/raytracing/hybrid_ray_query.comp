@@ -43,7 +43,17 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 skyParams; // x = overworld, y = sky light at the camera 0-1, z = clouds enabled
     mat4 clipToView; // inverse of the raster projection
     vec4 entities[64]; // per entity: min.xyz, max.xyz relative to the scene origin
+    // Temporal denoiser: the previous camera in this frame's scene space.
+    vec4 previousCamera;  // xyz, w = 1 when history may be used
+    vec4 previousForward; // xyz, w = tanHalfFov
+    vec4 previousRight;   // xyz, w = aspect
+    vec4 previousUp;      // xyz, w = jitter x
+    vec4 previousJitter;  // x = jitter y
 } frame;
+// Ping-pong history by frame parity: rgb accumulated lighting, a = distance
+// to the camera (negative = none).
+layout(set = 0, binding = 14, rgba16f) uniform image2D history0;
+layout(set = 0, binding = 15, rgba16f) uniform image2D history1;
 layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D noisyColorImage;
 layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D diffuseAlbedoImage;
 layout(set = 0, binding = 6, rgba16f) uniform writeonly image2D specularAlbedoImage;
@@ -892,6 +902,50 @@ vec3 lightShafts(vec3 origin, vec3 direction, float distanceToPoint) {
     return lightColor * (phase * density * stepLength * lit * gate * 4.0);
 }
 
+// Temporal denoiser. The surface point is projected into the previous frame;
+// if the history there saw the same surface (same distance from the old
+// camera) the new sample is blended in, else history restarts. Runs on the
+// lighting before exposure; Ray Reconstruction, when on, does this itself.
+vec3 accumulate(ivec2 size, vec3 point, vec3 current, uint parity) {
+    if (frame.previousCamera.w < 0.5) {
+        return current;
+    }
+    vec3 offset = point - frame.previousCamera.xyz;
+    float depth = dot(offset, frame.previousForward.xyz);
+    if (depth < 0.05) {
+        return current;
+    }
+    float tanHalfFov = frame.previousForward.w;
+    float aspect = frame.previousRight.w;
+    vec2 ndc = vec2(
+        dot(offset, frame.previousRight.xyz) / (depth * tanHalfFov * aspect),
+        dot(offset, frame.previousUp.xyz) / (depth * tanHalfFov));
+    vec2 uv = vec2(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
+    vec2 previousPixel = uv * vec2(size) - 0.5 + vec2(frame.previousUp.w, frame.previousJitter.x);
+    ivec2 texel = ivec2(floor(previousPixel + 0.5));
+    if (any(lessThan(texel, ivec2(0))) || any(greaterThanEqual(texel, size))) {
+        return current;
+    }
+    vec4 history = parity == 0u ? imageLoad(history1, texel) : imageLoad(history0, texel);
+    float expected = length(offset);
+    if (history.a <= 0.0 || abs(history.a - expected) > 0.04 * expected + 0.1
+            || any(isnan(history.rgb)) || any(isinf(history.rgb))) {
+        return current;
+    }
+    // About 6 frames of history; fireflies are clamped against it.
+    vec3 clamped = min(current, history.rgb * 4.0 + vec3(0.05));
+    return mix(history.rgb, clamped, 0.16);
+}
+
+void storeHistory(ivec2 pixel, uint parity, vec3 color, float distanceToCamera) {
+    vec4 value = vec4(color, distanceToCamera);
+    if (parity == 0u) {
+        imageStore(history0, pixel, value);
+    } else {
+        imageStore(history1, pixel, value);
+    }
+}
+
 float fresnelSchlick(float f0, float cosine) {
     return f0 + (1.0 - f0) * pow(1.0 - clamp(cosine, 0.0, 1.0), 5.0);
 }
@@ -980,6 +1034,7 @@ void main() {
         if (changed) {
             imageStore(targetImage, pixel, vec4(linearToSrgb(result), raster.a));
         }
+        storeHistory(pixel, parity, vec3(0.0), -1.0);
         imageStore(noisyColorImage, pixel, vec4(result, 1.0));
         imageStore(diffuseAlbedoImage, pixel, vec4(result, 1.0));
         imageStore(specularAlbedoImage, pixel, vec4(0.0, 0.0, 0.0, 1.0));
@@ -1122,6 +1177,12 @@ void main() {
     vec4 cloudsInFront = volumetricClouds(camera, direction, primary.distance);
     result = result * (1.0 - cloudsInFront.a) + cloudsInFront.rgb;
     result += lightShafts(camera, direction, primary.distance);
+    if (!any(isnan(result)) && !any(isinf(result))) {
+        result = accumulate(size, point, result, parity);
+        storeHistory(pixel, parity, result, primary.distance);
+    } else {
+        storeHistory(pixel, parity, vec3(0.0), -1.0);
+    }
     recordLuminance(pixel, parity, result);
     result *= exposure;
 

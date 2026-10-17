@@ -36,7 +36,10 @@ public record RayTracingFrameData(
 ) {
     /** Entities cast RT shadows as boxes; the nearest ones are kept. */
     public static final int MAX_ENTITIES = 32;
-    public static final int BYTE_SIZE = 112 + 48 + 64 + MAX_ENTITIES * 32;
+    /** Last block: previous camera for the temporal denoiser (5 vec4). */
+    public static final int HISTORY_FLOATS = 20;
+    public static final int HISTORY_BYTES = HISTORY_FLOATS * 4;
+    public static final int BYTE_SIZE = 112 + 48 + 64 + MAX_ENTITIES * 32 + HISTORY_BYTES;
     private static final long START_NANOS = System.nanoTime();
     private static int frameCounter;
 
@@ -192,7 +195,16 @@ public record RayTracingFrameData(
         return count;
     }
 
-    public ByteBuffer toNativeBuffer() {
+    public float[] cameraBasis() {
+        return new float[] {forward.x, forward.y, forward.z, right.x, right.y, right.z, up.x, up.y, up.z,
+                tangentHalfFov, aspect, jitterX, jitterY};
+    }
+
+    /**
+     * @param history {@link #HISTORY_FLOATS} floats, see the shader's
+     *                previous-camera block; all zero disables the history
+     */
+    public ByteBuffer toNativeBuffer(float[] history) {
         ByteBuffer data = ByteBuffer.allocateDirect(BYTE_SIZE)
                 .order(ByteOrder.nativeOrder());
         putVec4(data, cameraX, cameraY, cameraZ, 1.0f);
@@ -221,6 +233,9 @@ public record RayTracingFrameData(
                     used ? entityBoxes[at + 2] : 0, 0.0f);
             putVec4(data, used ? entityBoxes[at + 3] : 0, used ? entityBoxes[at + 4] : 0,
                     used ? entityBoxes[at + 5] : 0, 0.0f);
+        }
+        for (int index = 0; index < HISTORY_FLOATS; index++) {
+            data.putFloat(history != null && index < history.length ? history[index] : 0.0f);
         }
         return data.flip();
     }

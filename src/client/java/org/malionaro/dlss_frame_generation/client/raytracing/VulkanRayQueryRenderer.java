@@ -135,6 +135,16 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private StorageImage specularAlbedo;
     private StorageImage normalRoughness;
     private StorageImage specularHitDistance;
+    /**
+     * Temporal denoiser history, ping-pong by frame parity: rgb accumulated
+     * lighting, a = distance to the camera (negative: no history).
+     */
+    private StorageImage history0;
+    private StorageImage history1;
+    private boolean historyCleared;
+    /** Camera of the last traced frame, for reprojection. */
+    private net.minecraft.world.phys.Vec3 previousCamera;
+    private float[] previousBasis;
 
     private long shaderModule;
     private long descriptorSetLayout;
@@ -249,7 +259,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 finishWithoutTrace(frameSlot, recordedBuilds);
                 return false;
             }
-            ByteBuffer nativeData = frame.toNativeBuffer();
+            ByteBuffer nativeData = frame.toNativeBuffer(historyBlock(minecraft, frame, config));
             vkCmdUpdateBuffer(commandBuffer, uniformBuffers[frameSlot].buffer, 0L, nativeData);
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkBufferMemoryBarrier.Buffer barrier = VkBufferMemoryBarrier.calloc(1, stack)
@@ -445,6 +455,39 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         cpuSamples = 0;
     }
 
+    /**
+     * Previous camera for the temporal denoiser, in this frame's scene space.
+     * History is used when the denoiser is on, Ray Reconstruction (which has
+     * its own) is off and the last frame was traced at the same size.
+     */
+    private float[] historyBlock(Minecraft minecraft, RayTracingFrameData frame,
+                                 org.malionaro.dlss_frame_generation.client.config.FrameGenConfig config) {
+        net.minecraft.world.phys.Vec3 camera = RayTracingFrameData.cameraPosition(minecraft);
+        float[] basis = frame.cameraBasis();
+        float[] block = new float[RayTracingFrameData.HISTORY_FLOATS];
+        boolean usable = config.rayTracingDenoiserEnabled && !config.dlssRayReconstructionEnabled
+                && previousCamera != null && previousBasis != null && camera != null && historyCleared
+                && previousCamera.distanceToSqr(camera) < 64.0;
+        if (usable) {
+            // vec4 camera.xyz + enabled, forward + tanHalfFov, right + aspect,
+            // up + jitter x, (jitter y, 0, 0, 0).
+            block[0] = (float) (previousCamera.x - frame.originX());
+            block[1] = (float) (previousCamera.y - frame.originY());
+            block[2] = (float) (previousCamera.z - frame.originZ());
+            block[3] = 1.0f;
+            System.arraycopy(previousBasis, 0, block, 4, 3);
+            block[7] = previousBasis[9];
+            System.arraycopy(previousBasis, 3, block, 8, 3);
+            block[11] = previousBasis[10];
+            System.arraycopy(previousBasis, 6, block, 12, 3);
+            block[15] = previousBasis[11];
+            block[16] = previousBasis[12];
+        }
+        previousCamera = camera;
+        previousBasis = basis;
+        return block;
+    }
+
     /** RT shader pack in use; empty for the built-in shader. */
     private String activeShaderPack = RtShaderPacks.BUILT_IN;
 
@@ -486,7 +529,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             shaderModule = result.get(0);
 
             VkDescriptorSetLayoutBinding.Buffer bindings =
-                    VkDescriptorSetLayoutBinding.calloc(14, stack);
+                    VkDescriptorSetLayoutBinding.calloc(16, stack);
             bindings.get(0)
                     .binding(0)
                     .descriptorType(VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR)
@@ -539,6 +582,13 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                     .descriptorCount(1)
                     .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            for (int binding = 14; binding <= 15; binding++) {
+                bindings.get(binding)
+                        .binding(binding)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                        .descriptorCount(1)
+                        .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            }
 
             VkDescriptorSetLayoutCreateInfo layoutInfo =
                     VkDescriptorSetLayoutCreateInfo.calloc(stack)
@@ -596,7 +646,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     .descriptorCount(FRAME_SLOT_COUNT);
             poolSizes.get(1)
                     .type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
-                    .descriptorCount(6 * FRAME_SLOT_COUNT);
+                    .descriptorCount(8 * FRAME_SLOT_COUNT);
             poolSizes.get(2)
                     .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                     .descriptorCount(4 * FRAME_SLOT_COUNT);
@@ -698,6 +748,9 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 HDR_FORMAT, width, height, "RT normal and roughness");
         specularHitDistance = createStorageImage(
                 HIT_DISTANCE_FORMAT, width, height, "RT specular hit distance");
+        history0 = createStorageImage(HDR_FORMAT, width, height, "RT denoiser history 0");
+        history1 = createStorageImage(HDR_FORMAT, width, height, "RT denoiser history 1");
+        historyCleared = false;
         outputWidth = width;
         outputHeight = height;
         outputInitialized = false;
@@ -1494,14 +1547,16 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                             .sType$Default()
                             .pAccelerationStructures(stack.longs(slotScenes[slot].tlas));
             VkDescriptorImageInfo.Buffer imageInfo =
-                    VkDescriptorImageInfo.calloc(6, stack);
+                    VkDescriptorImageInfo.calloc(8, stack);
             long[] imageViews = {
                     outputView,
                     noisyColor.view,
                     diffuseAlbedo.view,
                     specularAlbedo.view,
                     normalRoughness.view,
-                    specularHitDistance.view
+                    specularHitDistance.view,
+                    history0.view,
+                    history1.view
             };
             for (int index = 0; index < imageViews.length; index++) {
                 imageInfo.get(index)
@@ -1549,7 +1604,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                         .offset(0)
                         .range(RayTracingFrameData.BYTE_SIZE);
                 VkWriteDescriptorSet.Buffer writes =
-                        VkWriteDescriptorSet.calloc(14, stack);
+                        VkWriteDescriptorSet.calloc(16, stack);
                 long targetSet = descriptorSets[slot];
                 writes.get(0)
                         .sType$Default()
@@ -1620,7 +1675,18 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                         .dstBinding(13)
                         .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                         .pBufferInfo(exposureInfo);
-                imageInfo.position(0).limit(6);
+                for (int binding = 14; binding <= 15; binding++) {
+                    int imageIndex = binding - 8;
+                    writes.get(binding)
+                            .sType$Default()
+                            .dstSet(targetSet)
+                            .dstBinding(binding)
+                            .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                            .pImageInfo(imageInfo
+                                    .position(imageIndex)
+                                    .limit(imageIndex + 1));
+                }
+                imageInfo.position(0).limit(8);
                 vkUpdateDescriptorSets(device, writes, null);
             }
         }
@@ -1709,6 +1775,23 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     stack
             );
 
+            if (!historyCleared) {
+                // No history yet: distance -1 marks every pixel invalid.
+                for (StorageImage history : new StorageImage[] {history0, history1}) {
+                    transitionImage(commandBuffer, history.image,
+                            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                            0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, stack);
+                    VkClearColorValue clear = VkClearColorValue.calloc(stack);
+                    clear.float32(0, 0.0f).float32(1, 0.0f).float32(2, 0.0f).float32(3, -1.0f);
+                    VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
+                    range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                            .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+                    vkCmdClearColorImage(commandBuffer, history.image, VK_IMAGE_LAYOUT_GENERAL, clear, range);
+                    history.layout = VK_IMAGE_LAYOUT_GENERAL;
+                }
+                historyCleared = true;
+            }
             // Fresh accumulators for this frame's parity; the other half
             // holds last frame's luminance, which this frame exposes with.
             if (!exposureCleared) {
@@ -2297,6 +2380,10 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         destroyStorageImage(specularAlbedo);
         destroyStorageImage(normalRoughness);
         destroyStorageImage(specularHitDistance);
+        destroyStorageImage(history0);
+        destroyStorageImage(history1);
+        history0 = null;
+        history1 = null;
         noisyColor = null;
         diffuseAlbedo = null;
         specularAlbedo = null;
@@ -2335,7 +2422,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         retired.outputView = outputView;
         retired.outputMemory = outputMemory;
         retired.storageImages = new StorageImage[] {
-                noisyColor, diffuseAlbedo, specularAlbedo, normalRoughness, specularHitDistance
+                noisyColor, diffuseAlbedo, specularAlbedo, normalRoughness, specularHitDistance,
+                history0, history1
         };
         // Frames up to frameNumber - 1 may have used these images.
         retired.lastUsedFrame = frameNumber - 1;
@@ -2344,6 +2432,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         outputView = NULL;
         outputMemory = null;
         noisyColor = diffuseAlbedo = specularAlbedo = normalRoughness = specularHitDistance = null;
+        history0 = history1 = null;
     }
 
     /** Frees retired outputs the slot-fence guarantee covers; call after the wait in render(). */
