@@ -937,6 +937,38 @@ vec3 accumulate(ivec2 size, vec3 point, vec3 current, uint parity) {
     return mix(history.rgb, clamped, 0.16);
 }
 
+// Falling rain in front of RT surfaces. The RT pass replaces those pixels,
+// and with them vanilla's rain streaks (they write no depth), so the pass
+// draws its own: thin world-anchored streaks in three layers in front of the
+// camera, only where the camera is under open sky.
+vec3 rainStreaks(vec3 camera, vec3 direction, float maximumDistance) {
+    float rain = rainLevel();
+    if (rain < 0.02 || !overworld() || frame.skyParams.y < 0.5) {
+        return vec3(0.0);
+    }
+    const float LAYERS[3] = float[3](1.6, 3.4, 6.5);
+    float streaks = 0.0;
+    for (int layer = 0; layer < 3; layer++) {
+        float distanceToLayer = LAYERS[layer];
+        if (distanceToLayer >= maximumDistance) {
+            break;
+        }
+        vec3 world = camera + direction * distanceToLayer + frame.worldOrigin.xyz;
+        vec2 column = world.xz * 7.0;
+        vec2 cell = floor(column);
+        float seed = hash2(cell + float(layer) * 17.0);
+        if (seed > rain * 0.45) {
+            continue;
+        }
+        vec2 inCell = fract(column) - 0.5;
+        float thin = 1.0 - smoothstep(0.03, 0.09, length(inCell));
+        float fall = fract((world.y + frame.environment.z * 9.0) / 1.4 + seed * 7.0);
+        float drop = smoothstep(0.55, 0.8, fall) * (1.0 - smoothstep(0.92, 1.0, fall));
+        streaks += thin * drop * (1.0 - float(layer) * 0.25);
+    }
+    return skyRadiance(vec3(0.0, 1.0, 0.0)) * (0.55 * min(streaks, 1.0));
+}
+
 void storeHistory(ivec2 pixel, uint parity, vec3 color, float distanceToCamera) {
     vec4 value = vec4(color, distanceToCamera);
     if (parity == 0u) {
@@ -1183,6 +1215,8 @@ void main() {
     } else {
         storeHistory(pixel, parity, vec3(0.0), -1.0);
     }
+    // After the history: rain moves too fast to accumulate.
+    result += rainStreaks(camera, direction, primary.distance);
     recordLuminance(pixel, parity, result);
     result *= exposure;
 
