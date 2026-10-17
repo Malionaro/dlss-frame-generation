@@ -168,12 +168,13 @@ bool slabs(vec3 origin, vec3 direction, vec3 minimum, vec3 maximum,
 
 // skipFlags: boxes with any of these flags are passed through (refraction
 // through water or glass).
-Hit traceScene(vec3 origin, vec3 direction, float minimumDistance, float maximumDistance, uint skipFlags) {
+Hit traceRay(vec3 origin, vec3 direction, float minimumDistance, float maximumDistance,
+              uint skipFlags, uint rayFlags) {
     rayQueryEXT query;
     rayQueryInitializeEXT(
         query,
         scene,
-        gl_RayFlagsOpaqueEXT,
+        rayFlags,
         0xff,
         origin,
         minimumDistance,
@@ -242,6 +243,19 @@ Hit traceScene(vec3 origin, vec3 direction, float minimumDistance, float maximum
         hit.normal = vec3(0.0, 0.0, sign(point.z - center.z));
     }
     return hit;
+}
+
+// Closest hit: what the ray sees.
+Hit traceScene(vec3 origin, vec3 direction, float minimumDistance, float maximumDistance, uint skipFlags) {
+    return traceRay(origin, direction, minimumDistance, maximumDistance, skipFlags,
+        gl_RayFlagsOpaqueEXT);
+}
+
+// Any hit: enough for shadows and much cheaper, the traversal stops at the
+// first blocker instead of searching for the nearest one.
+Hit traceAny(vec3 origin, vec3 direction, float minimumDistance, float maximumDistance, uint skipFlags) {
+    return traceRay(origin, direction, minimumDistance, maximumDistance, skipFlags,
+        gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT);
 }
 
 vec3 unpackColor(float packedAsFloat) {
@@ -544,7 +558,7 @@ bool hitsEntity(vec3 origin, vec3 direction, float maximumDistance) {
 // water and glass let part of it through.
 float lightVisibility(vec3 point, vec3 normal, vec3 lightDirection, bool entities) {
     vec3 origin = point + normal * 0.03;
-    Hit blocker = traceScene(origin, lightDirection, 0.03, frame.renderParameters.z, 0u);
+    Hit blocker = traceAny(origin, lightDirection, 0.03, frame.renderParameters.z, 0u);
     float visibility = 1.0;
     if (blocker.valid) {
         uint flags = boxFlags(blocker.box);
@@ -586,7 +600,7 @@ vec3 blockLighting(vec3 point, vec3 normal, int maximumLights) {
         if (nDotL < 0.001) {
             continue;
         }
-        Hit blocker = traceScene(point + normal * 0.03, direction, 0.03, distanceToLight - 0.04, 0u);
+        Hit blocker = traceAny(point + normal * 0.03, direction, 0.03, distanceToLight - 0.04, 0u);
         float visibility = blocker.valid
             ? ((boxFlags(blocker.box) & FLAG_GLASS) != 0u ? 0.65 : 0.0) : 1.0;
         if (visibility <= 0.0) {
@@ -634,7 +648,7 @@ vec3 indirectLighting(vec3 point, vec3 normal, int sampleCount, float sky) {
     float openSky = sky * sky;
     for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
         vec3 direction = cosineHemisphere(normal);
-        Hit bounce = traceScene(point + normal * 0.03, direction, 0.03, 32.0, 0u);
+        Hit bounce = traceScene(point + normal * 0.03, direction, 0.03, 16.0, 0u);
         if (!bounce.valid) {
             sum += skyRadiance(direction) * openSky;
         } else if ((boxFlags(bounce.box) & (FLAG_WATER | FLAG_GLASS)) != 0u) {
@@ -694,7 +708,8 @@ void recordLuminance(ivec2 pixel, uint parity, vec3 color) {
 // Sun or moon light scattered towards the camera by haze along the view ray,
 // shadowed by the scene: light shafts through trees, windows and caves.
 vec3 lightShafts(vec3 origin, vec3 direction, float distanceToPoint) {
-    int steps = int(frame.cameraForward.w + 0.5) * 3 - 1; // LOW 0 .. ULTRA 8
+    int quality = int(frame.cameraForward.w + 0.5);
+    int steps = quality >= 3 ? 5 : (quality == 2 ? 3 : 0); // high and ultra only
     if (steps <= 0 || !overworld()) {
         return vec3(0.0);
     }
@@ -714,7 +729,7 @@ vec3 lightShafts(vec3 origin, vec3 direction, float distanceToPoint) {
     float lit = 0.0;
     for (int stepIndex = 0; stepIndex < steps; stepIndex++) {
         float t = (float(stepIndex) + offset) * stepLength;
-        Hit blocker = traceScene(origin + direction * t, lightDirection, 0.05,
+        Hit blocker = traceAny(origin + direction * t, lightDirection, 0.05,
             frame.renderParameters.z, FLAG_GLASS);
         if (!blocker.valid) {
             lit += exp(-density * t);
@@ -753,8 +768,10 @@ void main() {
     vec3 camera = frame.cameraPosition.xyz;
     float maxDistance = frame.renderParameters.z;
     int sampleCount = clamp(int(frame.sunDirectionAndSamples.w), 1, 8);
-    int shadowSamples = min(sampleCount, 4);
-    int bounceSamples = clamp((sampleCount + 1) / 2, 1, 4);
+    // One ray of each kind per pixel by default; jitter and DLSS accumulate
+    // them over frames. More rays per pixel only when the user asks for it.
+    int shadowSamples = clamp(sampleCount, 1, 4);
+    int bounceSamples = clamp(sampleCount / 2, 1, 2);
     uint parity = floatBitsToUint(frame.environment.w) & 1u;
     float exposure = adaptedExposure(parity);
     if (pixel == ivec2(0)) {
@@ -858,6 +875,7 @@ void main() {
     // Diffuse: main light with soft shadows, sky light + one bounce, block
     // lights and emission.
     vec3 diffuseLight = vec3(0.0);
+    float sunVisibility = 0.0;
     float nDotL = max(dot(normal, lightDirection), 0.0);
     if (nDotL > 0.0 && lightColor.r > 0.0 && sun > 0.0) {
         float visibility = 0.0;
@@ -865,10 +883,11 @@ void main() {
             visibility += lightVisibility(point, primary.normal,
                 jitterTowards(lightDirection, 0.012), true);
         }
-        diffuseLight += lightColor * nDotL * sun * (visibility / float(shadowSamples));
+        sunVisibility = visibility / float(shadowSamples);
+        diffuseLight += lightColor * nDotL * sun * sunVisibility;
     }
     diffuseLight += indirectLighting(point, primary.normal, bounceSamples, sky);
-    diffuseLight += blockLighting(point, primary.normal, 8);
+    diffuseLight += blockLighting(point, primary.normal, 4);
     // Never pitch black, like vanilla's minimum brightness.
     diffuseLight += vec3(0.012);
     vec3 result = albedo * diffuseLight;
@@ -889,7 +908,7 @@ void main() {
         vec3 inside = point - primary.normal * 0.02;
         Hit behind = traceScene(inside, refracted, 0.02, 48.0, skip);
         vec3 behindColor = behind.valid
-            ? shadeSecondary(behind, inside, refracted, 2)
+            ? shadeSecondary(behind, inside, refracted, 0)
             : skyWithClouds(point, refracted) * sky;
         if (isWater) {
             float depth = behind.valid ? behind.distance : 48.0;
@@ -918,14 +937,14 @@ void main() {
         Hit reflection = traceScene(reflectionOrigin, reflectionDirection,
             0.04, frame.reflectionParams.x, 0u);
         vec3 reflectionColor = reflection.valid
-            ? shadeSecondary(reflection, reflectionOrigin, reflectionDirection, 2)
+            ? shadeSecondary(reflection, reflectionOrigin, reflectionDirection, 0)
             : skyWithClouds(point, reflectionDirection) * mix(0.05, 1.0, sky);
         // Highlight of the sun or moon.
         vec3 halfVector = normalize(lightDirection - direction);
         float highlight = pow(max(dot(normal, halfVector), 0.0), mix(400.0, 16.0, roughness));
         if (highlight > 1.0e-3 && sun > 0.0) {
-            reflectionColor += lightColor * highlight * 4.0 * sun
-                * lightVisibility(point, primary.normal, lightDirection, false);
+            // The diffuse shadow rays already know whether the light is blocked.
+            reflectionColor += lightColor * highlight * 4.0 * sun * sunVisibility;
         }
         // Water and ice also carry the reflective flag; they follow Fresnel.
         float weight = isMetallic ? 0.7

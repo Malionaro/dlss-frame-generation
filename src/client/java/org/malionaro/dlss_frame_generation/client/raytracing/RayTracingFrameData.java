@@ -131,9 +131,9 @@ public record RayTracingFrameData(
                         minecraft.options.getEffectiveRenderDistance() * 16.0f
                 ),
                 config.rayTracingMode == FrameGenConfig.RayTracingMode.SHADOWS_AND_REFLECTIONS,
-                config.rayTracingDenoiserEnabled
-                        ? Math.max(4, config.rayTracingRaysPerPixel)
-                        : config.rayTracingRaysPerPixel,
+                // The user's rays per pixel; a denoiser no longer forces 4,
+                // which made RT far too slow.
+                config.rayTracingRaysPerPixel,
                 quality.ordinal(),
                 maxDistance * reflectionFraction,
                 // Rays go through the same jittered sample point as the raster.
