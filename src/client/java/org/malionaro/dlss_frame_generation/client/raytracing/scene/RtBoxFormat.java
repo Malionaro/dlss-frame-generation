@@ -24,6 +24,12 @@ public final class RtBoxFormat {
     public static final int FLAG_GLASS = 4;
     public static final int FLAG_EMISSIVE = 8;
     public static final int FLAG_METALLIC = 16;
+    /** Bits 8-11: sky light 0-15 next to the block (caves get no sun or sky). */
+    public static final int SKY_LIGHT_SHIFT = 8;
+
+    public static int withSkyLight(int flags, int skyLight) {
+        return flags | (Math.clamp(skyLight, 0, 15) << SKY_LIGHT_SHIFT);
+    }
 
     /** Face order used everywhere: -X, +X, -Y, +Y, -Z, +Z. */
     public static final int FACE_COUNT = 6;

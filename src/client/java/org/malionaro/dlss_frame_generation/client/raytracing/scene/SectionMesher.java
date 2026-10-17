@@ -4,7 +4,9 @@ import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.color.block.BlockTintSource;
 import net.minecraft.client.renderer.block.BlockAndTintGetter;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.EmptyBlockGetter;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.MapColor;
@@ -90,7 +92,8 @@ public final class SectionMesher {
                                 ? tint(blockColors, tintLevel, state, position, look.tintIndex(), color)
                                 : NO_TINT;
                         int tintWord = RtBoxFormat.packTint(tint, look.tintedFaces(), look.cutout());
-                        int flags = flags(mapColor, false, state, emission);
+                        int flags = RtBoxFormat.withSkyLight(
+                                flags(mapColor, false, state, emission), openSkyLight(snapshot, x, y, z));
                         VoxelShape shape = state.getShape(EmptyBlockGetter.INSTANCE, position);
                         if (appendShape(boxes, count, shape, x, y, z, color, flags,
                                 look.facesX(), look.facesY(), look.facesZ(), tintWord)) {
@@ -111,7 +114,10 @@ public final class SectionMesher {
                         }
                         RtBoxFormat.putBox(boxes, x, y, z,
                                 x + 1.0f, y + height, z + 1.0f,
-                                packed, flags(fluidColor, true, state, 0), 0, 0, 0,
+                                packed, RtBoxFormat.withSkyLight(
+                                        flags(fluidColor, fluid.createLegacyBlock().getBlock() == Blocks.WATER,
+                                                state, 0),
+                                        openSkyLight(snapshot, x, y, z)), 0, 0, 0,
                                 RtBoxFormat.packTint(NO_TINT, 0, false));
                         count[0]++;
                     }
@@ -174,6 +180,23 @@ public final class SectionMesher {
         }
     }
 
+    /** Brightest sky light of the block's cell and its six neighbours. */
+    private static int openSkyLight(SectionSnapshot snapshot, int x, int y, int z) {
+        int light = snapshot.skyLight(x, y, z);
+        light = Math.max(light, snapshot.skyLight(x - 1, y, z));
+        light = Math.max(light, snapshot.skyLight(x + 1, y, z));
+        light = Math.max(light, snapshot.skyLight(x, y - 1, z));
+        light = Math.max(light, snapshot.skyLight(x, y + 1, z));
+        light = Math.max(light, snapshot.skyLight(x, y, z - 1));
+        return Math.max(light, snapshot.skyLight(x, y, z + 1));
+    }
+
+    /** Glass blocks and panes (refracting, light passes); not slabs or leaves. */
+    static boolean isGlass(BlockState state) {
+        return BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath().contains("glass");
+    }
+
+    /** @param fluidBlock water (lava is emissive but not water) */
     static int flags(MapColor mapColor, boolean fluidBlock, BlockState state, int emission) {
         int flags = 0;
         if (mapColor == MapColor.WATER || mapColor == MapColor.ICE || mapColor == MapColor.METAL
@@ -183,8 +206,7 @@ public final class SectionMesher {
         if (fluidBlock) {
             flags |= RtBoxFormat.FLAG_WATER;
         }
-        if (!fluidBlock && !state.isSolidRender()
-                && (mapColor == MapColor.NONE || state.getLightDampening() <= 1)) {
+        if (!fluidBlock && isGlass(state)) {
             flags |= RtBoxFormat.FLAG_GLASS;
         }
         if (emission > 0 || mapColor == MapColor.FIRE) {

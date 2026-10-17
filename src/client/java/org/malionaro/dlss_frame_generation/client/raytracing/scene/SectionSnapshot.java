@@ -1,7 +1,10 @@
 package org.malionaro.dlss_frame_generation.client.raytracing.scene;
 
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.chunk.DataLayer;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -26,6 +29,10 @@ public final class SectionSnapshot {
     private final long key;
     private final PalettedContainer<BlockState> center;
     private final PalettedContainer<BlockState>[] neighbors;
+    /** Sky light of the section, or null when the engine stores none. */
+    private DataLayer skyLight;
+    /** Sky light used when there is no stored layer. */
+    private int uniformSkyLight;
 
     @SuppressWarnings("unchecked")
     private SectionSnapshot(long key, PalettedContainer<BlockState> center) {
@@ -68,6 +75,14 @@ public final class SectionSnapshot {
             return Result.EMPTY;
         }
         SectionSnapshot snapshot = new SectionSnapshot(key, section.getStates().copy());
+        DataLayer sky = level.getLightEngine().getLayerListener(LightLayer.SKY)
+                .getDataLayerData(SectionPos.of(key));
+        if (sky != null && !sky.isEmpty()) {
+            snapshot.skyLight = sky.copy();
+        } else {
+            snapshot.uniformSkyLight = level.getBrightness(LightLayer.SKY, new BlockPos(
+                    snapshot.originX() + 8, snapshot.originY() + 8, snapshot.originZ() + 8));
+        }
         for (int index = 0; index < OFFSETS.length; index++) {
             int[] offset = OFFSETS[index];
             int nx = sectionX + offset[0];
@@ -92,6 +107,14 @@ public final class SectionSnapshot {
             return null;
         }
         return chunk.getSection(level.getSectionIndexFromSectionY(sectionY));
+    }
+
+    /** Sky light 0-15 at section-local coordinates, clamped into the section. */
+    public int skyLight(int x, int y, int z) {
+        if (skyLight == null) {
+            return uniformSkyLight;
+        }
+        return skyLight.get(Math.clamp(x, 0, 15), Math.clamp(y, 0, 15), Math.clamp(z, 0, 15));
     }
 
     /** State at section-local coordinates; -1 and 16 reach into the neighbours. */

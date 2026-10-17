@@ -199,8 +199,8 @@ public record RayTracingFrameData(
                 samples
         );
         putVec4(data, reflectionRange, jitterX, jitterY, 0.0f);
-        putVec4(data, rain, thunder, timeSeconds, Float.intBitsToFloat(frameIndex));
-        putVec4(data, originX, originY, originZ, Float.intBitsToFloat(entityCount));
+        data.putFloat(rain).putFloat(thunder).putFloat(timeSeconds).putInt(frameIndex);
+        data.putFloat(originX).putFloat(originY).putFloat(originZ).putInt(entityCount);
         putVec4(data, overworld ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
         for (int slot = 0; slot < MAX_ENTITIES; slot++) {
             int at = slot * 6;

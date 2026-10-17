@@ -180,7 +180,7 @@ public final class NvidiaDlssRenderResolution {
         if (resolution == null) {
             return null;
         }
-        if (resolution == cachedResolution) {
+        if (resolution.equals(cachedResolution)) {
             return new int[] {cachedMinimumWidth, cachedMinimumHeight};
         }
         if (resolution.mode() == 1) {

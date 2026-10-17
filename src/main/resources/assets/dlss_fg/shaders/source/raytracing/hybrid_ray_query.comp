@@ -364,6 +364,16 @@ uint boxFlags(BlockAabb box) {
     return floatBitsToUint(box.maximumYZColorFlags.w);
 }
 
+// Vanilla sky light next to the block, 0-1. Without it every cave whose
+// ceiling lies outside the RT scene would be lit by the open sky.
+float skyAccess(BlockAabb box) {
+    return float((boxFlags(box) >> 8u) & 15u) / 15.0;
+}
+
+float sunAccess(BlockAabb box) {
+    return smoothstep(0.55, 0.95, skyAccess(box));
+}
+
 bool overworld() {
     return frame.skyParams.x > 0.5;
 }
@@ -577,18 +587,22 @@ vec3 blockLighting(vec3 point, vec3 normal, int maximumLights) {
 
 // Cheap shading for secondary hits (bounce light, reflections, refraction):
 // direct light with one shadow ray, sky ambient, block lights and emission.
-vec3 shadeSecondary(Hit hit, vec3 origin, vec3 direction) {
+vec3 shadeSecondary(Hit hit, vec3 origin, vec3 direction, int maximumLights) {
     vec3 point = origin + direction * hit.distance;
     vec3 albedo = albedoOf(hit.box, point, hit.normal);
     vec3 lightDirection = mainLightDirection();
     float nDotL = max(dot(hit.normal, lightDirection), 0.0);
+    float sky = skyAccess(hit.box);
     vec3 light = vec3(0.0);
-    if (nDotL > 0.0) {
-        light += mainLightColor() * nDotL * lightVisibility(point, hit.normal, lightDirection, false);
+    if (nDotL > 0.0 && sunAccess(hit.box) > 0.0) {
+        light += mainLightColor() * nDotL * sunAccess(hit.box)
+            * lightVisibility(point, hit.normal, lightDirection, false);
     }
     float skyFacing = 0.35 + 0.65 * clamp(hit.normal.y * 0.5 + 0.5, 0.0, 1.0);
-    light += skyRadiance(vec3(0.0, 1.0, 0.0)) * 0.35 * skyFacing;
-    light += blockLighting(point, hit.normal, 4);
+    light += skyRadiance(vec3(0.0, 1.0, 0.0)) * 0.35 * skyFacing * sky * sky;
+    if (maximumLights > 0) {
+        light += blockLighting(point, hit.normal, maximumLights);
+    }
     vec3 color = albedo * light;
     if ((boxFlags(hit.box) & FLAG_EMISSIVE) != 0u) {
         color += albedo * 2.0;
@@ -598,29 +612,35 @@ vec3 shadeSecondary(Hit hit, vec3 origin, vec3 direction) {
 
 // Sky light and one bounce, cosine-sampled. Denoised by Ray Reconstruction,
 // accumulated by DLSS otherwise.
-vec3 indirectLighting(vec3 point, vec3 normal, int sampleCount) {
+vec3 indirectLighting(vec3 point, vec3 normal, int sampleCount, float sky) {
     vec3 sum = vec3(0.0);
+    // A ray that leaves the RT scene only reaches the sky if the surface
+    // actually sees it.
+    float openSky = sky * sky;
     for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
         vec3 direction = cosineHemisphere(normal);
         Hit bounce = traceScene(point + normal * 0.03, direction, 0.03, 32.0, 0u);
         if (!bounce.valid) {
-            sum += skyRadiance(direction);
+            sum += skyRadiance(direction) * openSky;
         } else if ((boxFlags(bounce.box) & (FLAG_WATER | FLAG_GLASS)) != 0u) {
-            sum += skyRadiance(direction) * 0.6;
+            sum += skyRadiance(direction) * 0.6 * openSky;
         } else {
-            sum += shadeSecondary(bounce, point + normal * 0.03, direction);
+            // Bounces skip block lights: too many rays for a faint term.
+            sum += shadeSecondary(bounce, point + normal * 0.03, direction, 0);
         }
     }
     return sum / float(sampleCount);
 }
 
-vec3 applyFog(vec3 color, vec3 direction, float distanceToPoint) {
+vec3 applyFog(vec3 color, vec3 direction, float distanceToPoint, float sky) {
     float density = mix(0.0022, 0.012, rainLevel());
     if (!overworld()) {
         density = 0.006;
     }
     float fog = 1.0 - exp(-distanceToPoint * density);
-    vec3 fogColor = skyRadiance(normalize(vec3(direction.x, max(direction.y, 0.02), direction.z)));
+    // Underground the fog is dark, not sky coloured.
+    vec3 fogColor = skyRadiance(normalize(vec3(direction.x, max(direction.y, 0.02), direction.z)))
+        * mix(0.04, 1.0, sky);
     return mix(color, fogColor, clamp(fog, 0.0, 0.85));
 }
 
@@ -654,6 +674,8 @@ void main() {
     vec3 camera = frame.cameraPosition.xyz;
     float maxDistance = frame.renderParameters.z;
     int sampleCount = clamp(int(frame.sunDirectionAndSamples.w), 1, 8);
+    int shadowSamples = min(sampleCount, 4);
+    int bounceSamples = clamp((sampleCount + 1) / 2, 1, 4);
     vec3 lightDirection = mainLightDirection();
     vec3 lightColor = mainLightColor();
 
@@ -697,15 +719,17 @@ void main() {
     bool isMetallic = (flags & FLAG_METALLIC) != 0u;
     bool isReflective = (flags & FLAG_REFLECTIVE) != 0u;
     vec3 albedo = albedoOf(primary.box, point, normal);
+    float sky = skyAccess(primary.box);
+    float sun = sunAccess(primary.box);
 
     float roughness = 0.85;
     float f0 = 0.04;
     vec3 specularAlbedo = vec3(0.04);
 
     // Rain: sky-exposed upward faces get wet, darker and glossy, with puddles.
-    if (rainLevel() > 0.01 && normal.y > 0.5 && !isWater && overworld()) {
-        Hit cover = traceScene(point + normal * 0.03, vec3(0.0, 1.0, 0.0), 0.03, 64.0, 0u);
-        if (!cover.valid) {
+    // Sky light 14+ next to an upward face means open sky above, as for rain.
+    if (rainLevel() > 0.01 && normal.y > 0.5 && !isWater && overworld() && sky > 0.9) {
+        {
             vec2 world = point.xz + frame.worldOrigin.xz;
             float puddle = smoothstep(0.45, 0.65, fbm(world * 0.35));
             float wet = rainLevel() * mix(0.55, 1.0, puddle);
@@ -739,16 +763,16 @@ void main() {
     // lights and emission.
     vec3 diffuseLight = vec3(0.0);
     float nDotL = max(dot(normal, lightDirection), 0.0);
-    if (nDotL > 0.0 && lightColor.r > 0.0) {
+    if (nDotL > 0.0 && lightColor.r > 0.0 && sun > 0.0) {
         float visibility = 0.0;
-        for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+        for (int sampleIndex = 0; sampleIndex < shadowSamples; sampleIndex++) {
             visibility += lightVisibility(point, primary.normal,
                 jitterTowards(lightDirection, 0.012), true);
         }
-        diffuseLight += lightColor * nDotL * (visibility / float(sampleCount));
+        diffuseLight += lightColor * nDotL * sun * (visibility / float(shadowSamples));
     }
-    diffuseLight += indirectLighting(point, primary.normal, sampleCount);
-    diffuseLight += blockLighting(point, primary.normal, 16);
+    diffuseLight += indirectLighting(point, primary.normal, bounceSamples, sky);
+    diffuseLight += blockLighting(point, primary.normal, 8);
     // Never pitch black, like vanilla's minimum brightness.
     diffuseLight += vec3(0.012);
     vec3 result = albedo * diffuseLight;
@@ -769,8 +793,8 @@ void main() {
         vec3 inside = point - primary.normal * 0.02;
         Hit behind = traceScene(inside, refracted, 0.02, 48.0, skip);
         vec3 behindColor = behind.valid
-            ? shadeSecondary(behind, inside, refracted)
-            : skyWithClouds(point, refracted);
+            ? shadeSecondary(behind, inside, refracted, 2)
+            : skyWithClouds(point, refracted) * sky;
         if (isWater) {
             float depth = behind.valid ? behind.distance : 48.0;
             vec3 absorption = exp(-vec3(0.45, 0.12, 0.08) * depth);
@@ -798,13 +822,13 @@ void main() {
         Hit reflection = traceScene(reflectionOrigin, reflectionDirection,
             0.04, frame.reflectionParams.x, 0u);
         vec3 reflectionColor = reflection.valid
-            ? shadeSecondary(reflection, reflectionOrigin, reflectionDirection)
-            : skyWithClouds(point, reflectionDirection);
+            ? shadeSecondary(reflection, reflectionOrigin, reflectionDirection, 2)
+            : skyWithClouds(point, reflectionDirection) * mix(0.05, 1.0, sky);
         // Highlight of the sun or moon.
         vec3 halfVector = normalize(lightDirection - direction);
         float highlight = pow(max(dot(normal, halfVector), 0.0), mix(400.0, 16.0, roughness));
-        if (highlight > 1.0e-3) {
-            reflectionColor += lightColor * highlight * 4.0
+        if (highlight > 1.0e-3 && sun > 0.0) {
+            reflectionColor += lightColor * highlight * 4.0 * sun
                 * lightVisibility(point, primary.normal, lightDirection, false);
         }
         // Water and ice also carry the reflective flag; they follow Fresnel.
@@ -815,7 +839,7 @@ void main() {
         specularHitDistance = reflection.valid ? reflection.distance : frame.reflectionParams.x;
     }
 
-    result = applyFog(result, direction, primary.distance);
+    result = applyFog(result, direction, primary.distance, sky);
 
     // Fade into the raster image at the edge of the RT range.
     float edge = smoothstep(maxDistance * 0.75, maxDistance, primary.distance);

@@ -16,3 +16,6 @@
 native/streamline/** linguist-vendored
 native/fidelityfx/** linguist-vendored
 vendor/** linguist-vendored
+
+# Verified third-party bundles: hashed byte for byte, never convert line endings.
+vendor/** -text
