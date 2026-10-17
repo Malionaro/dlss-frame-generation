@@ -103,6 +103,14 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private final VkPhysicalDevice physicalDevice;
     private final SectionScene scene = new SectionScene();
 
+    /**
+     * Auto exposure, shared by all slots: uint logSum[2], uint count[2],
+     * float exposure[2]. Frame parity p accumulates into [p] while the shader
+     * exposes with what frame p-1 left in [1-p].
+     */
+    private static final int EXPOSURE_BYTES = 24;
+    private Allocation exposureBuffer;
+    private boolean exposureCleared;
     private final Allocation[] uniformBuffers =
             new Allocation[FRAME_SLOT_COUNT];
 
@@ -267,6 +275,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
 
             recordHybridPass(
                     commandBuffer,
+                    frame.frameIndex() & 1,
                     colorView.texture().vkImage(),
                     depthView.texture().vkImage(),
                     descriptorSets[frameSlot],
@@ -347,6 +356,12 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     false
             );
         }
+        exposureBuffer = createBuffer(
+                EXPOSURE_BYTES,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                false
+        );
         createPipeline();
         setupSlotSynchronization();
         initialized = true;
@@ -364,7 +379,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             shaderModule = result.get(0);
 
             VkDescriptorSetLayoutBinding.Buffer bindings =
-                    VkDescriptorSetLayoutBinding.calloc(13, stack);
+                    VkDescriptorSetLayoutBinding.calloc(14, stack);
             bindings.get(0)
                     .binding(0)
                     .descriptorType(VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR)
@@ -410,6 +425,11 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             bindings.get(12)
                     .binding(12)
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            bindings.get(13)
+                    .binding(13)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                     .descriptorCount(1)
                     .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
 
@@ -472,7 +492,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     .descriptorCount(6 * FRAME_SLOT_COUNT);
             poolSizes.get(2)
                     .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                    .descriptorCount(3 * FRAME_SLOT_COUNT);
+                    .descriptorCount(4 * FRAME_SLOT_COUNT);
             poolSizes.get(3)
                     .type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                     .descriptorCount(FRAME_SLOT_COUNT);
@@ -1166,6 +1186,11 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     .buffer(slotScene.sprites.buffer)
                     .offset(0)
                     .range(VK_WHOLE_SIZE);
+            VkDescriptorBufferInfo.Buffer exposureInfo = VkDescriptorBufferInfo.calloc(1, stack);
+            exposureInfo.get(0)
+                    .buffer(exposureBuffer.buffer)
+                    .offset(0)
+                    .range(EXPOSURE_BYTES);
             VkDescriptorImageInfo.Buffer atlasInfo = VkDescriptorImageInfo.calloc(1, stack);
             atlasInfo.get(0)
                     .sampler(atlasSampler)
@@ -1180,7 +1205,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                         .offset(0)
                         .range(RayTracingFrameData.BYTE_SIZE);
                 VkWriteDescriptorSet.Buffer writes =
-                        VkWriteDescriptorSet.calloc(13, stack);
+                        VkWriteDescriptorSet.calloc(14, stack);
                 long targetSet = descriptorSets[slot];
                 writes.get(0)
                         .sType$Default()
@@ -1245,6 +1270,12 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                         .dstBinding(12)
                         .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                         .pImageInfo(atlasInfo);
+                writes.get(13)
+                        .sType$Default()
+                        .dstSet(targetSet)
+                        .dstBinding(13)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                        .pBufferInfo(exposureInfo);
                 imageInfo.position(0).limit(6);
                 vkUpdateDescriptorSets(device, writes, null);
             }
@@ -1253,6 +1284,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
 
     private void recordHybridPass(
             VkCommandBuffer commandBuffer,
+            int exposureParity,
             long colorImage,
             long depthImage,
             long descriptorSet,
@@ -1332,6 +1364,23 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     stack
             );
 
+            // Fresh accumulators for this frame's parity; the other half
+            // holds last frame's luminance, which this frame exposes with.
+            if (!exposureCleared) {
+                vkCmdFillBuffer(commandBuffer, exposureBuffer.buffer, 0L, EXPOSURE_BYTES, 0);
+                exposureCleared = true;
+            } else {
+                vkCmdFillBuffer(commandBuffer, exposureBuffer.buffer, exposureParity * 4L, 4L, 0);
+                vkCmdFillBuffer(commandBuffer, exposureBuffer.buffer, 8L + exposureParity * 4L, 4L, 0);
+            }
+            memoryBarrier(
+                    commandBuffer,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                    stack
+            );
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
             vkCmdBindDescriptorSets(
                     commandBuffer,
@@ -2012,6 +2061,9 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             destroyAllocation(uniformBuffers[index], true);
             uniformBuffers[index] = null;
         }
+        destroyAllocation(exposureBuffer, true);
+        exposureBuffer = null;
+        exposureCleared = false;
         if (depthSampler != NULL) vkDestroySampler(device, depthSampler, null);
         if (atlasSampler != NULL) vkDestroySampler(device, atlasSampler, null);
         if (descriptorPool != NULL) vkDestroyDescriptorPool(device, descriptorPool, null);

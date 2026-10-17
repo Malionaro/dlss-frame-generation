@@ -40,7 +40,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 reflectionParams; // x = reflection range in meters, yz = sub-pixel jitter
     vec4 environment; // rain, thunder, seconds, frame index (uint bits)
     vec4 worldOrigin; // scene origin in world blocks, w = entity count (int bits)
-    vec4 skyParams; // x = overworld (has sun and sky)
+    vec4 skyParams; // x = overworld (has sun and sky), y = sky light at the camera 0-1
     vec4 entities[64]; // per entity: min.xyz, max.xyz relative to the scene origin
 } frame;
 layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D noisyColorImage;
@@ -62,6 +62,14 @@ layout(std430, set = 0, binding = 10) readonly buffer LightBuffer {
     uint pad2;
     PointLight lights[];
 };
+
+// Auto exposure. Frame parity p sums log luminance into [p]; the frame
+// exposes with the average frame p-1 left in [1-p]. RtRenderer clears [p].
+layout(std430, set = 0, binding = 13) buffer ExposureState {
+    uint logSum[2];
+    uint sampleCount[2];
+    float exposure[2];
+} exposureState;
 
 struct Hit {
     float distance;
@@ -644,6 +652,67 @@ vec3 applyFog(vec3 color, vec3 direction, float distanceToPoint, float sky) {
     return mix(color, fogColor, clamp(fog, 0.0, 0.85));
 }
 
+// Exposure from last frame's average luminance of the RT-lit pixels,
+// adapting smoothly: brighter in caves and at night, darker in bright sun.
+float adaptedExposure(uint parity) {
+    uint previousIndex = 1u - parity;
+    float previous = exposureState.exposure[previousIndex];
+    if (!(previous > 0.0) || previous > 16.0) {
+        previous = 1.0;
+    }
+    uint count = exposureState.sampleCount[previousIndex];
+    if (count < 64u) {
+        return previous;
+    }
+    float averageLog = float(exposureState.logSum[previousIndex]) / float(count) / 256.0 - 16.0;
+    float target = clamp(0.3 / exp2(averageLog), 0.6, 3.0);
+    return mix(previous, target, 0.04);
+}
+
+void recordLuminance(ivec2 pixel, uint parity, vec3 color) {
+    // Every 8th pixel in each direction: enough for an average, and the
+    // fixed-point sum cannot overflow.
+    if ((pixel.x & 7) != 0 || (pixel.y & 7) != 0) {
+        return;
+    }
+    float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    float encoded = clamp(log2(luminance + 1.0e-4) + 16.0, 0.0, 32.0) * 256.0;
+    atomicAdd(exposureState.logSum[parity], uint(encoded));
+    atomicAdd(exposureState.sampleCount[parity], 1u);
+}
+
+// Sun or moon light scattered towards the camera by haze along the view ray,
+// shadowed by the scene: light shafts through trees, windows and caves.
+vec3 lightShafts(vec3 origin, vec3 direction, float distanceToPoint) {
+    int steps = int(frame.cameraForward.w + 0.5) * 3 - 1; // LOW 0 .. ULTRA 8
+    if (steps <= 0 || !overworld()) {
+        return vec3(0.0);
+    }
+    float gate = smoothstep(0.5, 0.95, frame.skyParams.y);
+    vec3 lightColor = mainLightColor();
+    if (gate <= 0.0 || lightColor.r <= 0.0) {
+        return vec3(0.0);
+    }
+    vec3 lightDirection = mainLightDirection();
+    float marchLength = min(distanceToPoint, 64.0);
+    float stepLength = marchLength / float(steps);
+    float offset = random01();
+    float density = mix(0.006, 0.03, rainLevel());
+    float cosine = dot(direction, lightDirection);
+    const float g = 0.55;
+    float phase = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * cosine, 1.5));
+    float lit = 0.0;
+    for (int stepIndex = 0; stepIndex < steps; stepIndex++) {
+        float t = (float(stepIndex) + offset) * stepLength;
+        Hit blocker = traceScene(origin + direction * t, lightDirection, 0.05,
+            frame.renderParameters.z, FLAG_GLASS);
+        if (!blocker.valid) {
+            lit += exp(-density * t);
+        }
+    }
+    return lightColor * (phase * density * stepLength * lit * gate * 4.0);
+}
+
 float fresnelSchlick(float f0, float cosine) {
     return f0 + (1.0 - f0) * pow(1.0 - clamp(cosine, 0.0, 1.0), 5.0);
 }
@@ -676,6 +745,11 @@ void main() {
     int sampleCount = clamp(int(frame.sunDirectionAndSamples.w), 1, 8);
     int shadowSamples = min(sampleCount, 4);
     int bounceSamples = clamp((sampleCount + 1) / 2, 1, 4);
+    uint parity = floatBitsToUint(frame.environment.w) & 1u;
+    float exposure = adaptedExposure(parity);
+    if (pixel == ivec2(0)) {
+        exposureState.exposure[parity] = exposure;
+    }
     vec3 lightDirection = mainLightDirection();
     vec3 lightColor = mainLightColor();
 
@@ -694,13 +768,24 @@ void main() {
         // beyond the RT range. Entities still receive RT shadows.
         vec3 normal = reconstructRasterNormal(pixel, size, hardwareDepth, direction);
         vec3 result = linearRaster;
+        bool changed = false;
         if (hardwareDepth > 0.0 && rasterRayDistance < maxDistance * 0.9 && overworld()) {
+            changed = true;
             vec3 point = camera + direction * rasterRayDistance;
             float visibility = lightVisibility(point, normal,
                 jitterTowards(lightDirection, 0.012), false);
             float shadowStrength = 0.45 * smoothstep(0.0, 0.3, lightColor.r)
                 * (1.0 - smoothstep(maxDistance * 0.6, maxDistance * 0.9, rasterRayDistance));
             result *= 1.0 - shadowStrength * (1.0 - visibility);
+        }
+        // Light shafts in front of entities and the sky as well.
+        vec3 shafts = lightShafts(camera, direction,
+            hardwareDepth > 0.0 ? rasterRayDistance : 64.0);
+        if (dot(shafts, shafts) > 0.0) {
+            result += toneMapAces(shafts * exposure);
+            changed = true;
+        }
+        if (changed) {
             imageStore(targetImage, pixel, vec4(linearToSrgb(result), raster.a));
         }
         imageStore(noisyColorImage, pixel, vec4(result, 1.0));
@@ -840,6 +925,9 @@ void main() {
     }
 
     result = applyFog(result, direction, primary.distance, sky);
+    result += lightShafts(camera, direction, primary.distance);
+    recordLuminance(pixel, parity, result);
+    result *= exposure;
 
     // Fade into the raster image at the edge of the RT range.
     float edge = smoothstep(maxDistance * 0.75, maxDistance, primary.distance);

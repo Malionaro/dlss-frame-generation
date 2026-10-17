@@ -2,7 +2,9 @@ package org.malionaro.dlss_frame_generation.client.raytracing;
 
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -28,7 +30,7 @@ public record RayTracingFrameData(
         float reflectionRange, // meters
         float jitterX, float jitterY,
         float rain, float thunder, float timeSeconds, int frameIndex,
-        int originX, int originY, int originZ, boolean overworld,
+        int originX, int originY, int originZ, boolean overworld, float cameraSkyLight,
         float[] entityBoxes, int entityCount
 ) {
     /** Entities cast RT shadows as boxes; the nearest ones are kept. */
@@ -142,6 +144,8 @@ public record RayTracingFrameData(
                 frameCounter++,
                 originX, originY, originZ,
                 minecraft.level.dimension() == Level.OVERWORLD,
+                // Light shafts only where the camera itself sees the sky.
+                minecraft.level.getBrightness(LightLayer.SKY, BlockPos.containing(position)) / 15.0f,
                 entityBoxes,
                 entityCount
         );
@@ -201,7 +205,7 @@ public record RayTracingFrameData(
         putVec4(data, reflectionRange, jitterX, jitterY, 0.0f);
         data.putFloat(rain).putFloat(thunder).putFloat(timeSeconds).putInt(frameIndex);
         data.putFloat(originX).putFloat(originY).putFloat(originZ).putInt(entityCount);
-        putVec4(data, overworld ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+        putVec4(data, overworld ? 1.0f : 0.0f, cameraSkyLight, 0.0f, 0.0f);
         for (int slot = 0; slot < MAX_ENTITIES; slot++) {
             int at = slot * 6;
             boolean used = slot < entityCount;
