@@ -21,6 +21,11 @@ final class RayQueryShaderCompiler {
             }
             source = new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
+        return compileSource(source, resourcePath);
+    }
+
+    /** Compiles GLSL compute source, e.g. from an RT shader pack. */
+    static ByteBuffer compileSource(String source, String resourcePath) throws IOException {
 
         long compiler = shaderc_compiler_initialize();
         long options = shaderc_compile_options_initialize();

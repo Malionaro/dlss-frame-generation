@@ -367,9 +367,38 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         initialized = true;
     }
 
+    /** RT shader pack in use; empty for the built-in shader. */
+    private String activeShaderPack = RtShaderPacks.BUILT_IN;
+
+    public String activeShaderPack() {
+        return activeShaderPack;
+    }
+
+    /**
+     * The selected RT shader pack, or the built-in shader when the pack is
+     * missing or does not compile (the error goes to the log).
+     */
+    private ByteBuffer compileSelectedShader() throws IOException {
+        String selected = org.malionaro.dlss_frame_generation.client.config.FrameGenConfig
+                .getInstance().rayTracingShaderPack;
+        if (selected != null && !selected.isEmpty()) {
+            try {
+                RtShaderPacks.Source pack = RtShaderPacks.load(selected);
+                ByteBuffer spirv = RayQueryShaderCompiler.compileSource(pack.code(), pack.name());
+                activeShaderPack = pack.name();
+                logger.info("Using RT shader pack {}", pack.name());
+                return spirv;
+            } catch (IOException exception) {
+                logger.error("RT shader pack {} failed, using the built-in shader: {}",
+                        selected, exception.getMessage());
+            }
+        }
+        activeShaderPack = RtShaderPacks.BUILT_IN;
+        return RayQueryShaderCompiler.compile(RtShaderPacks.BUILT_IN_RESOURCE);
+    }
+
     private void createPipeline() throws IOException {
-        ByteBuffer spirv = RayQueryShaderCompiler.compile(
-                "/assets/dlss_fg/shaders/source/raytracing/hybrid_ray_query.comp");
+        ByteBuffer spirv = compileSelectedShader();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer result = stack.mallocLong(1);
             VkShaderModuleCreateInfo shaderInfo = VkShaderModuleCreateInfo.calloc(stack)

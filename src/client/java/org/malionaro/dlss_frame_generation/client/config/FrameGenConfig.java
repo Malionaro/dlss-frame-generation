@@ -263,6 +263,8 @@ public class FrameGenConfig {
      * historic behaviour where stable sampling is on.
      */
     public boolean rayTracingDenoiserEnabled = true;
+    /** RT shader pack folder or zip in rtshaderpacks/; empty = built-in. */
+    public String rayTracingShaderPack = "";
 
     // NVIDIA Streamline options. The runtime-reported maximum multiplier is
     // applied before the option is sent to DLSS-G.
@@ -559,6 +561,9 @@ public class FrameGenConfig {
         if (rayTracingMode == null) {
             LOGGER.warn("Sanitize: rayTracingMode was null, resetting to OFF");
             rayTracingMode = RayTracingMode.OFF;
+        }
+        if (rayTracingShaderPack == null) {
+            rayTracingShaderPack = "";
         }
         if (rayTracingQuality == null) {
             LOGGER.warn("Sanitize: rayTracingQuality was null, resetting to MEDIUM");

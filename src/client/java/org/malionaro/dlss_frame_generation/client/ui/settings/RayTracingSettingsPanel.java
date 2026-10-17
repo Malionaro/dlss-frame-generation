@@ -123,6 +123,32 @@ public final class RayTracingSettingsPanel {
         screen.place(samples, screen.rayTracingTooltip(
                 capabilities, "dlss_fg.tooltip.rt.samples"));
 
+        // Our own RT shader packs (rtshaderpacks/); Iris packs are separate.
+        java.util.List<String> packs = new java.util.ArrayList<>();
+        packs.add(org.malionaro.dlss_frame_generation.client.raytracing.RtShaderPacks.BUILT_IN);
+        packs.addAll(org.malionaro.dlss_frame_generation.client.raytracing.RtShaderPacks.available());
+        String currentPack = packs.contains(config.rayTracingShaderPack)
+                ? config.rayTracingShaderPack
+                : org.malionaro.dlss_frame_generation.client.raytracing.RtShaderPacks.BUILT_IN;
+        var packButton = CycleButton.builder(
+                        (String pack) -> pack.isEmpty()
+                                ? Component.translatable("dlss_fg.value.rt_shader_pack.builtin")
+                                : Component.literal(pack),
+                        currentPack)
+                .withValues(packs)
+                .create(0, 0, columnWidth, 20,
+                        Component.translatable("dlss_fg.option.rt.shader_pack"), (button, value) -> {
+                            config.rayTracingShaderPack = value;
+                            config.save();
+                            if (FrameGenMod.rayTracingManager() != null) {
+                                FrameGenMod.rayTracingManager().reloadShaderPack();
+                            }
+                            applyAndRefresh(config, runtimeStatusButton);
+                        });
+        packButton.active = usable;
+        screen.place(packButton, screen.rayTracingTooltip(
+                capabilities, "dlss_fg.tooltip.rt.shader_pack"));
+
         var denoiserButton = CycleButton.onOffBuilder(config.rayTracingDenoiserEnabled)
                 .create(0, 0, columnWidth, 20,
                         Component.translatable("dlss_fg.option.rt.stable_sampling"), (button, value) -> {

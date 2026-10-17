@@ -17,6 +17,7 @@ public final class HardwareRayTracingManager {
     private volatile RayTracingCapabilities capabilities = RayTracingCapabilities.waitingForDevice();
     private volatile boolean active;
     private VulkanRayQueryRenderer renderer;
+    private VulkanDevice device;
     private boolean successfulFrameLogged;
     private volatile String runtimeStatus = "RT renderer is disabled";
     /** System time of the last frame the RT pass recorded. */
@@ -27,6 +28,8 @@ public final class HardwareRayTracingManager {
     }
 
     public void onDeviceRegistered(VulkanDevice device) {
+        this.device = device;
+        RtShaderPacks.ensureFolder(logger);
         capabilities = RayTracingCapabilities.detect(device, RENDERER_BACKEND_IMPLEMENTED);
         active = false;
         successfulFrameLogged = false;
@@ -134,6 +137,22 @@ public final class HardwareRayTracingManager {
 
     public boolean isActive() {
         return active;
+    }
+
+    /**
+     * Rebuilds the renderer so a newly selected RT shader pack is compiled.
+     * Render thread only; close() waits for the device to be idle.
+     */
+    public void reloadShaderPack() {
+        if (device == null || !capabilities.backendReady()) {
+            return;
+        }
+        if (renderer != null) {
+            renderer.close();
+        }
+        renderer = new VulkanRayQueryRenderer(device, logger);
+        successfulFrameLogged = false;
+        applyConfiguration(FrameGenConfig.getInstance());
     }
 
     /**
