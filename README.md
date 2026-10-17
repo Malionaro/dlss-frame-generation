@@ -2,7 +2,7 @@
 <h1 align="center">Vulkan Frame Generation</h1>
 
 <h1 align="center">
-<a href="https://github.com/Malionaro/dlss-frame-generation/releases"><img alt="GitHub release" src="https://img.shields.io/badge/release-0.1.0--alpha-orange?logo=github"></a>
+<a href="https://github.com/Malionaro/dlss-frame-generation/releases"><img alt="GitHub release" src="https://img.shields.io/badge/release-0.1.1--alpha-orange?logo=github"></a>
 <a href="https://github.com/Malionaro/dlss-frame-generation/actions/workflows/build.yml"><img alt="Build and test" src="https://github.com/Malionaro/dlss-frame-generation/actions/workflows/build.yml/badge.svg"></a>
 </h1>
 
@@ -49,7 +49,16 @@ The world renders at a lower resolution, DLSS rebuilds it at full size, and fram
 - **Ray tracing is hybrid,** not full path tracing, with a radius of up to 48 blocks. It stays off while a shader pack runs.
 - **Keys:** End opens the settings, F7 toggles frame generation, F8 shows the performance overlay. All keys can be rebound.
 
-## What 0.1.0-alpha fixes and adds
+## What 0.1.1-alpha adds
+
+- Exact motion vectors for moving entities, including limbs, heads and turning bodies, so frame generation and DLSS smear much less around mobs and players.
+- A reactive mask for particles, fire and animated water (DLSS bias hint, FSR reactive mask).
+- DLSS Ray Reconstruction switches on with ray tracing; RT now follows the DLSS jitter, the real field of view and the camera, and stays exact far from the world origin.
+- NVIDIA Streamline 2.14.16 with DLSS 310.9.16.
+
+Full notes: [docs/release-notes/v0.1.1-alpha.md](docs/release-notes/v0.1.1-alpha.md).
+
+## What 0.1.0-alpha fixed and added
 
 The first alpha for 26.3 addressed, among others:
 

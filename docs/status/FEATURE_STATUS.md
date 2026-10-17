@@ -25,9 +25,9 @@ native runtime and all required frame data have been accepted.
 | Feature | Status | Current state | Still to do |
 |---|---|---|---|
 | Java, native and shader build | ✅ Tested | Local Windows build and GitHub Actions with Java 25; 95 unit tests in 24 classes, including shaderc compiles of all four compute shaders | Keep CI green |
-| Single mod JAR | ✅ Tested | Java code, JNI bridge, shaders and allowed runtime files in `dlss-frame-generation-0.1.0-alpha.jar` (about 148 MB) | Ready for distribution |
+| Single mod JAR | ✅ Tested | Java code, JNI bridge, shaders and allowed runtime files in `dlss-frame-generation-0.1.1-alpha.jar` (about 148 MB) | Ready for distribution |
 | JNI binding | ✅ Tested | Every Java native declaration has a matching JNI export | Cover new native functions in the same checks |
-| Fabric registration | ✅ Tested | Both entrypoints, the Sodium config entrypoint and all 20 mixins are registered | Re-check for new Minecraft versions |
+| Fabric registration | ✅ Tested | Both entrypoints, the Sodium config entrypoint and all 24 mixins are registered | Re-check for new Minecraft versions |
 | Provider selection | ✅ Tested | Exactly one FG provider, one upscaler and one presentation path may be active at the same time | Integrate additional providers into the same exclusivity logic |
 | Atomic frame data | ✅ Tested | Color, depth, motion, frame ID and swapchain generation are not mixed between frames | Keep validating with shader-pack engines |
 | Safe fallback | ✅ Tested | Unsupported paths stay disabled or fall back to normal Vulkan WSI; a frame the pipeline skipped is blitted to the screen instead of leaving the last image (camera freeze after alt-tab) | Collect additional driver and error cases |

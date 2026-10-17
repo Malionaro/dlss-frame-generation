@@ -26,8 +26,8 @@
 4. In **Options → Video Settings**, set the graphics backend to **Vulkan**.
 
 #### Step 2: Download Mod Artifacts
-1. Build or download `dlss-frame-generation-0.1.0-alpha.jar`.
-2. Copy `dlss-frame-generation-0.1.0-alpha.jar` into `.minecraft/mods/`.
+1. Build or download `dlss-frame-generation-0.1.1-alpha.jar`.
+2. Copy `dlss-frame-generation-0.1.1-alpha.jar` into `.minecraft/mods/`.
 3. **Automated DLL Extraction:** All native Streamline SDK DLLs (`sl.interposer.dll`, `sl.dlss_g.dll`, etc.) and FidelityFX/OptiScaler runtimes are bundled directly inside the `.jar` and extract automatically upon launching the game!
 
 #### Step 3: In-Game Settings and Controls
