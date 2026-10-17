@@ -41,6 +41,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 environment; // rain, thunder, seconds, frame index (uint bits)
     vec4 worldOrigin; // scene origin in world blocks, w = entity count (int bits)
     vec4 skyParams; // x = overworld (has sun and sky), y = sky light at the camera 0-1
+    mat4 clipToView; // inverse of the raster projection
     vec4 entities[64]; // per entity: min.xyz, max.xyz relative to the scene origin
 } frame;
 layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D noisyColorImage;
@@ -293,19 +294,25 @@ vec3 rayDirectionForPixel(ivec2 pixel, ivec2 size) {
     );
 }
 
+// View-space distance of a depth-buffer value through the raster's own
+// inverse projection, so it holds for reversed and standard depth alike.
+float viewDepthOf(float hardwareDepth) {
+    vec4 view = frame.clipToView * vec4(0.0, 0.0, hardwareDepth, 1.0);
+    return abs(view.z / view.w);
+}
+
+// Sky / cleared depth: the far end of the projection (or infinity).
+bool rasterIsSky(float hardwareDepth) {
+    float farDepth = max(viewDepthOf(0.0), viewDepthOf(1.0));
+    float here = viewDepthOf(hardwareDepth);
+    return !(here < farDepth * 0.999);
+}
+
 float rayDistanceForDepth(float hardwareDepth, vec3 direction) {
-    // Reversed-Z contract (FrameGuideConventions.REVERSED_ZERO_TO_ONE):
-    // hardwareDepth 0.0 = far/sky, 1.0 = near plane. The formula below is the
-    // reversed linearization z = n*f/(n+d*(f-n)) — d=0 yields far, d=1 yields
-    // near — so it agrees with the convention and with the 0.0 history clear.
-    if (hardwareDepth <= 0.0) {
-        return frame.cameraUp.w;
+    if (rasterIsSky(hardwareDepth)) {
+        return frame.cameraUp.w * 4.0;
     }
-    float nearPlane = frame.cameraRight.w;
-    float farPlane = frame.cameraUp.w;
-    float linearViewDepth = nearPlane * farPlane
-        / max(nearPlane + hardwareDepth * (farPlane - nearPlane), 1.0e-5);
-    return linearViewDepth
+    return viewDepthOf(hardwareDepth)
         / max(dot(direction, frame.cameraForward.xyz), 0.05);
 }
 
@@ -315,14 +322,14 @@ vec3 reconstructRasterNormal(
     float centerDepth,
     vec3 centerDirection
 ) {
-    if (centerDepth <= 0.0) {
+    if (rasterIsSky(centerDepth)) {
         return -centerDirection;
     }
     ivec2 rightPixel = min(pixel + ivec2(1, 0), size - ivec2(1));
     ivec2 downPixel = min(pixel + ivec2(0, 1), size - ivec2(1));
     float rightDepth = texelFetch(rasterDepth, rightPixel, 0).r;
     float downDepth = texelFetch(rasterDepth, downPixel, 0).r;
-    if (rightDepth <= 0.0 || downDepth <= 0.0) {
+    if (rasterIsSky(rightDepth) || rasterIsSky(downDepth)) {
         return -centerDirection;
     }
 
@@ -676,6 +683,9 @@ void recordLuminance(ivec2 pixel, uint parity, vec3 color) {
         return;
     }
     float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    if (isnan(luminance) || isinf(luminance)) {
+        return;
+    }
     float encoded = clamp(log2(luminance + 1.0e-4) + 16.0, 0.0, 32.0) * 256.0;
     atomicAdd(exposureState.logSum[parity], uint(encoded));
     atomicAdd(exposureState.sampleCount[parity], 1u);
@@ -758,7 +768,8 @@ void main() {
     vec3 linearRaster = srgbToLinear(max(raster.rgb, vec3(0.0)));
     float hardwareDepth = texelFetch(rasterDepth, pixel, 0).r;
     float rasterRayDistance = rayDistanceForDepth(hardwareDepth, direction);
-    if (hardwareDepth > 0.0 && primary.valid
+    bool rasterHasGeometry = !rasterIsSky(hardwareDepth);
+    if (rasterHasGeometry && primary.valid
             && rasterRayDistance + RASTER_DEPTH_TOLERANCE_METERS < primary.distance) {
         primary.valid = false;
     }
@@ -769,7 +780,7 @@ void main() {
         vec3 normal = reconstructRasterNormal(pixel, size, hardwareDepth, direction);
         vec3 result = linearRaster;
         bool changed = false;
-        if (hardwareDepth > 0.0 && rasterRayDistance < maxDistance * 0.9 && overworld()) {
+        if (rasterHasGeometry && rasterRayDistance < maxDistance * 0.9 && overworld()) {
             changed = true;
             vec3 point = camera + direction * rasterRayDistance;
             float visibility = lightVisibility(point, normal,
@@ -780,7 +791,7 @@ void main() {
         }
         // Light shafts in front of entities and the sky as well.
         vec3 shafts = lightShafts(camera, direction,
-            hardwareDepth > 0.0 ? rasterRayDistance : 64.0);
+            rasterHasGeometry ? rasterRayDistance : 64.0);
         if (dot(shafts, shafts) > 0.0) {
             result += toneMapAces(shafts * exposure);
             changed = true;
@@ -931,6 +942,10 @@ void main() {
 
     // Fade into the raster image at the edge of the RT range.
     float edge = smoothstep(maxDistance * 0.75, maxDistance, primary.distance);
+    // A degenerate direction somewhere must never poison DLSS history.
+    if (any(isnan(result)) || any(isinf(result))) {
+        result = linearRaster;
+    }
     vec3 displayed = mix(toneMapAces(result), linearRaster, edge);
 
     imageStore(targetImage, pixel, vec4(linearToSrgb(displayed), raster.a));

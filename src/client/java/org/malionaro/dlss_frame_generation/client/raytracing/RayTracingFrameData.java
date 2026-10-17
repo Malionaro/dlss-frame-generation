@@ -31,11 +31,12 @@ public record RayTracingFrameData(
         float jitterX, float jitterY,
         float rain, float thunder, float timeSeconds, int frameIndex,
         int originX, int originY, int originZ, boolean overworld, float cameraSkyLight,
-        float[] entityBoxes, int entityCount
+        float[] entityBoxes, int entityCount,
+        float[] clipToView
 ) {
     /** Entities cast RT shadows as boxes; the nearest ones are kept. */
     public static final int MAX_ENTITIES = 32;
-    public static final int BYTE_SIZE = 112 + 48 + MAX_ENTITIES * 32;
+    public static final int BYTE_SIZE = 112 + 48 + 64 + MAX_ENTITIES * 32;
     private static final long START_NANOS = System.nanoTime();
     private static int frameCounter;
 
@@ -147,7 +148,10 @@ public record RayTracingFrameData(
                 // Light shafts only where the camera itself sees the sky.
                 minecraft.level.getBrightness(LightLayer.SKY, BlockPos.containing(position)) / 15.0f,
                 entityBoxes,
-                entityCount
+                entityCount,
+                // The raster's own inverse projection: depth is converted
+                // exactly as it was written, whatever the depth convention.
+                new Matrix4f(projection).invert().get(new float[16])
         );
     }
 
@@ -206,6 +210,9 @@ public record RayTracingFrameData(
         data.putFloat(rain).putFloat(thunder).putFloat(timeSeconds).putInt(frameIndex);
         data.putFloat(originX).putFloat(originY).putFloat(originZ).putInt(entityCount);
         putVec4(data, overworld ? 1.0f : 0.0f, cameraSkyLight, 0.0f, 0.0f);
+        for (float value : clipToView) {
+            data.putFloat(value);
+        }
         for (int slot = 0; slot < MAX_ENTITIES; slot++) {
             int at = slot * 6;
             boolean used = slot < entityCount;

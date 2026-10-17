@@ -269,7 +269,7 @@ public class FrameGenUnitTest {
             FrameGenConfig loaded = FrameGenConfig.load();
             assertNotNull(loaded, "Corrupt config should fallback to default instance");
             // Defaults must be sanitized (schema v3: explicit provider-choice flag)
-            assertEquals(3, loaded.configVersion);
+            assertEquals(4, loaded.configVersion);
             assertEquals(FrameGenConfig.Preset.CUSTOM, loaded.activePreset);
             // Backup must preserve the corrupt payload next to the rewritten file
             assertTrue(Files.exists(configPath), "Config path should be rewritten to valid JSON after corrupt recovery");
@@ -340,19 +340,19 @@ public class FrameGenUnitTest {
     }
 
     @Test
-    public void turningRayTracingOnEnablesRayReconstructionWhenSupported() {
+    public void turningRayTracingOnKeepsRayReconstructionOptIn() {
         FrameGenConfig config = new FrameGenConfig();
         config.rayTracingMode = FrameGenConfig.RayTracingMode.OFF;
         config.dlssRayReconstructionEnabled = false;
         config.dlssUpscalingMode = 0;
         config.setRayTracingMode(FrameGenConfig.RayTracingMode.SHADOWS, true);
-        assertTrue(config.dlssRayReconstructionEnabled);
-        assertTrue(config.dlssUpscalingMode >= 2, "RR needs at least DLSS Quality");
-
-        // Turning it off again later is respected while RT stays on.
-        config.dlssRayReconstructionEnabled = false;
-        config.setRayTracingMode(FrameGenConfig.RayTracingMode.SHADOWS_AND_REFLECTIONS, true);
         assertFalse(config.dlssRayReconstructionEnabled);
+        assertTrue(config.dlssUpscalingMode >= 2, "RT noise needs DLSS reconstruction");
+
+        // A user who turned RR on keeps it.
+        config.dlssRayReconstructionEnabled = true;
+        config.setRayTracingMode(FrameGenConfig.RayTracingMode.SHADOWS_AND_REFLECTIONS, true);
+        assertTrue(config.dlssRayReconstructionEnabled);
     }
 
     @Test

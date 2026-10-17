@@ -52,7 +52,7 @@ public class FrameGenConfig {
         instance = null;
     }
 
-    public int configVersion = 3;
+    public int configVersion = 4;
 
     /**
      * True once a provider choice was ever made explicitly (UI toggle,
@@ -225,15 +225,18 @@ public class FrameGenConfig {
      * when the GPU supports it, so the traced lighting is denoised; it needs at
      * least DLSS Quality. The player can turn RR off again afterwards.
      */
+    /**
+     * Ray Reconstruction stays opt-in: on some setups it accepted frames but
+     * never wrote its output, which froze the picture as soon as RT was on.
+     * Turning RT on only makes sure DLSS reconstructs (Quality), so the RT
+     * noise is accumulated by DLSS Super Resolution.
+     */
     public void setRayTracingMode(RayTracingMode mode, boolean rayReconstructionSupported) {
         boolean turnedOn = rayTracingMode == RayTracingMode.OFF && mode != RayTracingMode.OFF;
         rayTracingMode = mode;
-        if (turnedOn && rayReconstructionSupported && !dlssRayReconstructionEnabled) {
-            dlssRayReconstructionEnabled = true;
-            if (dlssUpscalingMode < 2) {
-                setUpscalerMode(FrameGenerationBackend.GpuVendor.NVIDIA, 2);
-                projectionJitterEnabled = true;
-            }
+        if (turnedOn && rayReconstructionSupported && dlssUpscalingMode < 2) {
+            setUpscalerMode(FrameGenerationBackend.GpuVendor.NVIDIA, 2);
+            projectionJitterEnabled = true;
         }
     }
 
@@ -529,6 +532,12 @@ public class FrameGenConfig {
             // never overrides preserved user intent.
             userHasChosenProvider = true;
             configVersion = 3;
+        }
+        if (configVersion < 4) {
+            // Builds up to nightly 3 switched Ray Reconstruction on together
+            // with RT, which froze the picture; start from RR off once.
+            dlssRayReconstructionEnabled = false;
+            configVersion = 4;
         }
     }
 
