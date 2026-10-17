@@ -481,6 +481,16 @@ bool submitUpscalingInputs(const UpscalingInputs& inputs) {
     dispatch.depth = depthRes;
     dispatch.motionVectors = motionRes;
     dispatch.output = outputRes;
+    if (inputs.reactive != VK_NULL_HANDLE) {
+        dispatch.reactive = makeImageResource(
+            inputs.reactive,
+            inputs.reactiveFormat,
+            inputs.renderWidth,
+            inputs.renderHeight,
+            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+            FFX_API_RESOURCE_STATE_COMPUTE_READ
+        );
+    }
     dispatch.jitterOffset = { inputs.jitterX, inputs.jitterY };
     dispatch.motionVectorScale = { 1.0f, 1.0f };
     dispatch.renderSize = { inputs.renderWidth, inputs.renderHeight };

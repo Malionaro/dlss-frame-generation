@@ -7,6 +7,9 @@ layout(set = 0, binding = 1) uniform sampler2D currentColor;
 layout(set = 0, binding = 2) uniform sampler2D previousDepth;
 layout(set = 0, binding = 3) uniform sampler2D previousColor;
 layout(rg16f, set = 0, binding = 4) uniform writeonly image2D motionOutput;
+// 1 where reprojecting the previous frame cannot explain the pixel (particles,
+// fire, animated water, disocclusion): tells DLSS/FSR to trust the current frame.
+layout(r8, set = 0, binding = 6) uniform writeonly image2D reactiveOutput;
 
 layout(std140, set = 0, binding = 5) uniform FrameParameters {
     mat4 clipToPreviousClip;
@@ -65,6 +68,7 @@ void main() {
 
     if (frame.resetHistory != 0u) {
         imageStore(motionOutput, pixel, vec4(0.0));
+        imageStore(reactiveOutput, pixel, vec4(0.0));
         return;
     }
 
@@ -75,6 +79,7 @@ void main() {
     // near = 1.0) carry no meaningful reprojection — emit a static vector.
     if (isnan(depth) || isinf(depth) || depth <= 0.0 || depth >= 1.0) {
         imageStore(motionOutput, pixel, vec4(0.0));
+        imageStore(reactiveOutput, pixel, vec4(0.0));
         return;
     }
     // Texture/GUI Y grows downwards, while the JOML camera projection used by
@@ -90,6 +95,7 @@ void main() {
     // spray infinite vectors across providers — fail closed to static.
     if (abs(previousClip.w) < 1.0e-6 || isnan(previousClip.w) || isinf(previousClip.w)) {
         imageStore(motionOutput, pixel, vec4(0.0));
+        imageStore(reactiveOutput, pixel, vec4(0.0));
         return;
     }
 
@@ -192,4 +198,8 @@ void main() {
     // surface in the previous frame. Jitter is removed in pixel space.
     vec2 motionPixels = vec2(bestPixel - pixel) - frame.jitterDeltaPixels;
     imageStore(motionOutput, pixel, vec4(motionPixels, 0.0, 0.0));
+    // Exact entity motion needs no bias; elsewhere a large residual after the
+    // best match means the history is wrong for this pixel.
+    float reactive = exactObjectMotion ? 0.0 : smoothstep(0.08, 0.25, bestScore);
+    imageStore(reactiveOutput, pixel, vec4(reactive));
 }

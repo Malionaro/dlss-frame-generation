@@ -40,7 +40,7 @@ native runtime and all required frame data have been accepted.
 | DLSS Frame Generation | ✅ Tested on RTX 5080 | HUD-less colour, depth, motion and a separate UI layer; provider accepted every frame in testing; multiplier slider 2× up to the driver maximum (6× on RTX 50); off while a menu covers the world | Validate VSync, tearing, resize and fullscreen; test RTX 40 (2×) |
 | DLSS Super Resolution / DLAA | 🟡 Experimental, runs on RTX 5080 | DLSS 4.5 presets K/M/L; aspect-exact even render sizes; DLSS history kept across dynamic-resolution steps; jitter only while DLSS accepts frames; terrain mip bias `log2(render/output)`; jitter sequence `8 × scale²` | Confirm the wobble and distance-sharpness fixes in game; verify the jitter sign |
 | NVIDIA Reflex | 🟡 Experimental | Low latency and Boost; the Reflex frame limiter only applies with Reflex pacing on, and is lifted when pacing is turned off | Measure latency on RTX hardware |
-| DLSS Ray Reconstruction | 🟡 Experimental | HDR, albedo, specular, normal/roughness and hit-distance guides are connected | Test quality and stability with hardware RT |
+| DLSS Ray Reconstruction | 🟡 Experimental | HDR, albedo, specular, normal/roughness and hit-distance guides are connected; switched on automatically when RT is turned on and the GPU supports it | Test quality and stability with hardware RT |
 | GTX support | ✅ Tested, limited | GTX 1660 SUPER is correctly detected; missing DLSS-G and ray query are rejected | No plan to enable unsupported RTX features |
 | DLSS 5 | 📅 Planned | Needs a public Streamline DLSS 5 plugin; the mod already produces the colour and motion inputs it needs | Integrate once NVIDIA publishes the SDK module |
 
@@ -73,6 +73,7 @@ native runtime and all required frame data have been accepted.
 | Feature | Status | Current state | Still to do |
 |---|---|---|---|
 | Dense motion vectors | ✅ Tested, with limitation | Reversed-Z, current-to-previous, positive Y downward and separate jitter data; exact translation for up to 64 moving entities (bounding box and movement since the last frame, camera-relative double-precision matrices); camera-only motion after a resize, in menus and with shader packs | Limb animation and entity rotation are not covered; validate in game |
+| Reactive mask | 🟡 Experimental | The motion pass marks pixels whose history the reprojection cannot explain (particles, fire, animated water, disocclusion); DLSS gets it as the bias-current-colour hint, FSR 3.1 as its reactive mask | Validate thresholds in game |
 | Motion debug views | ✅ Tested | Arrows, heatmap and raw preview with corrected axes and delayed GPU readback | Optionally add a legend |
 | Motion vector blur | 🟡 Experimental | Compute pass along dense motion vectors after reconstruction | Validate quality and GPU cost |
 | Dynamic resolution | 🟡 Experimental | Smoothed frame times and hysteresis toward the target FPS; aspect-exact sizes; render-size changes resize only the render images; off while a shader pack runs | Tune on NVIDIA, AMD and Intel hardware |

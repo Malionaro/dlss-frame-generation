@@ -27,6 +27,28 @@
 #define DLSS_FG_NATIVE_ABI_VERSION 2
 
 static std::mutex g_streamlineMutex;
+
+// Reactive / bias-current-colour mask for the next upscaling submit, set by
+// nSetUpscalingBiasMask right before it. Image 0 means no mask.
+struct UpscalingBiasMask {
+    uint64_t image = 0;
+    uint64_t memory = 0;
+    uint64_t view = 0;
+    uint32_t format = 0;
+    int32_t width = 0;
+    int32_t height = 0;
+};
+static std::mutex g_biasMaskMutex;
+static UpscalingBiasMask g_biasMask;
+
+static UpscalingBiasMask currentBiasMask(int32_t renderWidth, int32_t renderHeight) {
+    std::lock_guard lock(g_biasMaskMutex);
+    if (g_biasMask.image == 0 || g_biasMask.width != renderWidth
+            || g_biasMask.height != renderHeight) {
+        return {};
+    }
+    return g_biasMask;
+}
 // Lifecycle flags and device handles are read from JNI entry points that
 // do not take g_streamlineMutex (capability queries, mode setters, VRAM
 // probes) while nShutdown/nInit mutate them under lock. Plain statics would
@@ -1622,6 +1644,22 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
             &output, sl::kBufferTypeScalingOutputColor,
             sl::ResourceLifecycle::eValidUntilEvaluate, &outputExtent
         };
+        const UpscalingBiasMask mask = currentBiasMask(renderWidth, renderHeight);
+        sl::Resource biasMask(
+            sl::ResourceType::eTex2d,
+            reinterpret_cast<void*>(mask.image),
+            reinterpret_cast<void*>(mask.memory),
+            reinterpret_cast<void*>(mask.view),
+            static_cast<uint32_t>(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        );
+        describeVulkanTexture(
+            biasMask, renderWidth, renderHeight, mask.format,
+            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT
+        );
+        sl::ResourceTag biasMaskTag{
+            &biasMask, sl::kBufferTypeBiasCurrentColorHint,
+            sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent
+        };
 
         g_dlssInputsReady = true;
         if (g_dlssMode == 0) {
@@ -1629,14 +1667,18 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
             return JNI_FALSE;
         }
 
+        // Particles, fire and animated water: let DLSS trust the current frame there.
         const sl::BaseStructure* inputs[] = {
-            &g_viewport, &colorTag, &depthTag, &motionTag, &outputTag
+            &g_viewport, &colorTag, &depthTag, &motionTag, &outputTag, &biasMaskTag
         };
+        const uint32_t inputCount = mask.image != 0
+            ? static_cast<uint32_t>(std::size(inputs))
+            : static_cast<uint32_t>(std::size(inputs)) - 1;
         const sl::Result evaluateResult = slEvaluateFeature(
             sl::kFeatureDLSS,
             *g_currentFrameToken,
             inputs,
-            static_cast<uint32_t>(std::size(inputs)),
+            inputCount,
             reinterpret_cast<sl::CommandBuffer*>(commandBuffer)
         );
         if (evaluateResult != sl::Result::eOk) {
@@ -1672,6 +1714,9 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_malionaro_dlss_1frame_1generation
     inputs.jitterX = jitterX;
     inputs.jitterY = jitterY;
     inputs.reset = reset == JNI_TRUE;
+    const UpscalingBiasMask mask = currentBiasMask(renderWidth, renderHeight);
+    inputs.reactive = reinterpret_cast<VkImage>(mask.image);
+    inputs.reactiveFormat = static_cast<VkFormat>(mask.format);
     return framegen::submitUpscalingInputs(
         static_cast<uint32_t>(vendorId), inputs
     ) ? JNI_TRUE : JNI_FALSE;
@@ -2273,4 +2318,15 @@ extern "C" JNIEXPORT jint JNICALL Java_org_malionaro_dlss_1frame_1generation_cli
     return Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nQueueProxyPresent(
         env, clazz, queue, presentInfoAddress
     );
+}
+
+extern "C" JNIEXPORT void JNICALL Java_org_malionaro_dlss_1frame_1generation_client_StreamlineBridge_nSetUpscalingBiasMask
+  (JNIEnv*, jclass, jlong image, jlong memory, jlong view, jint format, jint width, jint height) {
+    std::lock_guard lock(g_biasMaskMutex);
+    g_biasMask.image = static_cast<uint64_t>(image);
+    g_biasMask.memory = static_cast<uint64_t>(memory);
+    g_biasMask.view = static_cast<uint64_t>(view);
+    g_biasMask.format = static_cast<uint32_t>(format);
+    g_biasMask.width = width;
+    g_biasMask.height = height;
 }

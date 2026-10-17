@@ -53,9 +53,15 @@ public final class RayTracingSettingsPanel {
                         FrameGenConfig.RayTracingMode.SHADOWS_AND_REFLECTIONS)
                 .create(0, 0, columnWidth, 20,
                         Component.translatable("dlss_fg.option.rt.mode"), (button, value) -> {
-                            config.rayTracingMode = value;
+                            boolean rrBefore = config.dlssRayReconstructionEnabled;
+                            config.setRayTracingMode(value, rayReconstructionSupportedNow());
                             config.save();
                             applyAndRefresh(config, runtimeStatusButton);
+                            if (rrBefore != config.dlssRayReconstructionEnabled) {
+                                // Show the RR switch and DLSS mode it just changed.
+                                FrameGenerationBackend.applyActiveConfig(config);
+                                screen.refreshSettingsWidgets();
+                            }
                         });
         modeButton.active = usable;
         screen.place(modeButton, screen.rayTracingTooltip(
@@ -204,5 +210,15 @@ public final class RayTracingSettingsPanel {
             return Component.translatable("dlss_fg.status.rt_runtime.active");
         }
         return Component.translatable("dlss_fg.status.rt_runtime.waiting");
+    }
+
+    public static boolean rayReconstructionSupportedNow() {
+        try {
+            return (StreamlineBridge.nGetBackendSupportedCapabilities(
+                    FrameGenerationBackend.GpuVendor.NVIDIA.vendorId())
+                    & StreamlineBridge.CAP_RAY_RECONSTRUCTION) != 0;
+        } catch (UnsatisfiedLinkError ignored) {
+            return false;
+        }
     }
 }

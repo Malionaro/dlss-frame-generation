@@ -338,4 +338,29 @@ public class FrameGenUnitTest {
         assertEquals(0, config.amdFsrMode);
         assertEquals(1, config.intelXessMode);
     }
+
+    @Test
+    public void turningRayTracingOnEnablesRayReconstructionWhenSupported() {
+        FrameGenConfig config = new FrameGenConfig();
+        config.rayTracingMode = FrameGenConfig.RayTracingMode.OFF;
+        config.dlssRayReconstructionEnabled = false;
+        config.dlssUpscalingMode = 0;
+        config.setRayTracingMode(FrameGenConfig.RayTracingMode.SHADOWS, true);
+        assertTrue(config.dlssRayReconstructionEnabled);
+        assertTrue(config.dlssUpscalingMode >= 2, "RR needs at least DLSS Quality");
+
+        // Turning it off again later is respected while RT stays on.
+        config.dlssRayReconstructionEnabled = false;
+        config.setRayTracingMode(FrameGenConfig.RayTracingMode.SHADOWS_AND_REFLECTIONS, true);
+        assertFalse(config.dlssRayReconstructionEnabled);
+    }
+
+    @Test
+    public void rayReconstructionStaysOffWithoutSupport() {
+        FrameGenConfig config = new FrameGenConfig();
+        config.rayTracingMode = FrameGenConfig.RayTracingMode.OFF;
+        config.dlssRayReconstructionEnabled = false;
+        config.setRayTracingMode(FrameGenConfig.RayTracingMode.SHADOWS, false);
+        assertFalse(config.dlssRayReconstructionEnabled);
+    }
 }

@@ -220,6 +220,23 @@ public class FrameGenConfig {
     public boolean reflexInputMarkerEnabled = false;
     public boolean dlssRayReconstructionEnabled = false;
 
+    /**
+     * Sets the RT mode. Switching RT on also turns on DLSS Ray Reconstruction
+     * when the GPU supports it, so the traced lighting is denoised; it needs at
+     * least DLSS Quality. The player can turn RR off again afterwards.
+     */
+    public void setRayTracingMode(RayTracingMode mode, boolean rayReconstructionSupported) {
+        boolean turnedOn = rayTracingMode == RayTracingMode.OFF && mode != RayTracingMode.OFF;
+        rayTracingMode = mode;
+        if (turnedOn && rayReconstructionSupported && !dlssRayReconstructionEnabled) {
+            dlssRayReconstructionEnabled = true;
+            if (dlssUpscalingMode < 2) {
+                setUpscalerMode(FrameGenerationBackend.GpuVendor.NVIDIA, 2);
+                projectionJitterEnabled = true;
+            }
+        }
+    }
+
     // Single source for the RT scene radius: the scene and sanitize both use it.
     /**
      * Highest DLSS-G multiplier the config accepts. DLSS 4.5 dynamic multi

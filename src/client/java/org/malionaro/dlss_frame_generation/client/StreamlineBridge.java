@@ -140,6 +140,14 @@ public final class StreamlineBridge {
     public static native void nSetUpscalingMode(int vendorId, int mode, float sharpness);
 
     /**
+     * R8 mask for the next upscaling submit: 1 where the history should not be
+     * trusted (particles, animated textures). DLSS gets it as the bias-current-
+     * colour hint, FSR as its reactive mask. A zero image clears it.
+     */
+    public static native void nSetUpscalingBiasMask(
+            long image, long memory, long view, int format, int width, int height);
+
+    /**
      * Records the vendor-native Vulkan temporal-upscaling dispatch.
      *
      * <p>NVIDIA uses Streamline/DLSS. AMD and Intel use the FidelityFX Vulkan

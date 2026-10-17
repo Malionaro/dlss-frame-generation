@@ -49,6 +49,9 @@ struct UpscalingInputs {
     float jitterX;
     float jitterY;
     bool reset;
+    // Optional R8 reactive mask at render size (VK_NULL_HANDLE: none).
+    VkImage reactive = VK_NULL_HANDLE;
+    VkFormat reactiveFormat = VK_FORMAT_UNDEFINED;
 };
 
 bool submitUpscalingInputs(const UpscalingInputs& inputs);

@@ -357,6 +357,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             // reconstruct (DLSS off, or a shader pack without a scale hook).
             // Running DLSS there anyway stacked its temporal accumulation on
             // the pack's own TAA and made the picture swim.
+            setUpscalingBiasMask(current.reactive);
             boolean upscalingAccepted = rayReconstructionAccepted
                     || reconstructionMode != 0 && StreamlineBridge.nSubmitUpscalingInputs(
                             vendorId,
@@ -884,6 +885,13 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                 width,
                 height
         );
+        slot.reactive = createImage(
+                VK_FORMAT_R8_UNORM,
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                width,
+                height
+        );
         Allocation debugReadback = createBuffer(
                 Math.multiplyExact(
                         Math.multiplyExact((long) width, height),
@@ -914,9 +922,10 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             retired.images.add(slot.color);
             retired.images.add(slot.depth);
             retired.images.add(slot.motion);
+            retired.images.add(slot.reactive);
             retired.buffers.add(new Allocation(
                     slot.debugReadbackBuffer, slot.debugReadbackMemory));
-            slot.color = slot.depth = slot.motion = null;
+            slot.color = slot.depth = slot.motion = slot.reactive = null;
             slot.debugReadbackBuffer = slot.debugReadbackMemory = NULL;
         }
         retired.descriptorPools.add(descriptorPool);
@@ -1052,7 +1061,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             shaderModule = result.get(0);
 
             VkDescriptorSetLayoutBinding.Buffer bindings =
-                    VkDescriptorSetLayoutBinding.calloc(6, stack);
+                    VkDescriptorSetLayoutBinding.calloc(7, stack);
             for (int binding = 0; binding < 4; binding++) {
                 bindings.get(binding)
                         .binding(binding)
@@ -1068,6 +1077,11 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             bindings.get(5)
                     .binding(5)
                     .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            bindings.get(6)
+                    .binding(6)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
                     .descriptorCount(1)
                     .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
 
@@ -1126,7 +1140,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     .descriptorCount(4 * SLOT_COUNT);
             poolSizes.get(1)
                     .type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
-                    .descriptorCount(SLOT_COUNT);
+                    .descriptorCount(2 * SLOT_COUNT);
             poolSizes.get(2)
                     .type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                     .descriptorCount(SLOT_COUNT);
@@ -1172,8 +1186,11 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                         .imageLayout(VK_IMAGE_LAYOUT_GENERAL);
                 VkDescriptorBufferInfo.Buffer uniform = VkDescriptorBufferInfo.calloc(1, stack);
                 uniform.get(0).buffer(current.uniformBuffer).offset(0).range(UNIFORM_SIZE);
+                VkDescriptorImageInfo.Buffer reactive = VkDescriptorImageInfo.calloc(1, stack);
+                reactive.get(0).imageView(current.reactive.view)
+                        .imageLayout(VK_IMAGE_LAYOUT_GENERAL);
 
-                VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(6, stack);
+                VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(7, stack);
                 for (int binding = 0; binding < 4; binding++) {
                     writes.get(binding)
                             .sType$Default()
@@ -1195,6 +1212,12 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                         .dstBinding(5)
                         .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                         .pBufferInfo(uniform);
+                writes.get(6)
+                        .sType$Default()
+                        .dstSet(descriptorSets[currentIndex])
+                        .dstBinding(6)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                        .pImageInfo(reactive);
                 vkUpdateDescriptorSets(device, writes, null);
             }
         }
@@ -1905,6 +1928,16 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                             ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
                             : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, stack);
+            transitionImage(
+                    commandBuffer, current.reactive,
+                    current.reactive.layout, VK_IMAGE_LAYOUT_GENERAL,
+                    current.reactive.layout == VK_IMAGE_LAYOUT_UNDEFINED
+                            ? 0 : VK_ACCESS_SHADER_READ_BIT,
+                    VK_ACCESS_SHADER_WRITE_BIT,
+                    current.reactive.layout == VK_IMAGE_LAYOUT_UNDEFINED
+                            ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+                            : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, stack);
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
             vkCmdBindDescriptorSets(
                     commandBuffer,
@@ -1916,12 +1949,29 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             );
             vkCmdDispatch(commandBuffer, (width + 7) / 8, (height + 7) / 8, 1);
             transitionImage(
+                    commandBuffer, current.reactive,
+                    VK_IMAGE_LAYOUT_GENERAL,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, stack);
+            transitionImage(
                     commandBuffer, current.motion,
                     VK_IMAGE_LAYOUT_GENERAL,
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, stack);
+        }
+    }
+
+    /** Hands this frame's reactive mask to the native upscaler (DLSS bias hint, FSR reactive). */
+    private void setUpscalingBiasMask(NativeImage mask) {
+        try {
+            StreamlineBridge.nSetUpscalingBiasMask(
+                    mask.image, mask.memory, mask.view, VK_FORMAT_R8_UNORM, width, height);
+        } catch (UnsatisfiedLinkError ignored) {
+            // Older native bridge: upscalers run without the mask.
         }
     }
 
@@ -2552,6 +2602,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             destroyImage(slot.ui);
             destroyImage(slot.rayReconstructionOutput);
             destroyImage(slot.motion);
+            destroyImage(slot.reactive);
             destroyImage(slot.upscaled);
             destroyImage(slot.depth);
             destroyImage(slot.color);
@@ -2632,6 +2683,8 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         private NativeImage color;
         private NativeImage depth;
         private NativeImage motion;
+        /** R8 bias/reactive mask written by the motion pass. */
+        private NativeImage reactive;
         private NativeImage upscaled;
         private NativeImage ui;
         private NativeImage rayReconstructionOutput;

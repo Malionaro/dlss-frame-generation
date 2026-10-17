@@ -229,7 +229,11 @@ public final class SodiumOptionsEntrypoint implements ConfigEntryPoint {
                         .setDefaultValue(RayTracingMode.OFF)
                         .setElementNameProvider(mode -> Component.translatable(
                                 "dlss_fg.value.rt_mode." + mode.name().toLowerCase(java.util.Locale.ROOT)))
-                        .setBinding(mode -> config.rayTracingMode = mode, () -> config.rayTracingMode))
+                        .setBinding(mode -> config.setRayTracingMode(mode,
+                                        activeVendor() == GpuVendor.NVIDIA
+                                                && org.malionaro.dlss_frame_generation.client.ui.settings
+                                                        .RayTracingSettingsPanel.rayReconstructionSupportedNow()),
+                                () -> config.rayTracingMode))
                 .addOption(builder.createEnumOption(id("rt_quality"), RayTracingQuality.class)
                         .setEnabledProvider(state -> !ForeignShaderPipeline.active())
                         .setName(Component.translatable("dlss_fg.option.rt.quality"))
