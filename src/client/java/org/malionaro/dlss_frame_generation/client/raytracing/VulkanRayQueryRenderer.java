@@ -334,6 +334,11 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         scene.invalidate(position);
     }
 
+    /** Whether section {@code key} is resident in the RT scene. Render thread. */
+    public boolean hasSection(long key) {
+        return sections.containsKey(key);
+    }
+
     /** Sections resident on the GPU and sections still queued or meshing. */
     public String sceneStatus() {
         return sections.size() + " sections, " + scene.pendingCount() + " pending";

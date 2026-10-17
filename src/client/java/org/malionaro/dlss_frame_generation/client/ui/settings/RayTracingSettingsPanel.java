@@ -149,6 +149,16 @@ public final class RayTracingSettingsPanel {
         screen.place(packButton, screen.rayTracingTooltip(
                 capabilities, "dlss_fg.tooltip.rt.shader_pack"));
 
+        var terrainButton = CycleButton.onOffBuilder(config.rayTracingReplaceTerrain)
+                .create(0, 0, columnWidth, 20,
+                        Component.translatable("dlss_fg.option.rt.replace_terrain"), (button, value) -> {
+                            config.rayTracingReplaceTerrain = value;
+                            config.save();
+                        });
+        terrainButton.active = usable;
+        screen.place(terrainButton, screen.rayTracingTooltip(
+                capabilities, "dlss_fg.tooltip.rt.replace_terrain"));
+
         var denoiserButton = CycleButton.onOffBuilder(config.rayTracingDenoiserEnabled)
                 .create(0, 0, columnWidth, 20,
                         Component.translatable("dlss_fg.option.rt.stable_sampling"), (button, value) -> {

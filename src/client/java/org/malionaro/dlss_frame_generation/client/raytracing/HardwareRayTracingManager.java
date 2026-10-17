@@ -156,6 +156,43 @@ public final class HardwareRayTracingManager {
     }
 
     /**
+     * RT engine primary visibility: vanilla may skip the raster draw of the
+     * section at {@code origin}. Only while the RT pass is running (traced
+     * within the last 200 ms), with the option on and no shader pack, for
+     * sections resident in the RT scene and entirely inside 70 % of the RT
+     * range (beyond that the RT image fades into the raster, which must exist).
+     * Render thread.
+     */
+    public static boolean replacesRasterSection(net.minecraft.core.BlockPos origin) {
+        HardwareRayTracingManager manager =
+                org.malionaro.dlss_frame_generation.client.FrameGenMod.rayTracingManager();
+        if (manager == null || !manager.active || manager.renderer == null
+                || System.nanoTime() - lastRecordedFrameNanos > 200_000_000L) {
+            return false;
+        }
+        FrameGenConfig config = FrameGenConfig.getInstance();
+        if (!config.rayTracingReplaceTerrain
+                || org.malionaro.dlss_frame_generation.client.compat.ForeignShaderPipeline.active()) {
+            return false;
+        }
+        net.minecraft.world.phys.Vec3 camera =
+                RayTracingFrameData.cameraPosition(net.minecraft.client.Minecraft.getInstance());
+        if (camera == null) {
+            return false;
+        }
+        double reach = config.rayTracingMaxDistance * 0.7;
+        // Farthest corner of the 16^3 section.
+        double dx = Math.max(Math.abs(origin.getX() - camera.x), Math.abs(origin.getX() + 16 - camera.x));
+        double dy = Math.max(Math.abs(origin.getY() - camera.y), Math.abs(origin.getY() + 16 - camera.y));
+        double dz = Math.max(Math.abs(origin.getZ() - camera.z), Math.abs(origin.getZ() + 16 - camera.z));
+        if (dx * dx + dy * dy + dz * dz > reach * reach) {
+            return false;
+        }
+        return manager.renderer.hasSection(net.minecraft.core.SectionPos.asLong(
+                origin.getX() >> 4, origin.getY() >> 4, origin.getZ() >> 4));
+    }
+
+    /**
      * The RT pass draws the clouds itself: it ran within the last half second
      * in the overworld with clouds enabled. If it stops, vanilla clouds return.
      */

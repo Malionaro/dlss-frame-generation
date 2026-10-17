@@ -20,7 +20,7 @@ active the RT engine stays off (as today).
 3. **Entities in RT** *(done, untested; untextured parts)*: the entity vertex data already captured for motion
    vectors goes into a per-frame BLAS, so mobs and players appear in
    reflections, refraction and cast exact shadows.
-4. **RT primary visibility** *(open: needs a hardware test first, a mistake hides the whole world)*: RT draws every pixel inside the RT range;
+4. **RT primary visibility** *(done, untested; option "RT Engine Draws Near Terrain")*: RT draws every pixel inside the RT range;
    vanilla terrain rendering is skipped for those sections to win back the
    raster cost. Raster stays for the far field, the hand, particles and GUI.
 5. **Denoising** *(done, untested: own temporal accumulation)*: working Ray Reconstruction, or an own temporal +

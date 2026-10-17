@@ -28,7 +28,8 @@
     "EntityRenderStateMixin",
     "EntityRenderDispatcherMixin",
     "ModelFeatureRendererMixin",
-    "CloudRendererMixin"
+    "CloudRendererMixin",
+    "LevelRendererTerrainMixin"
   ],
   "injectors": {
     "defaultRequire": 1

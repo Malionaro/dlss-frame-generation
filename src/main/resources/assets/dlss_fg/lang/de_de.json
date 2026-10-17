@@ -222,6 +222,8 @@
   "dlss_fg.option.rt.distance_slider": "RT-Distanz: %s Blöcke",
   "dlss_fg.option.rt.samples_slider": "RT-Samples: %s/Pixel",
   "dlss_fg.option.rt.shader_pack": "RT-Shaderpack",
+  "dlss_fg.option.rt.replace_terrain": "RT-Engine zeichnet nahes Terrain",
+  "dlss_fg.tooltip.rt.replace_terrain": "Nahes Terrain ganz innerhalb der RT-Reichweite zeichnet nur noch die RT-Engine, Minecrafts Renderer lässt es aus. Das spart GPU-Zeit. Ausschalten, falls Blöcke in deiner Nähe falsch aussehen.",
   "dlss_fg.value.rt_shader_pack.builtin": "Eingebaut",
   "dlss_fg.tooltip.rt.shader_pack": "Shader für die eigene RT-Engine der Mod, aus dem Ordner rtshaderpacks im Spielordner (dort liegt eine Kopie des eingebauten als Vorlage). Iris-Shaderpacks lädt Iris; solange eines aktiv ist, bleibt das RT der Mod aus.",
   "dlss_fg.rt_block.shader_pack": "aus, solange ein Shader-Pack läuft; der Pack beleuchtet die Welt selbst",

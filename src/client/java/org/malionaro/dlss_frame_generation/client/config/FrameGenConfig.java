@@ -265,6 +265,11 @@ public class FrameGenConfig {
      * historic behaviour where stable sampling is on.
      */
     public boolean rayTracingDenoiserEnabled = true;
+    /**
+     * RT engine: near terrain the RT pass fully covers is not rasterised by
+     * vanilla (saves its cost). Turn off if the near world ever looks wrong.
+     */
+    public boolean rayTracingReplaceTerrain = true;
     /** RT shader pack folder or zip in rtshaderpacks/; empty = built-in. */
     public String rayTracingShaderPack = "";
 

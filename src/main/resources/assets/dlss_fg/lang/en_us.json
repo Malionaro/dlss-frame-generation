@@ -222,6 +222,8 @@
   "dlss_fg.option.rt.distance_slider": "RT Distance: %s blocks",
   "dlss_fg.option.rt.samples_slider": "RT Samples: %s/pixel",
   "dlss_fg.option.rt.shader_pack": "RT Shader Pack",
+  "dlss_fg.option.rt.replace_terrain": "RT Engine Draws Near Terrain",
+  "dlss_fg.tooltip.rt.replace_terrain": "Near terrain fully inside the RT range is drawn only by the RT engine and skipped by Minecraft's renderer, which saves GPU time. Turn off if blocks close to you look wrong.",
   "dlss_fg.value.rt_shader_pack.builtin": "Built-in",
   "dlss_fg.tooltip.rt.shader_pack": "Shader for the mod's own RT engine, from the rtshaderpacks folder in the game directory (a copy of the built-in one is there as template). Iris shader packs are loaded by Iris; while one is active the mod's RT stays off.",
   "dlss_fg.rt_block.shader_pack": "off while a shader pack runs; the pack lights the world itself",
