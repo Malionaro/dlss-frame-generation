@@ -116,7 +116,16 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
      * invocations and primary hits, each sampled on every 16th pixel in
      * both directions. Read back for the timing log.
      */
-    private static final int EXPOSURE_BYTES = 32;
+    private static final int EXPOSURE_BYTES = 48;
+    private long lastWorkgroups;
+    /** Whether Minecraft had a render pass open while the RT pass was recorded. */
+    private volatile boolean renderPassOpenSeen;
+
+    public void noteRenderPassOpen(boolean open) {
+        if (open) {
+            renderPassOpenSeen = true;
+        }
+    }
     private long lastInvocations;
     private long lastPrimaryHits;
     /** GPU timestamps around the trace, two per slot, read once the slot is idle. */
@@ -460,11 +469,17 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         double seconds = (now - lastTimingLogNanos) / 1.0e9;
         long invocations = 0;
         long primaryHits = 0;
+        long workgroups = 0;
+        long shaderWidth = 0;
+        long shaderHeight = 0;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             PointerBuffer mapped = stack.mallocPointer(1);
             if (vkMapMemory(device, exposureBuffer.memory, 0, EXPOSURE_BYTES, 0, mapped) == VK_SUCCESS) {
                 invocations = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 24));
                 primaryHits = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 28));
+                workgroups = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 32));
+                shaderWidth = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 36));
+                shaderHeight = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 40));
                 vkUnmapMemory(device, exposureBuffer.memory);
             }
         }
@@ -480,8 +495,16 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 (primaryHits - lastPrimaryHits) / frames,
                 ((outputWidth + 15) / 16) * ((outputHeight + 15) / 16),
                 sceneStatus());
+        logger.info("RT shader: {} workgroups per frame (expected {}), output seen by the shader {} x {}, "
+                        + "Minecraft render pass open while recording: {}",
+                (workgroups - lastWorkgroups) / frames,
+                ((outputWidth + 7) / 8) * ((outputHeight + 7) / 8),
+                shaderWidth, shaderHeight,
+                renderPassOpenSeen ? "yes" : "no");
         lastInvocations = invocations;
         lastPrimaryHits = primaryHits;
+        lastWorkgroups = workgroups;
+        renderPassOpenSeen = false;
         lastTimingLogNanos = now;
         gpuMillisSum = 0.0;
         cpuMillisSum = 0.0;

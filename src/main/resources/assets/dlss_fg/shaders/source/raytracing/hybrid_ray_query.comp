@@ -86,6 +86,10 @@ layout(std430, set = 0, binding = 13) buffer ExposureState {
     // 16th pixel in each direction.
     uint invocations;
     uint primaryHits;
+    // Every workgroup that starts, and the output size the shader sees.
+    uint workgroups;
+    uint imageWidth;
+    uint imageHeight;
 } exposureState;
 
 // Model triangles of non-cube blocks (RtTriangleFormat.java): atlas UVs,
@@ -1006,8 +1010,15 @@ vec3 waterNormal(vec3 point) {
 }
 
 void main() {
+    if (gl_LocalInvocationIndex == 0u) {
+        atomicAdd(exposureState.workgroups, 1u);
+    }
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(targetImage);
+    if (pixel == ivec2(0)) {
+        exposureState.imageWidth = uint(size.x);
+        exposureState.imageHeight = uint(size.y);
+    }
     if (pixel.x >= size.x || pixel.y >= size.y) {
         return;
     }

@@ -91,6 +91,10 @@ public final class HardwareRayTracingManager {
             return null;
         }
 
+        if (org.malionaro.dlss_frame_generation.client.render.VulkanRegistry.getActiveEncoder()
+                instanceof org.malionaro.dlss_frame_generation.client.mixin.VulkanCommandEncoderAccessor encoder) {
+            currentRenderer.noteRenderPassOpen(encoder.dlss_fg$getCurrentRenderPass() != null);
+        }
         boolean recorded = currentRenderer.render(
                 commandBuffer,
                 colorView,
