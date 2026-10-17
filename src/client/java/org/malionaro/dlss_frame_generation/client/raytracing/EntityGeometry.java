@@ -19,7 +19,7 @@ import java.util.List;
  * block atlas, so parts get a neutral untextured albedo.</p>
  */
 final class EntityGeometry {
-    /** Neutral, slightly warm grey: reads as "a mob" in reflections without a texture. */
+    /** Neutral, slightly warm grey until a part's texture colours are known. */
     static final int ALBEDO = 0x8C847C;
     /** Lit like open sky; entities move between light levels anyway. */
     static final int FLAGS = RtBoxFormat.withSkyLight(0, 15);
@@ -50,11 +50,15 @@ final class EntityGeometry {
         Vector3f edgeA = new Vector3f();
         Vector3f edgeB = new Vector3f();
         Vector3f normal = new Vector3f();
-        int tint = (ALBEDO & 0xFFFFFF) | RtTriangleFormat.UNTEXTURED_BIT;
         for (EntityPartMotion.Pose pose : poses) {
             Matrix4f matrix = pose.pose();
             float[] cubes = pose.cubes();
+            int[] colors = pose.colors();
             for (int cube = 0; cube + 5 < cubes.length; cube += 6) {
+                // The cube's average texture colour; neutral until its texture loads.
+                int cubeIndex = cube / 6;
+                int albedo = colors != null && cubeIndex < colors.length ? colors[cubeIndex] : ALBEDO;
+                int tint = (albedo & 0xFFFFFF) | RtTriangleFormat.UNTEXTURED_BIT;
                 if (triangles + 12 > maxTriangles) {
                     return triangles;
                 }

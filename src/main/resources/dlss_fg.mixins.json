@@ -29,7 +29,9 @@
     "EntityRenderDispatcherMixin",
     "ModelFeatureRendererMixin",
     "CloudRendererMixin",
-    "LevelRendererTerrainMixin"
+    "LevelRendererTerrainMixin",
+    "RenderTypeAccessor",
+    "RenderSetupAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

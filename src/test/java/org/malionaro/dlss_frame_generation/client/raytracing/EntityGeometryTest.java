@@ -43,6 +43,18 @@ class EntityGeometryTest {
     }
 
     @Test
+    void cubesCarryTheirTextureColour() {
+        ByteBuffer positions = ByteBuffer.allocate(64 * RtTriangleFormat.BYTES_PER_POSITION);
+        ByteBuffer attributes = ByteBuffer.allocate(64 * RtTriangleFormat.BYTES_PER_ATTRIBUTE)
+                .order(ByteOrder.BIG_ENDIAN);
+        List<EntityPartMotion.Pose> poses = List.of(new EntityPartMotion.Pose(new Matrix4f(),
+                new float[] {0, 0, 0, 1, 1, 1}, new int[] {0x336699}));
+        EntityGeometry.write(poses, 0, 0, 0, positions, attributes, 64);
+        int tint = Float.floatToRawIntBits(attributes.getFloat(24));
+        assertEquals(0x336699, tint & 0xFFFFFF);
+    }
+
+    @Test
     void stopsAtTheTriangleBudget() {
         ByteBuffer positions = ByteBuffer.allocate(64 * RtTriangleFormat.BYTES_PER_POSITION);
         ByteBuffer attributes = ByteBuffer.allocate(64 * RtTriangleFormat.BYTES_PER_ATTRIBUTE);

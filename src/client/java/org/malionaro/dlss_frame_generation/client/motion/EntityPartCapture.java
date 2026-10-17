@@ -30,6 +30,16 @@ public final class EntityPartCapture {
     private EntityPartCapture() {}
 
     public static void capture(Object state, Model<?> model, PoseStack.Pose pose) {
+        capture(state, model, pose, null, -1);
+    }
+
+    /**
+     * @param renderType what the model is drawn with (its texture colours the
+     *                   parts in RT), or null
+     * @param tint       ARGB tint of the submit
+     */
+    public static void capture(Object state, Model<?> model, PoseStack.Pose pose,
+                               net.minecraft.client.renderer.rendertype.RenderType renderType, int tint) {
         EntityPartMotion motion = EntityPartMotion.INSTANCE;
         if (!motion.enabled() || !(state instanceof EntityIdHolder holder)) {
             return;
@@ -47,10 +57,13 @@ public final class EntityPartCapture {
         }
         PoseStack stack = new PoseStack();
         stack.last().set(pose);
-        visit(motion, entityId, model.root(), stack);
+        net.minecraft.resources.Identifier texture =
+                renderType != null ? EntityTextureColors.textureOf(renderType) : null;
+        visit(motion, entityId, model.root(), stack, texture, tint);
     }
 
-    private static void visit(EntityPartMotion motion, int entityId, ModelPart part, PoseStack stack) {
+    private static void visit(EntityPartMotion motion, int entityId, ModelPart part, PoseStack stack,
+                              net.minecraft.resources.Identifier texture, int tint) {
         if (!part.visible) {
             return;
         }
@@ -62,10 +75,11 @@ public final class EntityPartCapture {
         part.translateAndRotate(stack);
         if (!part.skipDraw && !access.dlss_fg$cubes().isEmpty()) {
             float[] bounds = BOUNDS.computeIfAbsent(part, EntityPartCapture::bounds);
-            motion.record(entityId, part, stack.last().pose(), bounds);
+            int[] colors = EntityTextureColors.cubeColors(part, access.dlss_fg$cubes(), texture, tint);
+            motion.record(entityId, part, stack.last().pose(), bounds, colors);
         }
         for (ModelPart child : access.dlss_fg$children().values()) {
-            visit(motion, entityId, child, stack);
+            visit(motion, entityId, child, stack, texture, tint);
         }
         stack.popPose();
     }

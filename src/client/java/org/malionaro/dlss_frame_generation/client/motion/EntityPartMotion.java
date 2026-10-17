@@ -47,7 +47,11 @@ public final class EntityPartMotion {
      * Pose of one drawn part, relative to that frame's camera, and the local
      * bounds of its cubes as {minX, minY, minZ, maxX, maxY, maxZ} per cube.
      */
-    public record Pose(Matrix4f pose, float[] cubes) {}
+    public record Pose(Matrix4f pose, float[] cubes, int[] colors) {
+        public Pose(Matrix4f pose, float[] cubes) {
+            this(pose, cubes, null);
+        }
+    }
 
     /**
      * A part seen in both frames. {@code toLocal} takes a point relative to the
@@ -110,7 +114,12 @@ public final class EntityPartMotion {
      * Stores the pose a part is drawn with this frame; the first one wins.
      * {@code cubes} is kept, not copied.
      */
-    public synchronized void record(int entityId, Object part, Matrix4fc pose, float[] cubes) {
+    public void record(int entityId, Object part, Matrix4fc pose, float[] cubes) {
+        record(entityId, part, pose, cubes, null);
+    }
+
+    /** @param colors rgb per cube for RT, or null for the neutral fallback */
+    public synchronized void record(int entityId, Object part, Matrix4fc pose, float[] cubes, int[] colors) {
         if (!enabled || recordCount >= MAX_RECORDS || cubes.length < 6) {
             return;
         }
@@ -118,7 +127,7 @@ public final class EntityPartMotion {
         if (parts.containsKey(part)) {
             return;
         }
-        parts.put(part, new Pose(new Matrix4f(pose), cubes));
+        parts.put(part, new Pose(new Matrix4f(pose), cubes, colors));
         recordCount++;
     }
 

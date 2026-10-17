@@ -23,6 +23,7 @@ public class ModelFeatureRendererMixin {
             require = 0
     )
     private void dlss_fg$capturePartPoses(ModelFeatureRenderer.Submit<?> submit, CallbackInfo ci) {
-        EntityPartCapture.capture(submit.state(), submit.model(), submit.pose());
+        EntityPartCapture.capture(submit.state(), submit.model(), submit.pose(),
+                submit.renderType(), submit.tintedColor());
     }
 }
