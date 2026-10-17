@@ -79,6 +79,21 @@ public final class SectionMesher {
             BlockColors blockColors,
             BlockAndTintGetter tintLevel
     ) {
+        return mesh(snapshot, generation, appearances, blockColors, tintLevel, false);
+    }
+
+    /**
+     * @param coarse far LOD: boxes only, and blocks without collision (plants,
+     *               torches, flowers) are left out
+     */
+    public static SectionMesh mesh(
+            SectionSnapshot snapshot,
+            long generation,
+            BlockAppearances appearances,
+            BlockColors blockColors,
+            BlockAndTintGetter tintLevel,
+            boolean coarse
+    ) {
         ByteBuffer boxes = SCRATCH.get();
         boxes.clear();
         ByteBuffer positions = TRIANGLE_POSITIONS.get();
@@ -123,7 +138,12 @@ public final class SectionMesher {
                     // Anything but a full cube: the model's own triangles, so
                     // plants, torches, stairs and panes have their real shape.
                     boolean modelTriangles = false;
-                    if (!state.isAir() && !state.isSolidRender()) {
+                    if (coarse && !state.isAir() && !state.isSolidRender() && !fluidBlock
+                            && state.getCollisionShape(EmptyBlockGetter.INSTANCE, position).isEmpty()) {
+                        // Too small to matter at this distance.
+                        continue;
+                    }
+                    if (!coarse && !state.isAir() && !state.isSolidRender()) {
                         BlockAppearances.ModelQuads quads = appearances.quadsOf(state);
                         if (!quads.isEmpty()) {
                             int flags = RtBoxFormat.withSkyLight(

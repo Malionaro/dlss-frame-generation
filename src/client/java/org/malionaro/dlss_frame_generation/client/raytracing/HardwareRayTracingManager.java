@@ -180,7 +180,9 @@ public final class HardwareRayTracingManager {
         if (camera == null) {
             return false;
         }
-        double reach = config.rayTracingMaxDistance * 0.7;
+        // Coarse far LOD sections leave out plants, so the raster keeps them.
+        double reach = Math.min(config.rayTracingMaxDistance * 0.7,
+                org.malionaro.dlss_frame_generation.client.raytracing.scene.SectionScene.DETAIL_RANGE);
         // Farthest corner of the 16^3 section.
         double dx = Math.max(Math.abs(origin.getX() - camera.x), Math.abs(origin.getX() + 16 - camera.x));
         double dy = Math.max(Math.abs(origin.getY() - camera.y), Math.abs(origin.getY() + 16 - camera.y));

@@ -17,7 +17,7 @@ active the RT engine stays off (as today).
    plants, torches, cross models, rotated faces) instead of one box per
    collision shape; UVs from the model quads, so textures match the raster
    exactly.
-3. **Entities in RT** *(done, untested; untextured parts)*: the entity vertex data already captured for motion
+3. **Entities in RT** *(done, untested; per-cube texture colours)*: the entity vertex data already captured for motion
    vectors goes into a per-frame BLAS, so mobs and players appear in
    reflections, refraction and cast exact shadows.
 4. **RT primary visibility** *(done, untested; option "RT Engine Draws Near Terrain")*: RT draws every pixel inside the RT range;
@@ -29,7 +29,7 @@ active the RT engine stays off (as today).
 6. **Particles, weather and translucency** *(rain in front of RT surfaces done; particles open)*: particles and rain as RT
    geometry or composited with correct depth; stained glass and water
    layers in order.
-7. **Range and LOD** *(range up to 96 done; LOD open)*: RT range beyond 48 blocks with coarser sections far
+7. **Range and LOD** *(done, untested: up to 96 blocks, coarse meshes beyond 48)*: RT range beyond 48 blocks with coarser sections far
    away.
 
 Each stage ships on its own and is tested on real hardware before the next.

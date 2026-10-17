@@ -54,6 +54,14 @@ public final class SectionScene implements AutoCloseable {
     private final Set<Long> desired = new HashSet<>();
     /** Sections whose latest mesh the renderer has (or that are empty). */
     private final Set<Long> resident = new HashSet<>();
+    /**
+     * LOD: sections beyond {@link #DETAIL_RANGE} blocks are meshed coarse (no
+     * model triangles, no small decorations). Desired level per section, and
+     * the level each captured mesh was built with.
+     */
+    public static final double DETAIL_RANGE = 48.0;
+    private final Map<Long, Boolean> desiredCoarse = new HashMap<>();
+    private final Map<Long, Boolean> meshedCoarse = new HashMap<>();
     private final ArrayDeque<Long> captureQueue = new ArrayDeque<>();
     private final Set<Long> queued = new HashSet<>();
     private final Map<Long, Long> notLoadedUntil = new HashMap<>();
@@ -156,6 +164,13 @@ public final class SectionScene implements AutoCloseable {
                     }
                     long key = SectionPos.asLong(sx, sy, sz);
                     next.add(key);
+                    boolean coarse = cx * cx + cz * cz > DETAIL_RANGE * DETAIL_RANGE;
+                    desiredCoarse.put(key, coarse);
+                    Boolean built = meshedCoarse.get(key);
+                    if (built != null && built != coarse && resident.contains(key)) {
+                        // Crossed the detail range: rebuild at the new level.
+                        dirty.add(key);
+                    }
                     order.add(new long[] {key, (long) dx * dx + (long) dy * dy * 4 + (long) dz * dz});
                 }
             }
@@ -181,6 +196,8 @@ public final class SectionScene implements AutoCloseable {
     }
 
     private void drop(long key) {
+        desiredCoarse.remove(key);
+        meshedCoarse.remove(key);
         generations.remove(key);
         notLoadedUntil.remove(key);
         dirty.remove(key);
@@ -252,6 +269,8 @@ public final class SectionScene implements AutoCloseable {
             }
             long generation = nextGeneration++;
             generations.put(key, generation);
+            boolean coarse = desiredCoarse.getOrDefault(key, false);
+            meshedCoarse.put(key, coarse);
             if (snapshot == SectionSnapshot.Result.EMPTY) {
                 // Nothing to trace; drop an older mesh of this section.
                 ready.add(SectionMesher.SectionMesh.empty(key, generation));
@@ -263,7 +282,7 @@ public final class SectionScene implements AutoCloseable {
             inFlight.incrementAndGet();
             mesher.execute(() -> {
                 try {
-                    completed.add(SectionMesher.mesh(section, generation, looks, blockColors, tintLevel));
+                    completed.add(SectionMesher.mesh(section, generation, looks, blockColors, tintLevel, coarse));
                 } catch (Throwable error) {
                     LOGGER.warn("RT section mesh failed at {}: {}", SectionPos.of(key), error.toString());
                     completed.add(SectionMesher.SectionMesh.empty(key, generation));
@@ -342,6 +361,8 @@ public final class SectionScene implements AutoCloseable {
 
     /** Drops every section; the renderer receives them all through {@link #drainRemoved}. */
     public void resetAll() {
+        desiredCoarse.clear();
+        meshedCoarse.clear();
         removed.addAll(resident);
         resident.clear();
         desired.clear();
