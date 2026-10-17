@@ -22,8 +22,10 @@ import java.util.Map;
  * bounding box and its translation since the last frame; the shader moves
  * pixels inside a box back by that translation before reprojecting. Positions
  * are relative to the current camera and the matrices are built in double
- * precision, so far from the world origin nothing jitters. Limb animation and
- * turning are not covered, only translation.</p>
+ * precision, so far from the world origin nothing jitters. Limbs, heads and
+ * turning bodies come from {@link EntityPartMotion}: each box also names the
+ * range of its entity's model parts in the part buffer, and a pixel on a part
+ * follows that part instead of the box translation.</p>
  *
  * <p>Render thread only.</p>
  */
@@ -31,7 +33,10 @@ public final class ObjectMotion {
     public static final ObjectMotion INSTANCE = new ObjectMotion();
 
     public static final int MAX_ENTITIES = 64;
-    /** std140: uint count + pad, then per entity vec4 min, vec4 max, vec4 delta. */
+    /**
+     * std140: uint count + pad, then per entity vec4 min, vec4 max, vec4 delta.
+     * min.w and max.w carry the entity's first part and part count as uint bits.
+     */
     public static final int BYTES = 16 + MAX_ENTITIES * 48;
     private static final double RANGE = 96.0;
     /** Limbs, held items and nametags reach outside the hitbox. */
@@ -40,7 +45,7 @@ public final class ObjectMotion {
     public record Box(float minX, float minY, float minZ,
                       float maxX, float maxY, float maxZ,
                       float deltaX, float deltaY, float deltaZ,
-                      double distanceSquared) {}
+                      double distanceSquared, int entityId) {}
 
     private final Map<Integer, Vec3> lastPositions = new HashMap<>();
     private List<Box> boxes = List.of();
@@ -72,6 +77,8 @@ public final class ObjectMotion {
             previousCameraY = camera.y;
             previousCameraZ = camera.z;
         }
+        EntityPartMotion.INSTANCE.beginFrame(
+                previousCameraX - camera.x, previousCameraY - camera.y, previousCameraZ - camera.z, reset);
         // Current camera-relative point -> world -> previous camera-relative -> previous clip.
         Matrix4d toPrevious = new Matrix4d(previousViewProjection).translate(
                 camera.x - previousCameraX, camera.y - previousCameraY, camera.z - previousCameraZ);
@@ -95,6 +102,7 @@ public final class ObjectMotion {
         float partialTick = minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(true);
         Entity cameraEntity = minecraft.getCameraEntity();
         boolean firstPerson = minecraft.options.getCameraType().isFirstPerson();
+        java.util.Set<Integer> animated = EntityPartMotion.INSTANCE.animatedEntities();
         List<Box> candidates = new ArrayList<>();
         Map<Integer, Vec3> seen = new HashMap<>();
         for (Entity entity : minecraft.level.entitiesForRendering()) {
@@ -110,7 +118,8 @@ public final class ObjectMotion {
             double dx = position.x - last.x;
             double dy = position.y - last.y;
             double dz = position.z - last.z;
-            if (dx * dx + dy * dy + dz * dz < 1.0e-8) {
+            // Standing still is fine when the model moves its parts.
+            if (dx * dx + dy * dy + dz * dz < 1.0e-8 && !animated.contains(entity.getId())) {
                 continue;
             }
             double distanceSquared = position.distanceToSqr(camera);
@@ -122,7 +131,7 @@ public final class ObjectMotion {
             candidates.add(new Box(
                     (float) (box.minX - camera.x), (float) (box.minY - camera.y), (float) (box.minZ - camera.z),
                     (float) (box.maxX - camera.x), (float) (box.maxY - camera.y), (float) (box.maxZ - camera.z),
-                    (float) dx, (float) dy, (float) dz, distanceSquared));
+                    (float) dx, (float) dy, (float) dz, distanceSquared, entity.getId()));
         }
         lastPositions.clear();
         lastPositions.putAll(seen);
@@ -148,8 +157,30 @@ public final class ObjectMotion {
         return boxes;
     }
 
-    /** Writes the entity block of the motion uniform at {@code offset}. */
+    /**
+     * Writes the model parts of {@code boxes} into the part buffer and returns
+     * {first, count} per box for {@link #writeBoxes}.
+     */
+    public static int[][] writeParts(ByteBuffer parts, List<Box> boxes) {
+        int count = Math.min(MAX_ENTITIES, boxes.size());
+        List<Integer> ids = new ArrayList<>(count);
+        for (int index = 0; index < count; index++) {
+            ids.add(boxes.get(index).entityId());
+        }
+        return EntityPartMotion.INSTANCE.writeParts(parts, ids);
+    }
+
+    /** Writes the entity block of the motion uniform at {@code offset}, without parts. */
     public static void writeBoxes(ByteBuffer target, int offset, List<Box> boxes) {
+        writeBoxes(target, offset, boxes, null);
+    }
+
+    /**
+     * Writes the entity block of the motion uniform at {@code offset}.
+     *
+     * @param partRanges {first, count} per box from {@link #writeParts}, or null
+     */
+    public static void writeBoxes(ByteBuffer target, int offset, List<Box> boxes, int[][] partRanges) {
         int count = Math.min(MAX_ENTITIES, boxes.size());
         target.putInt(offset, count);
         target.putInt(offset + 4, 0);
@@ -160,9 +191,12 @@ public final class ObjectMotion {
             Box box = boxes.get(index);
             int at = base + index * 48;
             target.putFloat(at, box.minX()).putFloat(at + 4, box.minY())
-                    .putFloat(at + 8, box.minZ()).putFloat(at + 12, 0.0f);
+                    .putFloat(at + 8, box.minZ());
             target.putFloat(at + 16, box.maxX()).putFloat(at + 20, box.maxY())
-                    .putFloat(at + 24, box.maxZ()).putFloat(at + 28, 0.0f);
+                    .putFloat(at + 24, box.maxZ());
+            boolean parts = partRanges != null && index < partRanges.length;
+            target.putInt(at + 12, parts ? partRanges[index][0] : 0);
+            target.putInt(at + 28, parts ? partRanges[index][1] : 0);
             target.putFloat(at + 32, box.deltaX()).putFloat(at + 36, box.deltaY())
                     .putFloat(at + 40, box.deltaZ()).putFloat(at + 44, 0.0f);
         }

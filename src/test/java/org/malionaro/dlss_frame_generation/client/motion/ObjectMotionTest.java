@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ObjectMotionTest {
     private static ObjectMotion.Box box(double distanceSquared) {
-        return new ObjectMotion.Box(-1, 0, -1, 1, 2, 1, 0.1f, 0, 0, distanceSquared);
+        return new ObjectMotion.Box(-1, 0, -1, 1, 2, 1, 0.1f, 0, 0, distanceSquared, 0);
     }
 
     @Test
@@ -33,13 +33,30 @@ class ObjectMotionTest {
     void writesStd140EntityBlock() {
         ByteBuffer buffer = ByteBuffer.allocate(ObjectMotion.BYTES).order(ByteOrder.LITTLE_ENDIAN);
         ObjectMotion.writeBoxes(buffer, 0, List.of(
-                new ObjectMotion.Box(1, 2, 3, 4, 5, 6, 0.5f, -0.25f, 0.125f, 1)));
+                new ObjectMotion.Box(1, 2, 3, 4, 5, 6, 0.5f, -0.25f, 0.125f, 1, 7)));
         assertEquals(1, buffer.getInt(0));
         assertEquals(1.0f, buffer.getFloat(16));
         assertEquals(4.0f, buffer.getFloat(32));
         assertEquals(6.0f, buffer.getFloat(40));
         assertEquals(0.5f, buffer.getFloat(48));
         assertEquals(0.125f, buffer.getFloat(56));
+        assertEquals(0, buffer.getInt(28));
+        assertEquals(0, buffer.getInt(44));
+    }
+
+    @Test
+    void boxesCarryTheirPartRange() {
+        ByteBuffer buffer = ByteBuffer.allocate(ObjectMotion.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+        ObjectMotion.writeBoxes(buffer, 0, List.of(
+                new ObjectMotion.Box(1, 2, 3, 4, 5, 6, 0, 0, 0, 1, 7),
+                new ObjectMotion.Box(1, 2, 3, 4, 5, 6, 0, 0, 0, 2, 8)),
+                new int[][] {{0, 5}, {5, 3}});
+        // min.w = first part, max.w = part count, read as uint bits by the shader.
+        assertEquals(0, buffer.getInt(16 + 12));
+        assertEquals(5, buffer.getInt(16 + 28));
+        assertEquals(5, buffer.getInt(16 + 48 + 12));
+        assertEquals(3, buffer.getInt(16 + 48 + 28));
+        assertEquals(4.0f, buffer.getFloat(16 + 48 + 16));
     }
 
     @Test

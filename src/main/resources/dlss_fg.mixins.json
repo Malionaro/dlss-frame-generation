@@ -23,7 +23,11 @@
     "DebugEntryFpsMixin",
     "GuiRendererMixin",
     "LevelRendererSamplerMixin",
-    "VulkanGpuSamplerMixin"
+    "VulkanGpuSamplerMixin",
+    "ModelPartAccessor",
+    "EntityRenderStateMixin",
+    "EntityRenderDispatcherMixin",
+    "ModelFeatureRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

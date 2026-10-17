@@ -274,6 +274,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             );
             uploadFrameParameters(
                     current.uniformMemory,
+                    current.partMemory,
                     clipToPreviousClip,
                     jitterX,
                     jitterY,
@@ -813,6 +814,13 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                 );
                 slot.uniformBuffer = uniform.buffer;
                 slot.uniformMemory = uniform.memory;
+                Allocation parts = createBuffer(
+                        EntityPartMotion.BUFFER_BYTES,
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+                );
+                slot.partBuffer = parts.buffer;
+                slot.partMemory = parts.memory;
             }
 
             createPipeline();
@@ -1061,7 +1069,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             shaderModule = result.get(0);
 
             VkDescriptorSetLayoutBinding.Buffer bindings =
-                    VkDescriptorSetLayoutBinding.calloc(7, stack);
+                    VkDescriptorSetLayoutBinding.calloc(8, stack);
             for (int binding = 0; binding < 4; binding++) {
                 bindings.get(binding)
                         .binding(binding)
@@ -1082,6 +1090,11 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             bindings.get(6)
                     .binding(6)
                     .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            bindings.get(7)
+                    .binding(7)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                     .descriptorCount(1)
                     .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
 
@@ -1134,7 +1147,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
 
     private void createDescriptors() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkDescriptorPoolSize.Buffer poolSizes = VkDescriptorPoolSize.calloc(3, stack);
+            VkDescriptorPoolSize.Buffer poolSizes = VkDescriptorPoolSize.calloc(4, stack);
             poolSizes.get(0)
                     .type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .descriptorCount(4 * SLOT_COUNT);
@@ -1143,6 +1156,9 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                     .descriptorCount(2 * SLOT_COUNT);
             poolSizes.get(2)
                     .type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                    .descriptorCount(SLOT_COUNT);
+            poolSizes.get(3)
+                    .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                     .descriptorCount(SLOT_COUNT);
             VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
                     .sType$Default()
@@ -1186,11 +1202,13 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                         .imageLayout(VK_IMAGE_LAYOUT_GENERAL);
                 VkDescriptorBufferInfo.Buffer uniform = VkDescriptorBufferInfo.calloc(1, stack);
                 uniform.get(0).buffer(current.uniformBuffer).offset(0).range(UNIFORM_SIZE);
+                VkDescriptorBufferInfo.Buffer parts = VkDescriptorBufferInfo.calloc(1, stack);
+                parts.get(0).buffer(current.partBuffer).offset(0).range(EntityPartMotion.BUFFER_BYTES);
                 VkDescriptorImageInfo.Buffer reactive = VkDescriptorImageInfo.calloc(1, stack);
                 reactive.get(0).imageView(current.reactive.view)
                         .imageLayout(VK_IMAGE_LAYOUT_GENERAL);
 
-                VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(7, stack);
+                VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(8, stack);
                 for (int binding = 0; binding < 4; binding++) {
                     writes.get(binding)
                             .sType$Default()
@@ -1218,6 +1236,12 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                         .dstBinding(6)
                         .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
                         .pImageInfo(reactive);
+                writes.get(7)
+                        .sType$Default()
+                        .dstSet(descriptorSets[currentIndex])
+                        .dstBinding(7)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                        .pBufferInfo(parts);
                 vkUpdateDescriptorSets(device, writes, null);
             }
         }
@@ -2263,6 +2287,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
 
     private void uploadFrameParameters(
             long memory,
+            long partMemory,
             float[] clipToPreviousClip,
             float jitterX,
             float jitterY,
@@ -2297,7 +2322,15 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             ObjectMotion objects = ObjectMotion.INSTANCE;
             new Matrix4f().set(objects.clipToCameraRelative()).get(96, target);
             new Matrix4f().set(objects.cameraRelativeToPreviousClip()).get(160, target);
-            ObjectMotion.writeBoxes(target, 224, reset ? java.util.List.of() : objects.boxes());
+            java.util.List<ObjectMotion.Box> boxes = reset ? java.util.List.of() : objects.boxes();
+            check(vkMapMemory(device, partMemory, 0, EntityPartMotion.BUFFER_BYTES, 0, mapped),
+                    "map entity part buffer");
+            int[][] partRanges = ObjectMotion.writeParts(
+                    MemoryUtil.memByteBuffer(mapped.get(0), EntityPartMotion.BUFFER_BYTES)
+                            .order(java.nio.ByteOrder.nativeOrder()),
+                    boxes);
+            vkUnmapMemory(device, partMemory);
+            ObjectMotion.writeBoxes(target, 224, boxes, partRanges);
             vkUnmapMemory(device, memory);
         }
     }
@@ -2608,6 +2641,8 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
             destroyImage(slot.color);
             if (slot.uniformBuffer != NULL) vkDestroyBuffer(device, slot.uniformBuffer, null);
             if (slot.uniformMemory != NULL) vkFreeMemory(device, slot.uniformMemory, null);
+            if (slot.partBuffer != NULL) vkDestroyBuffer(device, slot.partBuffer, null);
+            if (slot.partMemory != NULL) vkFreeMemory(device, slot.partMemory, null);
             if (slot.debugReadbackBuffer != NULL) {
                 vkDestroyBuffer(device, slot.debugReadbackBuffer, null);
             }
@@ -2691,6 +2726,9 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
         private NativeImage motionBlurOutput;
         private long uniformBuffer;
         private long uniformMemory;
+        /** Model-part transforms of moving entities (EntityPartMotion layout). */
+        private long partBuffer;
+        private long partMemory;
         private long debugReadbackBuffer;
         private long debugReadbackMemory;
         private long debugFrameNumber;

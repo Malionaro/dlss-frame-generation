@@ -606,6 +606,10 @@ public final class VulkanRegistry {
             worldReset = false;
         }
 
+        // Per-part entity motion models vanilla entity drawing; a shader pack
+        // renders entities its own way, so that stays on box translation.
+        org.malionaro.dlss_frame_generation.client.motion.EntityPartMotion.INSTANCE.setEnabled(
+                !ForeignShaderPipeline.active());
         org.malionaro.dlss_frame_generation.client.motion.ObjectMotion.INSTANCE.update(
                 mc, pos, fwd, up, currentProjMatrix, resetForCurrentFrame);
 

@@ -21,20 +21,83 @@ layout(std140, set = 0, binding = 5) uniform FrameParameters {
     mat4 clipToCameraRelative;
     mat4 cameraRelativeToPreviousClip;
     uvec4 entityInfo; // x = entity count
-    vec4 entityBoxes[192]; // per entity: min, max, translation since last frame
+    // Per entity: min (w = first part), max (w = part count), translation since last frame.
+    vec4 entityBoxes[192];
 } frame;
 
-// Index of the moving entity whose box contains this surface point, or -1.
-int movingEntityAt(vec3 relative) {
+// Cubes of the rigid model parts of the entities above (EntityPartMotion.java):
+// rows of two affine transforms (current camera-relative -> part space, part
+// space -> previous position relative to the current camera) and the cube's
+// bounds in part space.
+struct PartMotion {
+    vec4 toLocal[3];
+    vec4 toPrevious[3];
+    vec4 boundsMin;
+    vec4 boundsMax;
+};
+layout(std430, set = 0, binding = 7) readonly buffer EntityParts {
+    PartMotion parts[];
+} entityParts;
+
+const uint MAX_PARTS = 2048u;
+// ObjectMotion.BOX_MARGIN: how far the boxes reach past the hitbox.
+const float BOX_MARGIN = 0.2;
+
+vec3 applyRows(vec4 rows[3], vec3 point) {
+    vec4 p = vec4(point, 1.0);
+    return vec3(dot(rows[0], p), dot(rows[1], p), dot(rows[2], p));
+}
+
+// Previous position of the surface point (relative to the current camera),
+// from the model cube it lies on, else from the translation of a moving
+// entity box around it. False when no entity explains the point.
+bool entityPreviousPosition(vec3 relative, out vec3 previousRelative) {
     uint count = min(frame.entityInfo.x, 64u);
+    // Depth precision drops with distance; a surface point sits on a cube face
+    // give or take this much (blocks, roughly part space).
+    float tolerance = 0.03 + 0.004 * length(relative);
+    float bestSurface = tolerance;
+    bool onPart = false;
+    int translated = -1;
     for (uint i = 0u; i < count; ++i) {
-        vec3 minimum = frame.entityBoxes[i * 3u].xyz;
-        vec3 maximum = frame.entityBoxes[i * 3u + 1u].xyz;
-        if (all(greaterThanEqual(relative, minimum)) && all(lessThanEqual(relative, maximum))) {
-            return int(i);
+        vec4 minimum = frame.entityBoxes[i * 3u];
+        vec4 maximum = frame.entityBoxes[i * 3u + 1u];
+        if (any(lessThan(relative, minimum.xyz)) || any(greaterThan(relative, maximum.xyz))) {
+            continue;
+        }
+        uint first = min(floatBitsToUint(minimum.w), MAX_PARTS);
+        uint end = min(first + floatBitsToUint(maximum.w), MAX_PARTS);
+        for (uint part = first; part < end; ++part) {
+            vec3 local = applyRows(entityParts.parts[part].toLocal, relative);
+            vec3 below = local - entityParts.parts[part].boundsMin.xyz;
+            vec3 above = entityParts.parts[part].boundsMax.xyz - local;
+            // A visible point lies on a face of its own cube: pick the cube
+            // whose surface is nearest (inside = positive, slightly outside =
+            // negative), so a limb wins over the body it sinks into.
+            float inside = min(min(min(below.x, below.y), below.z), min(min(above.x, above.y), above.z));
+            float surface = abs(inside);
+            if (inside >= -tolerance && surface < bestSurface) {
+                bestSurface = surface;
+                previousRelative = applyRows(entityParts.parts[part].toPrevious, local);
+                onPart = true;
+            }
+        }
+        vec3 delta = frame.entityBoxes[i * 3u + 2u].xyz;
+        // With a model, the margin below the feet is ground, not entity.
+        bool aboveGround = end == first || relative.y > minimum.y + BOX_MARGIN;
+        if (translated < 0 && aboveGround && dot(delta, delta) > 0.0) {
+            translated = int(i);
         }
     }
-    return -1;
+    if (onPart) {
+        return true;
+    }
+    if (translated >= 0) {
+        // Held items, name tags and models without parts: box translation.
+        previousRelative = relative - frame.entityBoxes[uint(translated) * 3u + 2u].xyz;
+        return true;
+    }
+    return false;
 }
 
 float colorError(vec3 a, vec3 b) {
@@ -99,16 +162,16 @@ void main() {
         return;
     }
 
-    // Moving entities: move the surface point back by the entity's own
-    // translation before reprojecting. Exact, so no colour search needed.
+    // Entities: move the surface point to where its model part (or, without
+    // parts, the whole entity) was last frame before reprojecting. Exact, so
+    // no colour search needed.
     bool exactObjectMotion = false;
     if (frame.entityInfo.x > 0u) {
         vec4 relativeClip = frame.clipToCameraRelative * vec4(currentNdc, depth, 1.0);
         if (abs(relativeClip.w) > 1.0e-6) {
             vec3 relative = relativeClip.xyz / relativeClip.w;
-            int entity = movingEntityAt(relative);
-            if (entity >= 0) {
-                vec3 previousRelative = relative - frame.entityBoxes[uint(entity) * 3u + 2u].xyz;
+            vec3 previousRelative;
+            if (entityPreviousPosition(relative, previousRelative)) {
                 vec4 objectClip = frame.cameraRelativeToPreviousClip * vec4(previousRelative, 1.0);
                 if (abs(objectClip.w) > 1.0e-6 && !any(isnan(objectClip)) && !any(isinf(objectClip))) {
                     previousClip = objectClip;
