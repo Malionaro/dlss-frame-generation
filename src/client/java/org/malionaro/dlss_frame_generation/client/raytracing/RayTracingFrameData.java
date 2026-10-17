@@ -30,7 +30,7 @@ public record RayTracingFrameData(
         float reflectionRange, // meters
         float jitterX, float jitterY,
         float rain, float thunder, float timeSeconds, int frameIndex,
-        int originX, int originY, int originZ, boolean overworld, float cameraSkyLight,
+        int originX, int originY, int originZ, boolean overworld, float cameraSkyLight, boolean clouds,
         float[] entityBoxes, int entityCount,
         float[] clipToView
 ) {
@@ -147,6 +147,7 @@ public record RayTracingFrameData(
                 minecraft.level.dimension() == Level.OVERWORLD,
                 // Light shafts only where the camera itself sees the sky.
                 minecraft.level.getBrightness(LightLayer.SKY, BlockPos.containing(position)) / 15.0f,
+                minecraft.options.getCloudStatus() != net.minecraft.client.CloudStatus.OFF,
                 entityBoxes,
                 entityCount,
                 // The raster's own inverse projection: depth is converted
@@ -209,7 +210,7 @@ public record RayTracingFrameData(
         putVec4(data, reflectionRange, jitterX, jitterY, 0.0f);
         data.putFloat(rain).putFloat(thunder).putFloat(timeSeconds).putInt(frameIndex);
         data.putFloat(originX).putFloat(originY).putFloat(originZ).putInt(entityCount);
-        putVec4(data, overworld ? 1.0f : 0.0f, cameraSkyLight, 0.0f, 0.0f);
+        putVec4(data, overworld ? 1.0f : 0.0f, cameraSkyLight, clouds ? 1.0f : 0.0f, 0.0f);
         for (float value : clipToView) {
             data.putFloat(value);
         }

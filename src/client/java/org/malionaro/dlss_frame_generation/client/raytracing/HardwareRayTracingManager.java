@@ -19,6 +19,8 @@ public final class HardwareRayTracingManager {
     private VulkanRayQueryRenderer renderer;
     private boolean successfulFrameLogged;
     private volatile String runtimeStatus = "RT renderer is disabled";
+    /** System time of the last frame the RT pass recorded. */
+    private static volatile long lastRecordedFrameNanos;
 
     public HardwareRayTracingManager(Logger logger) {
         this.logger = logger;
@@ -106,6 +108,9 @@ public final class HardwareRayTracingManager {
             // permanent backend failure.
             return null;
         }
+        if (recorded) {
+            lastRecordedFrameNanos = System.nanoTime();
+        }
         if (recorded && !successfulFrameLogged) {
             successfulFrameLogged = true;
             runtimeStatus = "RT renderer active";
@@ -129,6 +134,22 @@ public final class HardwareRayTracingManager {
 
     public boolean isActive() {
         return active;
+    }
+
+    /**
+     * The RT pass draws the clouds itself: it ran within the last half second
+     * in the overworld with clouds enabled. If it stops, vanilla clouds return.
+     */
+    public static boolean drawsOwnClouds() {
+        HardwareRayTracingManager manager =
+                org.malionaro.dlss_frame_generation.client.FrameGenMod.rayTracingManager();
+        net.minecraft.client.Minecraft minecraft = net.minecraft.client.Minecraft.getInstance();
+        return manager != null && manager.active
+                && System.nanoTime() - lastRecordedFrameNanos < 500_000_000L
+                && minecraft != null && minecraft.level != null
+                && minecraft.level.dimension() == net.minecraft.world.level.Level.OVERWORLD
+                && minecraft.options.getCloudStatus() != net.minecraft.client.CloudStatus.OFF
+                && !org.malionaro.dlss_frame_generation.client.compat.ForeignShaderPipeline.active();
     }
 
     public String runtimeStatus() {

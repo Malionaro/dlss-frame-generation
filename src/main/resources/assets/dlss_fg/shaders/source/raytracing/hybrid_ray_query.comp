@@ -40,7 +40,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 reflectionParams; // x = reflection range in meters, yz = sub-pixel jitter
     vec4 environment; // rain, thunder, seconds, frame index (uint bits)
     vec4 worldOrigin; // scene origin in world blocks, w = entity count (int bits)
-    vec4 skyParams; // x = overworld (has sun and sky), y = sky light at the camera 0-1
+    vec4 skyParams; // x = overworld, y = sky light at the camera 0-1, z = clouds enabled
     mat4 clipToView; // inverse of the raster projection
     vec4 entities[64]; // per entity: min.xyz, max.xyz relative to the scene origin
 } frame;
@@ -529,6 +529,73 @@ vec4 cloudLayer(vec3 origin, vec3 direction) {
     return vec4(shade, alpha);
 }
 
+// Volumetric cloud layer, ray-marched between CLOUD_HEIGHT and 8 blocks
+// above, lit by the sun with one shadow sample into the cloud. Replaces
+// vanilla's flat clouds while the RT pass runs. rgb is premultiplied
+// in-scattered light, a the opacity.
+float cloudDensity(vec3 point) {
+    float bottom = CLOUD_HEIGHT - frame.worldOrigin.y;
+    float height = (point.y - bottom) / 8.0;
+    if (height <= 0.0 || height >= 1.0) {
+        return 0.0;
+    }
+    vec2 world = (point.xz + frame.worldOrigin.xz) / 72.0
+        + vec2(frame.environment.z * 0.01, frame.environment.z * 0.003);
+    float shape = fbm(world) + 0.25 * fbm(world * 3.1 + vec2(5.2, 1.3));
+    float coverage = mix(0.62, 0.42, rainLevel());
+    // Rounded tops, flatter bottoms.
+    float profile = smoothstep(0.0, 0.25, height) * smoothstep(1.0, 0.45, height);
+    return max(0.0, (shape - coverage) * 4.0) * profile;
+}
+
+vec4 volumetricClouds(vec3 origin, vec3 direction, float maximumDistance) {
+    if (!overworld() || frame.skyParams.z < 0.5 || abs(direction.y) < 1.0e-3) {
+        return vec4(0.0);
+    }
+    float bottom = CLOUD_HEIGHT - frame.worldOrigin.y;
+    float top = bottom + 8.0;
+    float t0 = (bottom - origin.y) / direction.y;
+    float t1 = (top - origin.y) / direction.y;
+    if (t0 > t1) {
+        float swap = t0;
+        t0 = t1;
+        t1 = swap;
+    }
+    t0 = max(t0, 0.0);
+    t1 = min(t1, min(maximumDistance, 3000.0));
+    if (t1 <= t0) {
+        return vec4(0.0);
+    }
+    const int STEPS = 8;
+    float stepLength = (t1 - t0) / float(STEPS);
+    float t = t0 + stepLength * random01();
+    vec3 lightDirection = mainLightDirection();
+    vec3 sunLight = mainLightColor();
+    vec3 ambient = skyRadiance(vec3(0.0, 1.0, 0.0)) * 0.8;
+    float cosine = dot(direction, lightDirection);
+    // Forward scattering: bright silver lining towards the sun.
+    float phase = 0.6 / (4.0 * PI) + 0.4 * 0.75 * pow(max(cosine, 0.0), 6.0);
+    float transmittance = 1.0;
+    vec3 light = vec3(0.0);
+    for (int stepIndex = 0; stepIndex < STEPS && transmittance > 0.02; stepIndex++) {
+        vec3 point = origin + direction * t;
+        float density = cloudDensity(point);
+        if (density > 0.0) {
+            float towardsSun = cloudDensity(point + lightDirection * 2.5)
+                + cloudDensity(point + lightDirection * 6.0);
+            float sunTransmittance = exp(-towardsSun * 1.6);
+            float extinction = density * 0.25;
+            float absorbed = 1.0 - exp(-extinction * stepLength);
+            light += transmittance * absorbed
+                * (sunLight * sunTransmittance * phase * 6.0 + ambient);
+            transmittance *= 1.0 - absorbed;
+        }
+        t += stepLength;
+    }
+    float fade = 1.0 - smoothstep(1200.0, 3000.0, t0);
+    return vec4(light * fade, (1.0 - transmittance) * fade);
+}
+
 vec3 skyWithClouds(vec3 origin, vec3 direction) {
     vec3 sky = skyRadiance(direction);
     vec4 clouds = cloudLayer(origin, direction);
@@ -806,6 +873,12 @@ void main() {
                 * (1.0 - smoothstep(maxDistance * 0.6, maxDistance * 0.9, rasterRayDistance));
             result *= 1.0 - shadowStrength * (1.0 - visibility);
         }
+        vec4 clouds = volumetricClouds(camera, direction,
+            rasterHasGeometry ? rasterRayDistance : 1.0e6);
+        if (clouds.a > 0.001) {
+            result = result * (1.0 - clouds.a) + toneMapAces(clouds.rgb * exposure);
+            changed = true;
+        }
         // Light shafts in front of entities and the sky as well.
         vec3 shafts = lightShafts(camera, direction,
             rasterHasGeometry ? rasterRayDistance : 64.0);
@@ -955,6 +1028,8 @@ void main() {
     }
 
     result = applyFog(result, direction, primary.distance, sky);
+    vec4 cloudsInFront = volumetricClouds(camera, direction, primary.distance);
+    result = result * (1.0 - cloudsInFront.a) + cloudsInFront.rgb;
     result += lightShafts(camera, direction, primary.distance);
     recordLuminance(pixel, parity, result);
     result *= exposure;

@@ -27,7 +27,8 @@
     "ModelPartAccessor",
     "EntityRenderStateMixin",
     "EntityRenderDispatcherMixin",
-    "ModelFeatureRendererMixin"
+    "ModelFeatureRendererMixin",
+    "CloudRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1
