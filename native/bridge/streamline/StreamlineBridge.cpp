@@ -380,7 +380,9 @@ static sl::DLSSMode dlssModeFromIndex(int mode) {
         case 3: return sl::DLSSMode::eBalanced;
         case 4: return sl::DLSSMode::eMaxPerformance;
         case 5: return sl::DLSSMode::eUltraPerformance;
-        case 6: return sl::DLSSMode::eUltraQuality;
+        // DLSS 310 dropped Ultra Quality (create fails with 0xbad00010).
+        // It runs as Quality at a higher render scale, inside Quality's range.
+        case 6: return sl::DLSSMode::eMaxQuality;
         default: return sl::DLSSMode::eOff;
     }
 }
@@ -1265,6 +1267,12 @@ extern "C" JNIEXPORT jintArray JNICALL Java_org_malionaro_dlss_1frame_1generatio
             return nullptr;
         }
         return empty;
+    }
+    if (selectedMode == 6 && result == sl::Result::eOk) {
+        renderWidth = std::max(renderWidth,
+            static_cast<uint32_t>(outputWidth * 0.77) & ~1u);
+        renderHeight = std::max(renderHeight,
+            static_cast<uint32_t>(outputHeight * 0.77) & ~1u);
     }
     if (minimumWidth == 0 || minimumHeight == 0) {
         minimumWidth = renderWidth;
