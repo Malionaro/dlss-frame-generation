@@ -2,7 +2,7 @@
 <h1 align="center">Vulkan Frame Generation</h1>
 
 <h1 align="center">
-<a href="https://github.com/Malionaro/dlss-frame-generation/releases"><img alt="GitHub release" src="https://img.shields.io/badge/release-0.1.1--alpha-orange?logo=github"></a>
+<a href="https://github.com/Malionaro/dlss-frame-generation/releases"><img alt="GitHub release" src="https://img.shields.io/badge/release-0.1.2--alpha-orange?logo=github"></a>
 <a href="https://github.com/Malionaro/dlss-frame-generation/actions/workflows/build.yml"><img alt="Build and test" src="https://github.com/Malionaro/dlss-frame-generation/actions/workflows/build.yml/badge.svg"></a>
 </h1>
 
@@ -48,6 +48,10 @@ The world renders at a lower resolution, DLSS rebuilds it at full size, and fram
 - **F3 tells you what is happening:** output FPS, base FPS, frame times and a line like `Upscaling: DLSS Quality | 1696x954 → 2560x1440 (66%) | DRS 100% | Mip bias -0.50`.
 - **Ray tracing is hybrid,** not full path tracing, with a radius of up to 48 blocks. It stays off while a shader pack runs.
 - **Keys:** End opens the settings, F7 toggles frame generation, F8 shows the performance overlay. All keys can be rebound.
+
+## 0.1.2-alpha
+
+Hotfix: DLSS, frame generation and Ray Reconstruction work again on NVIDIA (0.1.1-alpha rejected its own updated Streamline files). Notes: [docs/release-notes/v0.1.2-alpha.md](docs/release-notes/v0.1.2-alpha.md).
 
 ## What 0.1.1-alpha adds
 
