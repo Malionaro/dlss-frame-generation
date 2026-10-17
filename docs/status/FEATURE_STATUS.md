@@ -36,7 +36,7 @@ native runtime and all required frame data have been accepted.
 
 | Feature | Status | Current state | Still to do |
 |---|---|---|---|
-| GPU and Streamline detection | ✅ Tested | NVIDIA device, Streamline 2.14.1 runtime and individual capabilities are checked separately | Test on RTX 20/30/40 |
+| GPU and Streamline detection | ✅ Tested | NVIDIA device, Streamline 2.14.16 runtime (DLSS 310.9.16) and individual capabilities are checked separately | Test on RTX 20/30/40 |
 | DLSS Frame Generation | ✅ Tested on RTX 5080 | HUD-less colour, depth, motion and a separate UI layer; provider accepted every frame in testing; multiplier slider 2× up to the driver maximum (6× on RTX 50); off while a menu covers the world | Validate VSync, tearing, resize and fullscreen; test RTX 40 (2×) |
 | DLSS Super Resolution / DLAA | 🟡 Experimental, runs on RTX 5080 | DLSS 4.5 presets K/M/L; aspect-exact even render sizes; DLSS history kept across dynamic-resolution steps; jitter only while DLSS accepts frames; terrain mip bias `log2(render/output)`; jitter sequence `8 × scale²` | Confirm the wobble and distance-sharpness fixes in game; verify the jitter sign |
 | NVIDIA Reflex | 🟡 Experimental | Low latency and Boost; the Reflex frame limiter only applies with Reflex pacing on, and is lifted when pacing is turned off | Measure latency on RTX hardware |
