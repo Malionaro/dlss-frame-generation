@@ -109,6 +109,15 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
      * exposes with what frame p-1 left in [1-p].
      */
     private static final int EXPOSURE_BYTES = 24;
+    /** GPU timestamps around the trace, two per slot, read once the slot is idle. */
+    private long timestampPool = NULL;
+    private double timestampPeriodNanos = 1.0;
+    private final boolean[] slotTimed = new boolean[FRAME_SLOT_COUNT];
+    private double gpuMillisSum;
+    private double cpuMillisSum;
+    private int gpuSamples;
+    private int cpuSamples;
+    private long lastTimingLogNanos = System.nanoTime();
     private Allocation exposureBuffer;
     private boolean exposureCleared;
     private final Allocation[] uniformBuffers =
@@ -175,6 +184,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
 
         try {
             ensureInitialized();
+            long cpuStart = System.nanoTime();
             ensureOutput(width, height);
             // CPU side first: section selection, snapshots and finished
             // meshes never wait on the GPU.
@@ -198,6 +208,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             if (!awaitUniformSlotFence(frameSlot)) {
                 return false;
             }
+            readSlotTiming(frameSlot);
             releaseRetiredOutputs();
             releaseRetiredSections();
             long view = currentAtlasView();
@@ -276,6 +287,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             recordHybridPass(
                     commandBuffer,
                     frame.frameIndex() & 1,
+                    frameSlot,
                     colorView.texture().vkImage(),
                     depthView.texture().vkImage(),
                     descriptorSets[frameSlot],
@@ -284,6 +296,9 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             );
             frameNumber++;
             renderedFrame = true;
+            cpuMillisSum += (System.nanoTime() - cpuStart) / 1.0e6;
+            cpuSamples++;
+            logTimingIfDue();
             return true;
         } catch (Throwable throwable) {
             failed = true;
@@ -362,9 +377,65 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                 false
         );
+        createTimestampPool();
         createPipeline();
         setupSlotSynchronization();
         initialized = true;
+    }
+
+    private void createTimestampPool() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
+            vkGetPhysicalDeviceProperties(physicalDevice, properties);
+            timestampPeriodNanos = properties.limits().timestampPeriod();
+            VkQueryPoolCreateInfo info = VkQueryPoolCreateInfo.calloc(stack)
+                    .sType$Default()
+                    .queryType(VK_QUERY_TYPE_TIMESTAMP)
+                    .queryCount(FRAME_SLOT_COUNT * 2);
+            LongBuffer pool = stack.mallocLong(1);
+            if (timestampPeriodNanos > 0.0
+                    && vkCreateQueryPool(device, info, null, pool) == VK_SUCCESS) {
+                timestampPool = pool.get(0);
+            }
+        }
+    }
+
+    /** The slot's previous trace has finished (fence waited): read its GPU time. */
+    private void readSlotTiming(int frameSlot) {
+        if (timestampPool == NULL || !slotTimed[frameSlot]) {
+            return;
+        }
+        slotTimed[frameSlot] = false;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            java.nio.LongBuffer stamps = stack.mallocLong(2);
+            if (vkGetQueryPoolResults(device, timestampPool, frameSlot * 2, 2, stamps,
+                    Long.BYTES, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+                long ticks = stamps.get(1) - stamps.get(0);
+                if (ticks > 0) {
+                    gpuMillisSum += ticks * timestampPeriodNanos / 1.0e6;
+                    gpuSamples++;
+                }
+            }
+        }
+    }
+
+    /** Every 5 s: how long the RT pass takes, to tell RT cost from other slowdowns. */
+    private void logTimingIfDue() {
+        long now = System.nanoTime();
+        if (now - lastTimingLogNanos < 5_000_000_000L || cpuSamples == 0) {
+            return;
+        }
+        double seconds = (now - lastTimingLogNanos) / 1.0e9;
+        logger.info("RT pass: {} frames/s, GPU {} ms, CPU {} ms per frame; {}",
+                String.format(java.util.Locale.ROOT, "%.1f", cpuSamples / seconds),
+                gpuSamples > 0 ? String.format(java.util.Locale.ROOT, "%.2f", gpuMillisSum / gpuSamples) : "n/a",
+                String.format(java.util.Locale.ROOT, "%.2f", cpuMillisSum / cpuSamples),
+                sceneStatus());
+        lastTimingLogNanos = now;
+        gpuMillisSum = 0.0;
+        cpuMillisSum = 0.0;
+        gpuSamples = 0;
+        cpuSamples = 0;
     }
 
     /** RT shader pack in use; empty for the built-in shader. */
@@ -1314,6 +1385,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private void recordHybridPass(
             VkCommandBuffer commandBuffer,
             int exposureParity,
+            int frameSlot,
             long colorImage,
             long depthImage,
             long descriptorSet,
@@ -1419,7 +1491,17 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     stack.longs(descriptorSet),
                     null
             );
+            if (timestampPool != NULL) {
+                vkCmdResetQueryPool(commandBuffer, timestampPool, frameSlot * 2, 2);
+                vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                        timestampPool, frameSlot * 2);
+            }
             vkCmdDispatch(commandBuffer, (width + 7) / 8, (height + 7) / 8, 1);
+            if (timestampPool != NULL) {
+                vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                        timestampPool, frameSlot * 2 + 1);
+                slotTimed[frameSlot] = true;
+            }
             transitionGuideForRead(commandBuffer, noisyColor, stack);
             transitionGuideForRead(commandBuffer, diffuseAlbedo, stack);
             transitionGuideForRead(commandBuffer, specularAlbedo, stack);
@@ -2096,6 +2178,11 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         if (depthSampler != NULL) vkDestroySampler(device, depthSampler, null);
         if (atlasSampler != NULL) vkDestroySampler(device, atlasSampler, null);
         if (descriptorPool != NULL) vkDestroyDescriptorPool(device, descriptorPool, null);
+        if (timestampPool != NULL) {
+            vkDestroyQueryPool(device, timestampPool, null);
+            timestampPool = NULL;
+        }
+        java.util.Arrays.fill(slotTimed, false);
         if (pipeline != NULL) vkDestroyPipeline(device, pipeline, null);
         if (pipelineLayout != NULL) vkDestroyPipelineLayout(device, pipelineLayout, null);
         if (descriptorSetLayout != NULL) {
