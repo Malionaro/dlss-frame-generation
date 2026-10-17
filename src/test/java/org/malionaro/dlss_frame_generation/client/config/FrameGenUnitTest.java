@@ -63,7 +63,7 @@ public class FrameGenUnitTest {
         assertEquals(30, config.targetFps);
         assertEquals(FrameGenConfig.RayTracingMode.OFF, config.rayTracingMode);
         assertEquals(FrameGenConfig.RayTracingQuality.MEDIUM, config.rayTracingQuality);
-        assertEquals(48, config.rayTracingMaxDistance);
+        assertEquals(FrameGenConfig.MAX_RAY_TRACING_DISTANCE, config.rayTracingMaxDistance);
         assertEquals(1, config.rayTracingRaysPerPixel);
     }
 

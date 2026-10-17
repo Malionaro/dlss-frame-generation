@@ -248,13 +248,15 @@ public class FrameGenConfig {
      * older cards never get more than they support.
      */
     public static final int MAX_FRAME_MULTIPLIER = 6;
-    public static final int MAX_RAY_TRACING_DISTANCE = 48;
+    /** Far RT range costs much more; the default stays at 48 blocks. */
+    public static final int MAX_RAY_TRACING_DISTANCE = 96;
+    public static final int DEFAULT_RAY_TRACING_DISTANCE = 48;
     public static final int MIN_RAY_TRACING_DISTANCE = 16;
 
     // Hybrid hardware ray tracing (raster frame + Vulkan ray-query pass).
     public RayTracingMode rayTracingMode = RayTracingMode.OFF;
     public RayTracingQuality rayTracingQuality = RayTracingQuality.MEDIUM;
-    public int rayTracingMaxDistance = MAX_RAY_TRACING_DISTANCE;
+    public int rayTracingMaxDistance = DEFAULT_RAY_TRACING_DISTANCE;
     public int rayTracingRaysPerPixel = 1;
     /**
      * Legacy JSON field name retained for compatibility.

@@ -122,6 +122,15 @@ public final class EntityPartMotion {
         recordCount++;
     }
 
+    /** Every part pose recorded in the current frame (for RT entity geometry). */
+    public synchronized List<Pose> currentPoses() {
+        List<Pose> poses = new ArrayList<>();
+        for (Map<Object, Pose> parts : current.values()) {
+            poses.addAll(parts.values());
+        }
+        return poses;
+    }
+
     /** Entities whose parts were recorded in the last frame (candidates for motion). */
     public synchronized Set<Integer> animatedEntities() {
         return new HashSet<>(previous.keySet());

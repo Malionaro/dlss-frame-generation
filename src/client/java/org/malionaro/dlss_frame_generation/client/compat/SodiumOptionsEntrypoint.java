@@ -253,7 +253,7 @@ public final class SodiumOptionsEntrypoint implements ConfigEntryPoint {
                         .setStorageHandler(STORAGE)
                         .setRange(FrameGenConfig.MIN_RAY_TRACING_DISTANCE,
                                 FrameGenConfig.MAX_RAY_TRACING_DISTANCE, 4)
-                        .setDefaultValue(FrameGenConfig.MAX_RAY_TRACING_DISTANCE)
+                        .setDefaultValue(FrameGenConfig.DEFAULT_RAY_TRACING_DISTANCE)
                         .setValueFormatter(value -> Component.translatable("dlss_fg.value.blocks", value))
                         .setBinding(value -> config.rayTracingMaxDistance = value,
                                 () -> config.rayTracingMaxDistance))

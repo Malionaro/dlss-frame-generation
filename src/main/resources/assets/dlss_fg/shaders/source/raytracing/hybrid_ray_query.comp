@@ -83,6 +83,13 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Tr
     TriangleAttributes triangles[];
 };
 const uint TRIANGLE_CUTOUT = 1u << 24u;
+const uint TRIANGLE_UNTEXTURED = 1u << 25u;
+// Instance masks (VulkanRayQueryRenderer): blocks 1, entity parts 2.
+const uint MASK_BLOCKS = 0x01u;
+const uint MASK_ALL = 0xFFu;
+// Primary rays and shadows of raster entities only see blocks: the raster
+// draws entities itself, and an entity must not shadow its own pixels.
+uint rayMask = MASK_ALL;
 
 // A hit on a box or on a model triangle. For triangles, box only carries the
 // flags (so material and sky-light lookups work the same) and uv/tint hold
@@ -203,7 +210,7 @@ Hit traceRay(vec3 origin, vec3 direction, float minimumDistance, float maximumDi
         query,
         scene,
         rayFlags,
-        0xff,
+        rayMask,
         origin,
         minimumDistance,
         direction,
@@ -715,6 +722,9 @@ vec3 jitterTowards(vec3 direction, float radius) {
 // the box face texture.
 vec3 albedoOfHit(Hit hit, vec3 point, vec3 normal) {
     if (hit.triangle) {
+        if ((hit.tint & TRIANGLE_UNTEXTURED) != 0u) {
+            return srgbToLinear(unpackRgb(hit.tint & 0xFFFFFFu));
+        }
         vec3 texel = textureLod(blockAtlas, hit.uv, 0.0).rgb;
         if ((hit.tint & 0xFFFFFFu) != 0xFFFFFFu) {
             texel *= unpackRgb(hit.tint & 0xFFFFFFu);
@@ -924,7 +934,9 @@ void main() {
     vec3 lightDirection = mainLightDirection();
     vec3 lightColor = mainLightColor();
 
+    rayMask = MASK_BLOCKS;
     Hit primary = traceScene(camera, direction, 0.03, maxDistance, 0u);
+    rayMask = MASK_ALL;
     vec4 raster = imageLoad(targetImage, pixel);
     vec3 linearRaster = srgbToLinear(max(raster.rgb, vec3(0.0)));
     float hardwareDepth = texelFetch(rasterDepth, pixel, 0).r;
@@ -944,8 +956,10 @@ void main() {
         if (rasterHasGeometry && rasterRayDistance < maxDistance * 0.9 && overworld()) {
             changed = true;
             vec3 point = camera + direction * rasterRayDistance;
+            rayMask = MASK_BLOCKS;
             float visibility = lightVisibility(point, normal,
                 jitterTowards(lightDirection, 0.012), false);
+            rayMask = MASK_ALL;
             float shadowStrength = 0.45 * smoothstep(0.0, 0.3, lightColor.r)
                 * (1.0 - smoothstep(maxDistance * 0.6, maxDistance * 0.9, rasterRayDistance));
             result *= 1.0 - shadowStrength * (1.0 - visibility);

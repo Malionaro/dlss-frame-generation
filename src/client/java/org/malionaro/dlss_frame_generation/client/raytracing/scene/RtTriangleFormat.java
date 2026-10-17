@@ -19,6 +19,8 @@ public final class RtTriangleFormat {
     public static final int BYTES_PER_POSITION = 36;
     public static final int BYTES_PER_ATTRIBUTE = 48;
     public static final int CUTOUT_BIT = 1 << 24;
+    /** No texture: the tint is the albedo (entity parts). */
+    public static final int UNTEXTURED_BIT = 1 << 25;
 
     private RtTriangleFormat() {}
 
