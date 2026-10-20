@@ -138,6 +138,9 @@ public final class HardwareRayTracingManager {
                     ownCommandBuffer = true;
                     logger.warn("RT shader never started in Minecraft's command buffer after {} frames; "
                             + "switching the RT pass to its own command buffer", currentRenderer.recordedFrames());
+                } else if (currentRenderer.startedWorkgroups() == 0) {
+                    logger.error("RT shader never started after {} frames, even in its own command buffer",
+                            currentRenderer.recordedFrames());
                 } else {
                     logger.info("RT self-check after {} frames: {} workgroups started ({})",
                             currentRenderer.recordedFrames(), currentRenderer.startedWorkgroups(),

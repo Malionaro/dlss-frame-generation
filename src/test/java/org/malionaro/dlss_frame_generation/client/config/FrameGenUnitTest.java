@@ -269,7 +269,7 @@ public class FrameGenUnitTest {
             FrameGenConfig loaded = FrameGenConfig.load();
             assertNotNull(loaded, "Corrupt config should fallback to default instance");
             // Defaults must be sanitized (schema v3: explicit provider-choice flag)
-            assertEquals(5, loaded.configVersion);
+            assertEquals(6, loaded.configVersion);
             assertEquals(FrameGenConfig.Preset.CUSTOM, loaded.activePreset);
             // Backup must preserve the corrupt payload next to the rewritten file
             assertTrue(Files.exists(configPath), "Config path should be rewritten to valid JSON after corrupt recovery");

@@ -54,7 +54,7 @@ public class FrameGenConfig {
         instance = null;
     }
 
-    public int configVersion = 5;
+    public int configVersion = 6;
 
     /**
      * True once a provider choice was ever made explicitly (UI toggle,
@@ -272,8 +272,13 @@ public class FrameGenConfig {
      * vanilla (saves its cost). Turn off if the near world ever looks wrong.
      */
     public boolean rayTracingReplaceTerrain = false;
-    /** Debug: always record the RT pass into its own command buffer. */
-    public boolean rayTracingOwnCommandBuffer = false;
+    /**
+     * Record the RT pass into its own transient command buffer that
+     * Minecraft's encoder executes in order (as RT renderers for the Vulkan
+     * backend do). Recorded into Minecraft's current buffer, the RT shader
+     * never started. Debug switch only.
+     */
+    public boolean rayTracingOwnCommandBuffer = true;
     /** RT shader pack folder or zip in rtshaderpacks/; empty = built-in. */
     public String rayTracingShaderPack = "";
 
@@ -557,6 +562,10 @@ public class FrameGenConfig {
             // setups where the RT pass draws nothing, near chunks vanished.
             rayTracingReplaceTerrain = false;
             configVersion = 5;
+        }
+        if (configVersion < 6) {
+            rayTracingOwnCommandBuffer = true;
+            configVersion = 6;
         }
     }
 
