@@ -1,0 +1,15 @@
+DLSS Frame Generation
+Copyright (c) 2026 Malionaro
+
+This product includes software developed by others, used under the Apache License 2.0:
+
+  src/client/java/org/malionaro/dlss_frame_generation/client/raytracing/cloud/VanillaCloudMeshGenerator.java
+    Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+    From "RTX Remix for Minecraft" (https://github.com/NVIDIAGameWorks/rtx-remix-minecraft),
+    via the Minecraft 26.3 fork https://github.com/kazumasa200/rtx-remix-minecraft-26-3.
+    Changed: package renamed, entry points made public. Licence: https://www.apache.org/licenses/LICENSE-2.0
+
+  src/main/resources/assets/dlss_fg/shaders/source/raytracing/hybrid_ray_query.comp (sky, sun disc, rainbow, lens flare)
+    Model, constants and approach adapted from sky_atmosphere.comp and the lens effects of the same project
+    (Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES). Rewritten as a per-ray evaluation with fewer steps.
+    Licence: https://www.apache.org/licenses/LICENSE-2.0

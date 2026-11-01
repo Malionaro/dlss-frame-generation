@@ -150,7 +150,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
      */
     private void reportState(VkCommandBuffer commandBuffer, long colorImage, long depthImage,
                              int width, int height, int frameSlot, SlotScene slotScene) {
-        int instances = (slotScene.entities.triangles > 0 ? 1 : 0) + (slotScene.particles.triangles > 0 ? 1 : 0);
+        int instances = (slotScene.entities.triangles > 0 ? 1 : 0) + (slotScene.particles.triangles > 0 ? 1 : 0)
+                + (slotScene.clouds.triangles > 0 ? 1 : 0);
         int boxSections = 0;
         int triangleSections = 0;
         for (GpuSection section : sections.values()) {
@@ -320,7 +321,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 recordedBuilds = true;
             }
             boolean entitiesInTlas = slotScene.entities.triangles > 0 || slotScene.entities.trianglesInTlas > 0
-                    || slotScene.particles.triangles > 0 || slotScene.particles.trianglesInTlas > 0;
+                    || slotScene.particles.triangles > 0 || slotScene.particles.trianglesInTlas > 0
+                    || slotScene.clouds.triangles > 0 || slotScene.clouds.trianglesInTlas > 0;
             if (slotScene.version != sceneVersion || entitiesInTlas) {
                 rebuildSlotTlas(commandBuffer, slotScene);
                 recordedBuilds = true;
@@ -1178,7 +1180,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
 
     /** Rewrites this slot's instances and section table and rebuilds its TLAS. */
     private void rebuildSlotTlas(VkCommandBuffer commandBuffer, SlotScene slotScene) {
-        int count = (slotScene.entities.triangles > 0 ? 1 : 0) + (slotScene.particles.triangles > 0 ? 1 : 0);
+        int count = (slotScene.entities.triangles > 0 ? 1 : 0) + (slotScene.particles.triangles > 0 ? 1 : 0)
+                + (slotScene.clouds.triangles > 0 ? 1 : 0);
         for (GpuSection section : sections.values()) {
             count += (section.blas != NULL ? 1 : 0) + (section.triangleBlas != NULL ? 1 : 0);
         }
@@ -1225,7 +1228,12 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 writeInstance(instanceBase, tableBase, index++, 0.0f, 0.0f, 0.0f,
                         slotScene.particles.blasAddress, slotScene.particles.attributesAddress, MASK_PARTICLES, stack);
             }
+            if (slotScene.clouds.triangles > 0) {
+                writeInstance(instanceBase, tableBase, index++, 0.0f, 0.0f, 0.0f,
+                        slotScene.clouds.blasAddress, slotScene.clouds.attributesAddress, MASK_CLOUDS, stack);
+            }
             slotScene.entities.trianglesInTlas = slotScene.entities.triangles;
+            slotScene.clouds.trianglesInTlas = slotScene.clouds.triangles;
             slotScene.particles.trianglesInTlas = slotScene.particles.triangles;
             vkUnmapMemory(device, slotScene.instances.memory);
             vkUnmapMemory(device, slotScene.sectionTable.memory);
@@ -1302,6 +1310,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     private static final int MASK_ENTITIES = 0x02;
     private static final int MAX_ENTITY_TRIANGLES = 16_384;
     private static final int MASK_PARTICLES = 0x04;
+    private static final int MASK_CLOUDS = 0x08;
+    private static final int MAX_CLOUD_TRIANGLES = 8_192;
     private ByteBuffer dynamicPositionScratch;
     private ByteBuffer dynamicAttributeScratch;
 
@@ -1327,6 +1337,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                                           float range) {
         slotScene.entities.triangles = 0;
         slotScene.particles.triangles = 0;
+        slotScene.clouds.triangles = 0;
         if (camera == null) {
             return false;
         }
@@ -1346,6 +1357,10 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         int particleTriangles = ParticleGeometry.write(minecraft, camera, range, offsetX, offsetY, offsetZ,
                 dynamicPositionScratch, dynamicAttributeScratch, MAX_ENTITY_TRIANGLES);
         built |= buildDynamic(commandBuffer, slotScene.particles, particleTriangles);
+        ensureDynamicScratch();
+        int cloudTriangles = CloudGeometry.write(minecraft, camera, offsetX, offsetY, offsetZ,
+                dynamicPositionScratch, dynamicAttributeScratch, MAX_CLOUD_TRIANGLES);
+        built |= buildDynamic(commandBuffer, slotScene.clouds, cloudTriangles);
         return built;
     }
 
@@ -1570,6 +1585,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         destroyAllocation(slotScene.sprites, true);
         destroyDynamic(slotScene.entities);
         destroyDynamic(slotScene.particles);
+        destroyDynamic(slotScene.clouds);
     }
 
     /** The block atlas' Vulkan view, or NULL while it is not available. */
@@ -2731,6 +2747,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         /** Entity parts and particles of this slot's frame, rebuilt every frame. */
         private final DynamicBlas entities = new DynamicBlas();
         private final DynamicBlas particles = new DynamicBlas();
+        private final DynamicBlas clouds = new DynamicBlas();
         /** Scene origin this slot's TLAS was built for. */
         private int originX;
         private int originY;
