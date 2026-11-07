@@ -279,6 +279,13 @@ public class FrameGenConfig {
      * never started. Debug switch only.
      */
     public boolean rayTracingOwnCommandBuffer = true;
+    /**
+     * Route every Vulkan call through the Streamline interposer (needed for
+     * DLSS Frame Generation and Reflex). Off: Minecraft talks to the Vulkan
+     * loader directly, DLSS-G is unavailable. Read once at startup, before
+     * Vulkan starts; for testing whether the interposer drops the RT pass.
+     */
+    public boolean streamlineInterposer = true;
     /** RT shader pack folder or zip in rtshaderpacks/; empty = built-in. */
     public String rayTracingShaderPack = "";
 

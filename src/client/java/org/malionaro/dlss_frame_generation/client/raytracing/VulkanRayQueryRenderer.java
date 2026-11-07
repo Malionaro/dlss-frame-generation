@@ -117,6 +117,28 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
      * both directions. Read back for the timing log.
      */
     private static final int EXPOSURE_BYTES = 48;
+    /**
+     * Diagnostic: a one-workgroup compute shader without ray queries, dispatched
+     * right before the RT shader in the same command buffer. If it runs while the
+     * RT shader does not, the command buffer executes and only the ray-query
+     * pipeline is dropped; if it does not run either, the dispatches never reach
+     * the GPU.
+     */
+    private static final String PROBE_SHADER = """
+            #version 460
+            #extension GL_EXT_buffer_reference : require
+            #extension GL_EXT_buffer_reference_uvec2 : require
+            layout(local_size_x = 1) in;
+            layout(buffer_reference, std430, buffer_reference_align = 4) buffer Counter { uint value; };
+            layout(push_constant) uniform Push { uvec2 counter; } push;
+            void main() { atomicAdd(Counter(push.counter).value, 1u); }
+            """;
+    private long probeModule = NULL;
+    private long probeLayout = NULL;
+    private long probePipeline = NULL;
+    private Allocation probeBuffer;
+    private long probeAddress;
+    private boolean probeFailed;
     private long lastWorkgroups;
     /** Whether Minecraft had a render pass open while the RT pass was recorded. */
     private volatile boolean renderPassOpenSeen;
@@ -135,6 +157,84 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             vkUnmapMemory(device, exposureBuffer.memory);
             return value;
         }
+    }
+
+    /** Times the diagnostic probe shader ran, or -1 when it is unavailable. */
+    public long probeDispatches() {
+        if (probeBuffer == null) {
+            return -1L;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            PointerBuffer mapped = stack.mallocPointer(1);
+            if (vkMapMemory(device, probeBuffer.memory, 0, 4, 0, mapped) != VK_SUCCESS) {
+                return -1L;
+            }
+            long value = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0)));
+            vkUnmapMemory(device, probeBuffer.memory);
+            return value;
+        }
+    }
+
+    private void createProbe() {
+        ByteBuffer spirv = null;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            spirv = RayQueryShaderCompiler.compileSource(PROBE_SHADER, "dispatch_probe.comp");
+            LongBuffer result = stack.mallocLong(1);
+            check(vkCreateShaderModule(device, VkShaderModuleCreateInfo.calloc(stack)
+                    .sType$Default().pCode(spirv), null, result), "create probe shader module");
+            probeModule = result.get(0);
+            VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack);
+            range.get(0).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT).offset(0).size(8);
+            check(vkCreatePipelineLayout(device, VkPipelineLayoutCreateInfo.calloc(stack)
+                    .sType$Default().pPushConstantRanges(range), null, result), "create probe layout");
+            probeLayout = result.get(0);
+            VkComputePipelineCreateInfo.Buffer info = VkComputePipelineCreateInfo.calloc(1, stack);
+            info.get(0).sType$Default()
+                    .stage(VkPipelineShaderStageCreateInfo.calloc(stack).sType$Default()
+                            .stage(VK_SHADER_STAGE_COMPUTE_BIT).module(probeModule).pName(stack.UTF8("main")))
+                    .layout(probeLayout);
+            check(vkCreateComputePipelines(device, NULL, info, null, result), "create probe pipeline");
+            probePipeline = result.get(0);
+            probeBuffer = createBuffer(256,
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true);
+            PointerBuffer mapped = stack.mallocPointer(1);
+            check(vkMapMemory(device, probeBuffer.memory, 0, 4, 0, mapped), "map probe buffer");
+            MemoryUtil.memPutInt(mapped.get(0), 0);
+            vkUnmapMemory(device, probeBuffer.memory);
+            probeAddress = bufferAddress(probeBuffer.buffer, stack);
+        } catch (Throwable error) {
+            probeFailed = true;
+            logger.warn("RT dispatch probe unavailable: {}", error.toString());
+        } finally {
+            if (spirv != null) {
+                MemoryUtil.memFree(spirv);
+            }
+        }
+    }
+
+    private void recordProbe(VkCommandBuffer commandBuffer, MemoryStack stack) {
+        if (probePipeline == NULL && !probeFailed) {
+            createProbe();
+        }
+        if (probePipeline == NULL) {
+            return;
+        }
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, probePipeline);
+        vkCmdPushConstants(commandBuffer, probeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                stack.longs(probeAddress));
+        vkCmdDispatch(commandBuffer, 1, 1, 1);
+    }
+
+    private void destroyProbe() {
+        if (probePipeline != NULL) vkDestroyPipeline(device, probePipeline, null);
+        if (probeLayout != NULL) vkDestroyPipelineLayout(device, probeLayout, null);
+        if (probeModule != NULL) vkDestroyShaderModule(device, probeModule, null);
+        probePipeline = NULL;
+        probeLayout = NULL;
+        probeModule = NULL;
+        destroyAllocation(probeBuffer, true);
+        probeBuffer = null;
     }
 
     /** Frames whose RT pass was recorded (not necessarily finished). */
@@ -171,7 +271,10 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 activeShaderPack);
         // Handles of the same shape repeat every slot; compare without the
         // per-slot and per-frame values.
-        String key = width + "x" + height + " " + outputImage + " " + slotScene.tlas + " " + instances;
+        // Not the TLAS (rebuilt every frame with entities in it) and not the
+        // instance count (changes with every mob that moves): those made this
+        // log every frame.
+        String key = width + "x" + height + " " + outputImage + " " + activeShaderPack;
         if (!key.equals(lastReport)) {
             lastReport = key;
             logger.info("{} (command buffer 0x{})", report, Long.toHexString(commandBuffer.address()));
@@ -1957,6 +2060,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
                     stack
             );
+            recordProbe(commandBuffer, stack);
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
             vkCmdBindDescriptorSets(
                     commandBuffer,
@@ -2655,6 +2759,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         }
         destroyAllocation(exposureBuffer, true);
         exposureBuffer = null;
+        destroyProbe();
         if (dynamicPositionScratch != null) {
             MemoryUtil.memFree(dynamicPositionScratch);
             MemoryUtil.memFree(dynamicAttributeScratch);

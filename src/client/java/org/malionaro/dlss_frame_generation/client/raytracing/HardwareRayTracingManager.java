@@ -139,8 +139,16 @@ public final class HardwareRayTracingManager {
                     logger.warn("RT shader never started in Minecraft's command buffer after {} frames; "
                             + "switching the RT pass to its own command buffer", currentRenderer.recordedFrames());
                 } else if (currentRenderer.startedWorkgroups() == 0) {
-                    logger.error("RT shader never started after {} frames, even in its own command buffer",
-                            currentRenderer.recordedFrames());
+                    long probe = currentRenderer.probeDispatches();
+                    logger.error("RT shader never started after {} frames, even in its own command buffer; "
+                                    + "probe shader without ray queries ran {} times. {}",
+                            currentRenderer.recordedFrames(), probe,
+                            probe > 0
+                                    ? "The command buffer executes: the driver drops the ray-query pipeline. "
+                                    + "Try \"streamlineInterposer\": false in config/frame_gen.json."
+                                    : probe == 0
+                                    ? "No dispatch in this command buffer reaches the GPU."
+                                    : "The probe could not be created.");
                 } else {
                     logger.info("RT self-check after {} frames: {} workgroups started ({})",
                             currentRenderer.recordedFrames(), currentRenderer.startedWorkgroups(),

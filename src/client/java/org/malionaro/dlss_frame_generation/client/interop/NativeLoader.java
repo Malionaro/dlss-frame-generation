@@ -122,7 +122,18 @@ public final class NativeLoader {
 
             // Pre-load the interposer so Streamline can hook Vulkan API calls
             Path interposerPath = extractedDir.resolve("sl.interposer.dll");
-            if (Files.exists(interposerPath)) {
+            boolean interposerWanted = true;
+            try {
+                interposerWanted = org.malionaro.dlss_frame_generation.client.config.FrameGenConfig
+                        .getInstance().streamlineInterposer;
+            } catch (Throwable configError) {
+                logger.warn("[DLSS FG] Config unreadable this early, keeping the Streamline interposer: {}",
+                        configError.toString());
+            }
+            if (!interposerWanted) {
+                logger.warn("[DLSS FG] Streamline interposer disabled in config (streamlineInterposer=false): "
+                        + "Vulkan goes straight to the loader, DLSS Frame Generation and Reflex are unavailable");
+            } else if (Files.exists(interposerPath)) {
                 String configuredVulkanLibrary =
                         System.getProperty("org.lwjgl.vulkan.libname", "").trim();
                 if (configuredVulkanLibrary.isEmpty()) {
