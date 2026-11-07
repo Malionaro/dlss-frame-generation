@@ -140,15 +140,26 @@ public final class HardwareRayTracingManager {
                             + "switching the RT pass to its own command buffer", currentRenderer.recordedFrames());
                 } else if (currentRenderer.startedWorkgroups() == 0) {
                     long probe = currentRenderer.probeDispatches();
+                    long[] layoutProbes = currentRenderer.layoutProbeDispatches();
+                    String verdict;
+                    if (probe == 0) {
+                        verdict = "No dispatch in this command buffer reaches the GPU.";
+                    } else if (layoutProbes[0] == 0) {
+                        verdict = "Even a trivial shader with the RT descriptor set does not run: "
+                                + "the descriptor set or its layout is invalid.";
+                    } else if (layoutProbes[1] == 0) {
+                        verdict = "Shaders with the RT descriptor set run, but a single ray query does not: "
+                                + "the device executes no ray queries (rayQuery feature missing on the created "
+                                + "device). Try \"streamlineInterposer\": false in config/frame_gen.json.";
+                    } else if (layoutProbes[1] > 0) {
+                        verdict = "A single ray query runs; the full RT shader does not: the problem is in "
+                                + "the RT shader itself (resources it reads or its size).";
+                    } else {
+                        verdict = "Layout probes could not be created.";
+                    }
                     logger.error("RT shader never started after {} frames, even in its own command buffer; "
-                                    + "probe shader without ray queries ran {} times. {}",
-                            currentRenderer.recordedFrames(), probe,
-                            probe > 0
-                                    ? "The command buffer executes: the driver drops the ray-query pipeline. "
-                                    + "Try \"streamlineInterposer\": false in config/frame_gen.json."
-                                    : probe == 0
-                                    ? "No dispatch in this command buffer reaches the GPU."
-                                    : "The probe could not be created.");
+                                    + "probes ran: plain {}, with RT descriptor set {}, with one ray query {}. {}",
+                            currentRenderer.recordedFrames(), probe, layoutProbes[0], layoutProbes[1], verdict);
                 } else {
                     logger.info("RT self-check after {} frames: {} workgroups started ({})",
                             currentRenderer.recordedFrames(), currentRenderer.startedWorkgroups(),

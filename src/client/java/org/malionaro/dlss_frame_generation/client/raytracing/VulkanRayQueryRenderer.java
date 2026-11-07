@@ -116,7 +116,39 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
      * invocations and primary hits, each sampled on every 16th pixel in
      * both directions. Read back for the timing log.
      */
-    private static final int EXPOSURE_BYTES = 48;
+    /** 44 bytes for the RT shader, then the two layout probe counters at 44 and 48. */
+    private static final int EXPOSURE_BYTES = 64;
+    /**
+     * Diagnostic, with the RT pipeline's own descriptor layout and set: one probe
+     * without ray queries, one that traces a single ray query against the TLAS.
+     * Which of them runs tells a broken descriptor set from ray queries the
+     * device does not execute (the feature missing on the created device).
+     */
+    static final String LAYOUT_PROBE_SHADER = """
+            #version 460
+            layout(local_size_x = 1) in;
+            layout(std430, set = 0, binding = 13) buffer ExposureState { uint values[16]; } state;
+            void main() { atomicAdd(state.values[11], 1u); }
+            """;
+    static final String RAY_QUERY_PROBE_SHADER = """
+            #version 460
+            #extension GL_EXT_ray_query : require
+            layout(local_size_x = 1) in;
+            layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+            layout(std430, set = 0, binding = 13) buffer ExposureState { uint values[16]; } state;
+            void main() {
+                atomicAdd(state.values[12], 1u);
+                rayQueryEXT query;
+                rayQueryInitializeEXT(query, scene, gl_RayFlagsOpaqueEXT, 0xFFu,
+                    vec3(0.0, 8.0, 0.0), 0.0, vec3(0.0, -1.0, 0.0), 16.0);
+                rayQueryProceedEXT(query);
+            }
+            """;
+    private long layoutProbeModule = NULL;
+    private long layoutProbePipeline = NULL;
+    private long rayQueryProbeModule = NULL;
+    private long rayQueryProbePipeline = NULL;
+    private boolean layoutProbesFailed;
     /**
      * Diagnostic: a one-workgroup compute shader without ray queries, dispatched
      * right before the RT shader in the same command buffer. If it runs while the
@@ -124,7 +156,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
      * pipeline is dropped; if it does not run either, the dispatches never reach
      * the GPU.
      */
-    private static final String PROBE_SHADER = """
+    static final String PROBE_SHADER = """
             #version 460
             #extension GL_EXT_buffer_reference : require
             #extension GL_EXT_buffer_reference_uvec2 : require
@@ -213,6 +245,74 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         }
     }
 
+    /** {layout probe runs, ray-query probe runs}, -1 when unavailable. */
+    public long[] layoutProbeDispatches() {
+        if (layoutProbePipeline == NULL || exposureBuffer == null) {
+            return new long[] {-1L, -1L};
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            PointerBuffer mapped = stack.mallocPointer(1);
+            if (vkMapMemory(device, exposureBuffer.memory, 0, EXPOSURE_BYTES, 0, mapped) != VK_SUCCESS) {
+                return new long[] {-1L, -1L};
+            }
+            long layout = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 44));
+            long rayQuery = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 48));
+            vkUnmapMemory(device, exposureBuffer.memory);
+            return new long[] {layout, rayQueryProbePipeline == NULL ? -1L : rayQuery};
+        }
+    }
+
+    private long createProbePipeline(String source, String name, long layout, long[] module) {
+        ByteBuffer spirv = null;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            spirv = RayQueryShaderCompiler.compileSource(source, name);
+            LongBuffer result = stack.mallocLong(1);
+            check(vkCreateShaderModule(device, VkShaderModuleCreateInfo.calloc(stack)
+                    .sType$Default().pCode(spirv), null, result), "create " + name);
+            module[0] = result.get(0);
+            VkComputePipelineCreateInfo.Buffer info = VkComputePipelineCreateInfo.calloc(1, stack);
+            info.get(0).sType$Default()
+                    .stage(VkPipelineShaderStageCreateInfo.calloc(stack).sType$Default()
+                            .stage(VK_SHADER_STAGE_COMPUTE_BIT).module(module[0]).pName(stack.UTF8("main")))
+                    .layout(layout);
+            check(vkCreateComputePipelines(device, NULL, info, null, result), "create " + name + " pipeline");
+            return result.get(0);
+        } catch (IOException error) {
+            throw new IllegalStateException(error);
+        } finally {
+            if (spirv != null) {
+                MemoryUtil.memFree(spirv);
+            }
+        }
+    }
+
+    /** Runs both layout probes with the descriptor set already bound. */
+    private void recordLayoutProbes(VkCommandBuffer commandBuffer) {
+        if (layoutProbePipeline == NULL && !layoutProbesFailed) {
+            try {
+                long[] module = new long[1];
+                layoutProbePipeline = createProbePipeline(LAYOUT_PROBE_SHADER, "layout_probe.comp",
+                        pipelineLayout, module);
+                layoutProbeModule = module[0];
+                rayQueryProbePipeline = createProbePipeline(RAY_QUERY_PROBE_SHADER, "ray_query_probe.comp",
+                        pipelineLayout, module);
+                rayQueryProbeModule = module[0];
+            } catch (Throwable error) {
+                layoutProbesFailed = true;
+                logger.warn("RT layout probes unavailable: {}", error.toString());
+            }
+        }
+        if (layoutProbePipeline != NULL) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, layoutProbePipeline);
+            vkCmdDispatch(commandBuffer, 1, 1, 1);
+        }
+        if (rayQueryProbePipeline != NULL) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, rayQueryProbePipeline);
+            vkCmdDispatch(commandBuffer, 1, 1, 1);
+        }
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+    }
+
     private void recordProbe(VkCommandBuffer commandBuffer, MemoryStack stack) {
         if (probePipeline == NULL && !probeFailed) {
             createProbe();
@@ -235,6 +335,14 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         probeModule = NULL;
         destroyAllocation(probeBuffer, true);
         probeBuffer = null;
+        if (layoutProbePipeline != NULL) vkDestroyPipeline(device, layoutProbePipeline, null);
+        if (rayQueryProbePipeline != NULL) vkDestroyPipeline(device, rayQueryProbePipeline, null);
+        if (layoutProbeModule != NULL) vkDestroyShaderModule(device, layoutProbeModule, null);
+        if (rayQueryProbeModule != NULL) vkDestroyShaderModule(device, rayQueryProbeModule, null);
+        layoutProbePipeline = NULL;
+        rayQueryProbePipeline = NULL;
+        layoutProbeModule = NULL;
+        rayQueryProbeModule = NULL;
     }
 
     /** Frames whose RT pass was recorded (not necessarily finished). */
@@ -2070,6 +2178,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     stack.longs(descriptorSet),
                     null
             );
+            recordLayoutProbes(commandBuffer);
             if (timestampPool != NULL) {
                 vkCmdResetQueryPool(commandBuffer, timestampPool, frameSlot * 2, 2);
                 vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
