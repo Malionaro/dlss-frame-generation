@@ -196,5 +196,6 @@
   "rtxremix.osd.rtx": "パストレーシング: %s",
   "rtxremix.osd.on": "オン",
   "rtxremix.osd.off": "オフ",
-  "rtxremix.osd.keys": "F7 表示 | End 設定 | F8 RTX"
+  "rtxremix.osd.keys": "F7 表示 | End 設定 | F8 RTX",
+  "rtxremix.osd.low_memory": "§e[RTX Remix] Minecraft のメモリが %s MB しかありません。最低 8 GB、推奨 16 GB です。ランチャーの Java 設定で割り当てて再起動してください。"
 }

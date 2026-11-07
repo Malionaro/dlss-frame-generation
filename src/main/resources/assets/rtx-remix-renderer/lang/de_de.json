@@ -8,5 +8,6 @@
   "rtxremix.osd.rtx": "Pathtracing: %s",
   "rtxremix.osd.on": "an",
   "rtxremix.osd.off": "aus",
-  "rtxremix.osd.keys": "F7 Anzeige | Ende Einstellungen | F8 RTX"
+  "rtxremix.osd.keys": "F7 Anzeige | Ende Einstellungen | F8 RTX",
+  "rtxremix.osd.low_memory": "§e[RTX Remix] Minecraft hat nur %s MB Arbeitsspeicher. RTX Remix braucht mindestens 8 GB, empfohlen sind 16 GB. Modrinth: Profil → Einstellungen → Java und Arbeitsspeicher → Zugewiesener Speicher; Prism: Instanz → Einstellungen → Java. Danach neu starten."
 }

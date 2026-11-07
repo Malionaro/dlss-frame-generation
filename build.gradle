@@ -215,6 +215,9 @@ dependencies {
     implementation "net.fabricmc:fabric-loader:0.19.5"
 
     implementation fabricApiCoordinate
+    // Nested in the JAR, so dropping the JAR into a launcher profile with an older
+    // Fabric API (or none) still loads: Fabric Loader picks the newest copy.
+    include fabricApiCoordinate
 
     // Optional at runtime: the mixin config plugin skips the capture without it.
     compileOnly "maven.modrinth:distanthorizons:3.3.4-26.3"

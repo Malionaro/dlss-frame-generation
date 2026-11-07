@@ -27,6 +27,17 @@ Fabric, the mod, and the RTX Remix runtime for you.
     * *Note: if the instance is missing, press F5 to refresh*
     * *Note: on the very first launch, RTX Remix compiles its shaders before showing the world (one time only). See First Launch.*
 
+## Install for **Modrinth App** or any other launcher (JAR only)
+
+1. Create a Fabric profile for Minecraft 26.3 and give it at least 8 GB of
+   memory, 16 GB recommended (Modrinth: profile > Settings > Java and memory).
+   The mod warns in chat when the game has less.
+2. Put the mod JAR from `mods\` into the profile's `mods` folder. It carries
+   Fabric API and the RTX Remix runtime, which it unpacks into the game folder
+   on the first launch.
+3. Play. The first launch unpacks the runtime and compiles Remix's shaders, so
+   it takes a while.
+
 ## Install for **Microsoft Launcher** (Official)
 
 1. Install the official [Microsoft's Minecraft Launcher (link)](https://www.minecraft.net/en-us/download)

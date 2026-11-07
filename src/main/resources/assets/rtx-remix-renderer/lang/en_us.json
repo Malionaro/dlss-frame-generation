@@ -196,5 +196,6 @@
   "rtxremix.osd.rtx": "Path tracing: %s",
   "rtxremix.osd.on": "on",
   "rtxremix.osd.off": "off",
-  "rtxremix.osd.keys": "F7 overlay | End settings | F8 RTX"
+  "rtxremix.osd.keys": "F7 overlay | End settings | F8 RTX",
+  "rtxremix.osd.low_memory": "§e[RTX Remix] Only %s MB of memory for Minecraft. RTX Remix needs at least 8 GB, 16 GB recommended. Modrinth: profile → Settings → Java and memory → Memory allocated; Prism: instance → Settings → Java. Then restart."
 }

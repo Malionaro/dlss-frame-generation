@@ -29,7 +29,9 @@ import java.util.Properties;
  * The performance overlay from DLSS Frame Generation, on top of the Remix renderer: a
  * card in the top left with the frame rate, the frame time and the state of RTX
  * rendering. F7 toggles it, End opens the RTX Remix settings. Whether it shows is kept
- * in {@code config/rtx-remix-osd.properties}. Render thread.
+ * in {@code config/rtx-remix-osd.properties}. Also warns once per session when the game
+ * runs with too little heap: without the release installer nobody sets the recommended
+ * 16 GB, and launchers default to 2 to 4 GB. Render thread.
  */
 public final class PerformanceOsd {
     private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(
@@ -45,6 +47,9 @@ public final class PerformanceOsd {
     private static int frameIndex;
     private static int frameCount;
     private static long lastFrameNanos;
+    /** Below this the renderer runs short of heap at normal render distances. */
+    static final long MIN_HEAP_BYTES = 8L * 1024 * 1024 * 1024;
+    private static boolean heapWarned;
 
     private PerformanceOsd() {
     }
@@ -60,6 +65,15 @@ public final class PerformanceOsd {
     }
 
     private static void onTick(Minecraft client) {
+        if (!heapWarned && client.player != null) {
+            heapWarned = true;
+            long heap = Runtime.getRuntime().maxMemory();
+            if (heap < MIN_HEAP_BYTES) {
+                long mib = heap / (1024 * 1024);
+                RtxRemixMod.LOGGER.warn("Only {} MB of Java heap; RTX Remix needs at least 8 GB, 16 GB recommended", mib);
+                client.player.sendSystemMessage(Component.translatable("rtxremix.osd.low_memory", mib));
+            }
+        }
         while (toggleKey.consumeClick()) {
             enabled = !enabled;
             save();
