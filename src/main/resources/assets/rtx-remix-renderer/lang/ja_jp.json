@@ -186,5 +186,15 @@
   "rtxremix.setting.post.lowLightAdaptation": "暗さへの順応",
   "rtxremix.setting.post.lowLightAdaptation.tip": "暗い場所を見やすくします。小さくすると細部が見えやすくなりますが、明るい部分が白っぽく色あせて見えることがあります。手動で変えると、この項目はゲームプレイのプロファイルより優先されます。",
   "rtxremix.setting.post.highLightAdaptation": "明るさへの順応",
-  "rtxremix.setting.post.highLightAdaptation.tip": "とても明るい場面に目が慣れるようにして、日光や光るブロックをまぶしすぎずに見やすく保ちます。大きくすると強い明るさが抑えられますが、昼間が暗く見えることがあります。手動で変えると、この項目はゲームプレイのプロファイルより優先されます。"
+  "rtxremix.setting.post.highLightAdaptation.tip": "とても明るい場面に目が慣れるようにして、日光や光るブロックをまぶしすぎずに見やすく保ちます。大きくすると強い明るさが抑えられますが、昼間が暗く見えることがあります。手動で変えると、この項目はゲームプレイのプロファイルより優先されます。",
+  "key.rtxremix.toggleOsd": "パフォーマンス表示の切替",
+  "key.rtxremix.openSettings": "RTX Remix 設定を開く",
+  "key.category.rtx-remix-renderer.osd": "RTX Remix オーバーレイ",
+  "rtxremix.osd.title": "⚡ RTX REMIX パフォーマンス",
+  "rtxremix.osd.fps": "FPS: %s",
+  "rtxremix.osd.frametime": "フレーム時間: %s ms",
+  "rtxremix.osd.rtx": "パストレーシング: %s",
+  "rtxremix.osd.on": "オン",
+  "rtxremix.osd.off": "オフ",
+  "rtxremix.osd.keys": "F7 表示 | End 設定 | F8 RTX"
 }

@@ -128,6 +128,15 @@ public class RtxRemixMod implements ClientModInitializer {
         return rtxSettings;
     }
 
+    /** Opens the RTX Remix settings over {@code parent}; does nothing before the renderer is up. */
+    public static void openSettingsScreen(net.minecraft.client.gui.screens.Screen parent) {
+        if (rtxSettings == null) {
+            return;
+        }
+        net.minecraft.client.Minecraft.getInstance().gui.setScreen(
+                new RtxSettingsScreen(parent, rtxSettings, RtxRemixMod::saveRtxSettings));
+    }
+
     public static void saveRtxSettings() {
         if (rtxSettings != null && rtxSettingsStore != null) {
             rtxSettingsStore.save(rtxSettings);
@@ -347,6 +356,7 @@ public class RtxRemixMod implements ClientModInitializer {
         remixAvailable = checkRemixAvailability();
         
         registerCommands();
+        com.nvidia.rtxremix.minecraft.osd.PerformanceOsd.register();
         // Particle types are a client-side registry, so they stay here. Blocks
         // are synced and register in RtxRemixCommonMod instead.
         RapidFoamParticles.register();

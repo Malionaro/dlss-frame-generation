@@ -1,0 +1,12 @@
+{
+  "key.rtxremix.toggleOsd": "Performance-Anzeige umschalten",
+  "key.rtxremix.openSettings": "RTX-Remix-Einstellungen öffnen",
+  "key.category.rtx-remix-renderer.osd": "RTX-Remix-Anzeige",
+  "rtxremix.osd.title": "⚡ RTX-REMIX-LEISTUNG",
+  "rtxremix.osd.fps": "FPS: %s",
+  "rtxremix.osd.frametime": "Frametime: %s ms",
+  "rtxremix.osd.rtx": "Pathtracing: %s",
+  "rtxremix.osd.on": "an",
+  "rtxremix.osd.off": "aus",
+  "rtxremix.osd.keys": "F7 Anzeige | Ende Einstellungen | F8 RTX"
+}

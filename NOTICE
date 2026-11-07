@@ -5,3 +5,7 @@ This product includes software developed at NVIDIA CORPORATION & AFFILIATES.
 
 Third-party software distributed with this project is listed, with the
 applicable licenses, in THIRD_PARTY_NOTICES.md.
+
+Modifications by Malionaro (DLSS Frame Generation, 2026): the performance overlay
+(osd/PerformanceOsd.java, mixin/HudPerformanceOsdMixin.java), its key bindings and
+the German translation; RtxRemixMod gained openSettingsScreen and registers the overlay.
