@@ -159,6 +159,15 @@ public final class RayTracingSettingsPanel {
         screen.place(terrainButton, screen.rayTracingTooltip(
                 capabilities, "dlss_fg.tooltip.rt.replace_terrain"));
 
+        // Read once before Vulkan starts, so it takes effect after a restart.
+        var interposerButton = CycleButton.onOffBuilder(config.streamlineInterposer)
+                .create(0, 0, columnWidth, 20,
+                        Component.translatable("dlss_fg.option.rt.streamline_interposer"), (button, value) -> {
+                            config.streamlineInterposer = value;
+                            config.save();
+                        });
+        screen.place(interposerButton, Component.translatable("dlss_fg.tooltip.rt.streamline_interposer"));
+
         var denoiserButton = CycleButton.onOffBuilder(config.rayTracingDenoiserEnabled)
                 .create(0, 0, columnWidth, 20,
                         Component.translatable("dlss_fg.option.rt.stable_sampling"), (button, value) -> {
