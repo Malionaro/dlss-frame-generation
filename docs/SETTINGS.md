@@ -30,6 +30,13 @@ on its own until they fit, so the lights faintest where you stand go first.
 Auto view fade never overrides a stronger situational profile, so a map that
 authors its own fade keeps it.
 
+**LOD Memory** sets how much mesh data Distant Horizons' terrain may hold for
+path tracing, 2048 MiB by default; the GPU uses about twice that. When it is
+full, the farthest LOD terrain gives way, so a higher Distant Horizons quality
+or render distance draws it less far. Raise it to see further if video memory
+allows, or lower it if video memory runs short. Unlimited, past 4096 MiB, sets
+no cap at all; Remix then holds everything Distant Horizons shows.
+
 The background frame cap only lowers Minecraft's own Max Framerate;
 Unlimited leaves that setting in charge. A running benchmark is never capped,
 since it measures the renderer.
@@ -130,6 +137,36 @@ leave the page.
 textures keep their pixelated look, which removes banding from surface bumps
 and parallax depth. It is a Remix option, so its default is the value Remix
 loaded at launch, and a change applies at once.
+
+**Puddle Amount** sets how much of open ground rain puddles cover. In the rain
+the ground around them grows wet and a little darker, and water stands in the
+deeper parts.
+
+**Puddle Reflection** sets how strongly the standing water reflects. At 0 it
+reflects as clear water does, a few percent seen from above, which hardly shows
+on bright ground; higher values make part of it metal, coloured and darkened as
+the ground beneath, up to a mirror at 1.
+
+Both rebuild every puddle, so they apply once the slider stops.
+
+**Puddles in Dry Weather** keeps the ground soaked and the puddles standing
+when it is not raining, in biomes where it rains; without rain their water is
+still. Off, they dry up about two minutes after the rain stops.
+
+## Debug
+
+Views for finding rendering problems, never needed to play. Each is a switch
+and shows at once.
+
+**Show Puddle Mask** paints rain puddles red, by how much water stands there:
+where they lie and how their edges fade.
+
+**Show Dome Clouds Only** leaves the Unbound clouds as the runtime draws them on
+the sky dome, without the lens drawing them again per pixel or drawing their
+shadows: whether a flaw in the clouds comes from the per-pixel clouds.
+
+Add a debug view here, as a switch in `SettingGroup.DEBUG_VIEWS`, rather than as
+code put in for one investigation and taken out after it.
 
 ## Resetting
 

@@ -7,6 +7,7 @@ package com.nvidia.rtxremix.minecraft.settings;
 import com.mojang.serialization.Codec;
 import com.nvidia.rtxremix.minecraft.UnfocusedFramerateLimit;
 import com.nvidia.rtxremix.minecraft.cloud.CloudStyle;
+import com.nvidia.rtxremix.minecraft.lod.LodTerrain;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Function;
@@ -42,6 +43,7 @@ final class RtxOptionFactory {
      */
     static final int SENTINEL_SLIDER_VALUE = 33;
     static final String UNFOCUSED_FRAMERATE_ID = "framerate.unfocused";
+    static final String LOD_MEMORY_ID = "dist.lodMemory";
 
     private RtxOptionFactory() {}
 
@@ -265,6 +267,11 @@ final class RtxOptionFactory {
             return value == UnfocusedFramerateLimit.UNLIMITED
                     ? Component.translatable("options.framerateLimit.max")
                     : Component.translatable("options.framerate", value);
+        }
+        if (LOD_MEMORY_ID.equals(settingId)) {
+            return value >= LodTerrain.UNLIMITED_MEMORY_MIB
+                    ? Component.translatable("options.framerateLimit.max")
+                    : Component.literal(value + " MiB");
         }
         if (value == 0 && sentinelSliderValue(settingId) > 0) {
             return Component.translatable("rtxremix.settings.value.auto");

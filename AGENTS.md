@@ -77,6 +77,20 @@ Distant Horizons is an optional compile-only dependency (Modrinth Maven, never
 shipped). Its mixins live in a separate `rtx-remix-renderer.distanthorizons.mixins.json`
 that loads only when Distant Horizons is installed (`lod/dh/`).
 
+Sodium 0.9.2 for 26.3 is compile-only and never bundled. Its conditional
+`rtx-remix-renderer.sodium.mixins.json` adapts section jobs under
+`terrain/sodium/`; without Sodium the vanilla capture path remains active.
+Loader metadata restricts the tested API version. The animation eligibility
+override and accessor are installed only by the optional Sodium configuration.
+
+ImmediatelyFast 1.17.1+26.3 is compile-only and never bundled. Its conditional
+mixins and helpers are under `compat/immediatelyfast/`; see
+[ImmediatelyFast Compatibility](docs/IMMEDIATELYFAST.md).
+The plugin applies map/sign hooks only to 1.17.1 (including build metadata).
+Other versions warn and skip those hooks; their rendering is unsupported.
+Shared glyph-page mirroring stays active, and no ImmediatelyFast option is
+changed. Version selection happens at startup, never per frame.
+
 Do not run Gradle while a client from the same checkout is up: staging can fail
 on locked DLLs or replace its live configuration. Stop the client or use another
 worktree. Build guards should prevent a silently wrong artifact, as the
@@ -109,8 +123,11 @@ next launch. A missing or unacquirable `water.conf` prevents renderer
 initialization and the error names the file; any other conf that fails to
 acquire is skipped with a warning naming it, and `/rtx conf reload` retries it.
 
-Baseline LabPBR textures live in `src/main/resources/assets/` and load through
-Fabric's `fabric` resource pack below user packs. Development setup, `rtx install`,
+Baseline LabPBR textures live in `src/main/resources/assets/` and load as the
+mod's own resource pack, `rtx-remix-renderer`, below user packs: Fabric API for
+26.3 lists each mod's resources as a pack of its own, and the `fabric` id the
+tools still write into `options.txt` no longer exists, so the game drops it with a
+warning at launch. Development setup, `rtx install`,
 and the release installer use `packaging/migrate_resource_packs.ps1` to remove
 their exactly identified legacy baseline copies and migrate existing pack order.
 `assets/minecraft/atlases/blocks.json` and `items.json` filter LabPBR `_n`, `_s`
@@ -126,11 +143,49 @@ halves, extraction into render states and submission to a
 `SubmitNodeCollector`; Remix captures from the extracted states and replaces
 the submits it renders itself (see
 [Cancelling Vanilla Render Work](CONTRIBUTING.md#cancelling-vanilla-render-work)).
+Other mods draw into the main target during the level render, through Fabric's
+`LevelRenderEvents` or at the return of `LevelRenderer.render` (Litematica,
+MiniHUD, Axiom), and the opaque Remix image covered them: `ModOverlayLayer`
+clears the main target's colour to transparent at the main pass's start and
+gives it the last Remix frame's depth, keeps the colour once the level render
+returns, and lays it over the image after the lens and weather. Vanilla's block
+outline is cancelled while RTX is on, since Remix draws its own.
 Thread-safe stores wrap Remix-side meshes, instances, textures, materials, and
 lights over raw `long` handles from the JNI wrapper. `JoinBurstHold` keeps
 vanilla's terrain-download screen up for a bounded wait for stable frames after
 a world join, hiding first-sight mesh, pipeline, and BLAS costs without holding
 the screen indefinitely.
+Remix traces rays in float32, and at x = 40 000 a float step is 0.004 blocks:
+rays slipped past the ground under leaf litter, a grass side's overlay fought
+its face and the arm shook. So every position the mod hands to Remix is in
+scene space, world space less an origin on a 4096-block grid (`SceneSpace`, y
+never shifted). The origin is zero within 6144 blocks of spawn and otherwise
+moves to the camera, rounded to the grid, once the camera is 6144 from it on
+either axis; it moves at the head of `GameRenderer.extract`, before entities
+and the hands are captured, so a frame takes every position against one origin.
+A position re-sent each frame converts through `SceneSpace.x/y/z`; a retained
+instance is placed with `RemixInstance.setWorldTranslation` and writes its
+transform again on its first submit after a move, and the frame the origin
+moves `RemixInstanceStore.syncToOrigin` re-sends every one in the scene,
+staged and retiring terrain pages included, since the camera moves with the
+origin. Terrain block lights are built again as they are drawn
+(`TerrainLight.behindOrigin`), and the particle payload, prepared a frame
+earlier, is drawn shifted by the whole blocks the origin moved. The radiance
+caches, keyed on scene positions, start over. Culling, raycasts, the lens,
+flare sources and texture coordinates stay in world space. The Debug page's
+Offset Scene Origin moves the origin 4096 blocks even near spawn: anything
+handed over in world coordinates then vanishes, and toggling it runs a move.
+
+**Presentation.** `gl/RemixPresentationWindow` hosts Vulkan in a child of
+Minecraft's SDL/OpenGL window by default; `-Drtxremix.presentation=parent`
+selects the original host. Invalid values warn and use the default child host.
+Mirrored input never bubbles into SDL twice, and
+cursor messages stay with SDL. `GlSurfaceMixin` records the completed texture's
+existing framebuffer for the GL-to-Vulkan copy. Window operations run on SDL's
+owner thread; `WindowMixin` completes parent destruction synchronously before
+the deferred native shutdown, including when an event-thread mod queues SDL
+operations. Independent teardown steps report accumulated errors after release;
+callbacks remain allocated while live windows or classes can invoke them.
 
 **Sky.** `SkyRenderer` branches on the dimension's sky type: the End keeps a
 constant dark dome and a skyless dimension a black one with no sky ambient. In
@@ -185,7 +240,9 @@ own frame index. Still shots for the screenshot tool use their own codec
 
 **Gameplay-driven conf layers.** `ConfLayerDriver` fades a fixed table of mod
 layers (water, view distance and its LOD extension, volumetric settling, rain,
-thunder, and four times of day) by gameplay state. Option layers come from a mod
+thunder, a lightning flash, and four times of day) by gameplay state. The
+lightning layer slows the auto exposure while a bolt flashes and for a moment
+after, or the exposure undid the flash within a fifth of a second. Option layers come from a mod
 root shipping archetypes, acquired at init, and a world root inside a save
 supplying zone and biome profiles, acquired on join. A world layer sits just
 above its mod counterpart, so a map overrides per option rather than replacing
@@ -230,13 +287,24 @@ Every layer keeps its share of the Cloud Coverage setting, and two moods a day,
 which turn into the next day's overnight, move it a little either way: how
 unstable the air is grows the cumulus, and how moist it is spreads the large
 cumulus and the altostratus.
+A lightning bolt lights the cloud around where it reaches into their base
+(`LightningFlash`, `Flash` in `cloud_field.glsl`): its light falls off over
+tens of blocks, so the cloud around the bolt glows and the deck beyond stays
+dark; while it flashes the panorama is marched every frame and neither march
+keeps its history, which made the light lag and linger.
 The large cumulus and the altostratus close in ahead of the rain, and broken
 cumulus linger after it. A layer's cover climbs from its edge over at least a
 quarter of the field's span, since a span as small as a low coverage stood
 sparse clouds up as walls. The day and the hour
 come from the world clock, so players agree; only the integrated server's
 weather timers say when rain will come, so the sky closes ahead of it in
-single-player alone. `CloudShapes` adds a shaped cloud to the field: rarely, on
+single-player alone; the closing ahead of the rain eases over at least 2400
+ticks, since the server's timer jumps when the rain ends, after a night slept
+through and on a weather command, and the sky turned into other clouds at once
+each time. The clouds' frame wraps at `VolumetricClouds.WRAP_PERIOD`, which
+every noise period in `cloud_field.glsl` divides (`VolumetricCloudsTest`); at a
+wrap most of them did not divide, the whole sky changed whenever the wind or the
+camera carried the frame across it. `CloudShapes` adds a shaped cloud to the field: rarely, on
 a calm day, a creeper's head, a function of its cell in the clouds' wrapped
 frame, the weather and the world's day, so clients agree with no network state.
 It lies inside a bounding sphere that the march clips its ray to and crosses by
@@ -247,6 +315,35 @@ the cloud between a point and its surface, rather than down a column.
 merges them into chunk-column assets split into byte-capped pages per category,
 and the render thread publishes them under a frame budget and retires replaced
 pages through a bounded queue. Concurrent vanilla section builds are capped.
+A column leaves with its chunk, or once it lies more than two chunks beyond
+the render distance even while its chunk stays loaded (`ChunkManager.retained`):
+Bobby keeps chunks left behind for a minute, and flying on piled up twice the
+view area's instances, past what the runtime holds, so whole columns drew with
+the wrong mesh or none. The audit that finds them runs through light and
+retirement backpressure, which only holds back removals: a city's light backlog
+stopped it. The performance report counts every live Remix mesh, instance and
+material (`Remix.*`) against the GPU-resident scene's fixed capacities.
+While the camera is above ground, a column more than four chunks away builds
+without the sections that, with their six neighbours, hold no sky light and no
+fluid that runs up into sky light (`DeepCaveCull`, `Chunk.CulledCaveSections`):
+light inside a solid block reads zero, so the ground under open air would go if
+a section were judged alone, and the fluid keeps the sea floor that deep water
+leaves unlit while water held in rock does not. Block light does not count: a
+cave lit by lava or glow lichen is no more seen from above than a dark one.
+Most sections deep in rock hold no sky layer and read, as vanilla reads them,
+the bottom row of the first layer above. Light-only rebuilds are
+dropped (`ClientChunkManagerMixin`, `LightStorageMixin`), so a cave opened to
+the sky beside a column that did not change kept its sections out; a sky light
+change marks its column and the four beside it to be judged again once any
+build in flight is done (`SkippedSectionRebuilds.recordSkyLightChanged`). With
+Sodium, a camera above ground captures few cave sections, since its walk does
+not reach them; the cull matters once the camera has been underground, where
+they are captured and stay. Going
+underground (no sky light at the
+camera, or eight blocks of ground over it) rebuilds those columns whole, nearest
+first at the usual budget, after ten frames; coming up culls them again only
+after five seconds, so walking in and out of a cave mouth does not rebuild the
+view each time.
 Visibility is vanilla's `SectionOcclusionGraph`; the 1.21.1 allocation-free
 walk and coarse frustum index were not ported. Vanilla compiles a section only
 once it is in view, and the path tracer needs the ground behind and beside the
@@ -269,15 +366,31 @@ the packet's `WORLD_SURFACE` height (`SeededSurfaceScan`,
 keeps real copies until every build that latched capture off has finished.
 Each policy has a `rtxremix.*` kill switch listed in `docs/TUNING.md`;
 `rtxremix.light.vanillaSnapshot` covers both light snapshot policies.
+Replacement light engines may omit vanilla's sky-source palette. The surface
+hook then calls the original initialization operation instead of seeding a
+palette that does not exist; ScalableLux keeps its own initialization hooks,
+storage, propagation and scheduling.
+
+With Sodium installed, its existing worker block loop feeds `BlockQuadEmitter`
+instead of building another raster terrain mesh. Sodium retains ownership of
+snapshots, discovery, block entities, cancellation and result acceptance.
+Capture ownership follows the build output until render-thread acceptance;
+rejected results release it. Existing recapture requests use Sodium's deferred
+job budget, including retained sections outside the raster frustum. Reload
+recapture waits for the new manager, and worker-context retirement releases
+capture buffers. Raster draws and translucent sorting are skipped only while
+Remix capture is active. Animation forwarding remains independent of raster
+visibility so retained geometry can animate in reflections and shadows.
 
 **LOD terrain.** With Distant Horizons 3.3.4 installed, `lod/LodTerrain` builds
 its far terrain as retained Remix instances beyond Minecraft's own terrain: the
 LOD mod decides which sections exist and which are drawn, three low-priority
 threads build each section's mesh against the current clip (one fell some
 eighty sections behind a camera flying across a city), and the render
-thread installs them under a frame budget and a budget of mesh data, a sixteenth
-of the video memory and at most 2 GiB (Remix's buffers and acceleration
-structures take about twice that). The
+thread installs them under a frame budget and a budget of mesh data, the LOD
+Memory setting, 2 GiB by default or no cap at all (Remix's buffers and acceleration structures
+take about twice that; a budget worked out from the card's memory held an 8 GB
+card to 512 MiB, where 2 GiB had run). The
 clip is the chunks Minecraft draws, each column up to its highest section that
 holds a block, as the column's published meshes hold it (`ChunkManager.isColumnDrawn`;
 the heightmap is no measure, since a world edited without updating it keeps a
@@ -298,7 +411,27 @@ the meshes, so a section it hides lingers, still drawn, while one it shows over
 the same ground awaits its mesh, and built ones are held hidden until the
 lingering ones go: the detail changes at once rather than through a hole. It
 draws nothing while capture is on, so its uploads complete without filling GPU
-buffers (`LodBufferContainerMixin`), and stopping capture rebuilds them.
+buffers (`LodBufferContainerMixin`), and stopping capture rebuilds them. Its
+vanilla fade is skipped then too (`ClientApiFadeMixin`): fading the main
+target's terrain toward its empty textures drew black wherever the main target's
+depth held land.
+LOD quads carry the LOD mod's one averaged colour per block, which lights the
+ground as vertex colour over a white texel. The runtime takes emission and a
+translucent surface's transmittance only from textures, so lava and glowing
+blocks (the LOD mod's `LAVA` and `ILLUMINATED` materials) and its translucent
+buffer (glass, ice) carry their colour as coordinates into a palette texture of
+every colour at five bits a channel (`LodPalette`): lava glows at the terrain's
+emission and the other glowing blocks at a fifth of it (`LodTerrain.LAMP_EMISSION`),
+and the translucent buffer is thin-walled glass tinted by the block's hue. Drawn as plain
+ground, glass stood as pale solid blocks and lava did not glow. The LOD mod
+draws an area of many blocks as one of them, so a rooftop torch became a box
+several blocks across, which at the full emission lit the roofs around and
+bloomed to white.
+The LOD mod names a material by block id before it asks about light, so
+glowstone and lit redstone lamps came out as stone; every block that gives off
+light, liquids aside, is marked illuminated through its block-state event
+(`DistantHorizonsCompat`), bound before a world loads since the LOD mod caches a
+state's material.
 
 **Allocation.** The collector's concurrent work is what stretches frames at
 high render distance, so the hot vanilla paths that run per section or per
@@ -326,8 +459,23 @@ each animation's state after `TextureAtlas.cycleAnimationFrames` and
 phase, and sends them in one batched `UpdateTextureFromMemory` call. Glyph pages
 are mirrored on upload (`CommandEncoderGlyphMirrorMixin`,
 `BitmapGlyphStagingMixin`), because vanilla assembles them on the GPU and never
-keeps them on the CPU. `BlockTextureManager` keeps only mostly translucent
-sprites translucent; doors, flowers and the like become cutout.
+keeps them on the CPU. Mirrors use the actual GPU page dimensions, and texture
+closure unregisters only that page incarnation. ImmediatelyFast map capture
+uses the original image-backed map and restores the raster atlas state after
+submission. Its experimental sign buffering uses a bounded source-glyph cache
+for Remix, preserving text depth while the raster atlas stays active. Font
+generation and resource/world teardown invalidate prepared glyphs. Text and
+layout jointly identify cache entries; cache-hit lookup reuses a probe whose
+miss key is snapshotted before reentrant font preparation. `TextGlyphCapture`
+owns preparation and emission for both cached and ordinary text.
+`BlockTextureManager` keeps only mostly translucent
+sprites translucent; doors, flowers and the like become cutout. Only terrain
+whose sprite has texels in the emissive atlas takes an atlas material that
+samples it (`_emissive` buckets, `getAtlasMaterialWithoutEmission` for the
+rest): a face seen edge on samples the atlas's coarsest mip, where the glow of
+every lamp, torch and lava texel is averaged, and drew yellow lines along the
+planes through the camera at night.
+
 
 **Water and weather.** `WaterNormals` holds the water normal map, and raindrop
 rings from `RainRipples` are written into it as texture content each frame by
@@ -336,12 +484,35 @@ covers 40 blocks: the ocean flipbook, whose frame spans ten, laid three times
 over at one, two and four times its size, turned and on different frames, each
 without its longest waves, which drew a lattice of swells at whatever size a
 layer was laid. A frame is composed on a thread of its own and uploaded once
-done. `Puddles` and
-`PuddleMask` lay thin clear-water sheets on open ground in the rain.
+done. `Puddles` and `PuddleMask` lay rain puddles on open ground as a decal
+(`DECAL_STATIC`, alpha-blended), which the runtime folds into the ground
+beneath: by its opacity it blends the ground's colour, reflectance, roughness
+and normal toward its own. Each tile of 16 blocks has a texture, 32 texels a
+block, whose colour is a copy of every top (`BlockTextureManager.spriteSamples`
+of the model variant's upward face, tinted) a little darker, so the decal shades
+the ground only slightly (any other colour darkens it by the opacity), and
+whose alpha is how wet the ground is, over most open ground. Two more textures,
+roughness and metal share, bring the reflection only where water stands, a
+fifth of open ground at the default Puddle Amount: from wet ground's sheen at a
+puddle's edge to a mirror over its middle. Water over every wet place covered
+nearly all of it. The metal, by the Puddle Reflection setting, is coloured and
+darkened as metal is, since water's 4% head-on reflection showed almost
+nothing over bright ground and lightening the colour to make up for the metal
+blew it out to white. Its normals are the puddles' own ring texture
+(`WaterNormals.puddleTexture`: smaller and more rings, no waves, flat once the
+rain stops). A clear-water sheet before it
+reflected by the runtime's Schlick Fresnel alone, strong at a grazing view
+whatever the index, so it began on a sharp edge however its materials were
+stepped. Tiles are retraced in turn within a millisecond a frame as the wetness
+changes, so an edge creeps rather than jumps. The Puddles in Dry Weather setting
+holds the wetness at soaked without rain (#24).
 `RemixWeatherRenderer` redraws vanilla's rain and snow over the Remix image,
 occluded through the interop depth texture; rain refracts a copy of the main
 target as the lens left it, since it draws opaquely. Vanilla's own weather and
-cloud draws are skipped.
+cloud draws are skipped. While RTX is on, one leaf-topped rain column in four,
+picked by position, falls on through the canopy to the ground
+(`RainThroughLeaves`, `WeatherEffectRendererMixin`): vanilla stops every column at
+the leaves, and no rain fell under a tree.
 
 **Lens.** `lens/LensEffects` is a GL pass after the Remix composite and before
 the weather: depth of field focused on what the crosshair rests on, flares from
@@ -364,20 +535,27 @@ history settles the share of each pixel that shows sky, by which the clouds
 replace the dome's, the sky is deepened and the clouds' shadow darkens only the
 land's share (a sky pixel beside the land takes the land's distance, and
 darkening it drew a flickering blue line along ridges), and the shadow itself,
-taken at a distance settled over frames: the jitter moves distant land seen at
-a grazing angle by tens of blocks, and its shadow came and went. Haze fades
+taken at a distance from the camera settled over frames: the jitter moves
+distant land seen at a grazing angle by tens of blocks, and its shadow came and
+went; settled along the view axis, the distance changed as the camera turned
+and the shadow was taken short of the land or past it. Haze fades
 land toward the sky the image
 shows at the land's own height, kept per band of elevation, times how each
-screen column's sky differs from its band where the column was read. A band
-that has shown no sky for about a second gives way to the nearest band in
-view, so land below the horizon takes the horizon's sky, not one seen earlier
-from higher up. The column's
+screen column's sky differs from its band where the column was read. A band's
+trust falls while it shows no sky and climbs back while it does, and readers
+pass over by it to the nearest band in view, so land below the horizon takes the
+horizon's sky, not one seen earlier from higher up; the residual row of the
+clouds' calibration does the same. Turning to a neighbour at once stepped the
+sky whenever walking bobbed a band at the edge of the view in and out of it. The column's
 read takes only sky that runs on for a few rows, never a lone texel with
 nothing drawn. Fading toward a column's own lowest sky made whole towers glow
 in the rain, where light from below brightens fog that has no depth. The sky
 bands and the clouds' calibration loop over one coarse sample of the screen
 taken once a frame. A shadow darkens the land per
-channel by the share of its light that comes straight from the sun or moon.
+channel by the share of its light that comes straight from the sun or moon,
+taken most of the way to grey, since the direct light's share is warm and left
+every shadow cold blue. Drawn over the finished image, it cannot tell the sun's
+light from a lamp's, so a torch under a cloud's shadow dims with the land.
 The clouds are marched at half resolution for every pixel, between the camera
 and the land or through the whole sky, and folded into a history reprojected
 by the camera's motion. Their light is brought to the image's exposure by
@@ -406,17 +584,43 @@ bloom along its band, which the clouds' thin edges showed as pale rims. Within a
 band the atmosphere still ran from half to twice the image's sky, toward the moon
 and away, and showed as pale or dark rims where the dome's clouds outlast the
 marched ones, so a quarter-resolution pass also maps, read coarse, how the
-image's clear sky around differs from it, in stops. The same pass maps what the
-image shows over the dome's thick clouds beyond their light and the sky behind
-them: the runtime's bloom, which the replacement drops and the composite puts
-back on top, since a lamp's glow otherwise stopped at the skyline. Keeping the image wherever the two marches
+image's clear sky around differs from it, in stops, up to twice it. The same pass
+maps what the image shows beyond that over clear sky, and beyond their light and
+the sky behind them over the dome's thick clouds: the runtime's bloom over the
+dome's clouds, which the composite takes out of the image before it replaces the
+clouds and lays back over all of it, since a lamp's glow otherwise stopped at the
+skyline. A torch beside the camera at night brightens the sky many times over;
+taken as an error of the atmosphere and put back only over the clouds, its glow
+was cut off at them, with a dark rim wherever thin dome cloud stood beside. Over
+clear sky what lies beyond the atmosphere is a lamp's bloom only around the lamp;
+elsewhere it is the sky's own light, the moon's halo and the aurora, which stays
+in the sky behind the clouds, and toward the moon its halo runs on, coarse, behind
+the dome's thick clouds too: laid over the clouds, it tinted them green and purple
+toward the aurora and lit their edges by the moon in blocks. Neither the moon's
+halo nor the aurora's half of the sky (`SkyRenderer.auroraVisibility`) is sampled
+for the clouds' calibration and the clear sky's rows and map, which keep what they
+last saw: the runtime's bloom of them coloured clouds anywhere afterwards. Around
+the lamps the flare sources place on screen, unless the land in front hides them,
+the clear sky is not measured and all the image shows over the sky expected there
+counts as glow, kept as the image shows it where the dome holds no thick cloud:
+measured as sky, a torch's bloom turned the clouds behind it red, and laid back
+coarse it spread into a wide pink ring; around a fire a storm had set burning
+behind a ridge, it laid a disc of the sky's light over the clouds above it.
+A lamp's flame and bloom lie in front of everything but carry the depth of
+what lies behind, so around a lamp the haze and the clouds only brighten the
+image and, after sunset, the clouds' shadows leave it: faded, clouded or
+shaded with the distant land behind, the flame went out and the land showed
+through the glow as pale outlines.
+Keeping the image wherever the two marches
 agreed drew the panorama's speckle and outlines, which the denoiser smooths out
 of the image, onto the bases of clouds overhead. The panorama copy is mipmapped
 and read over the pixel's footprint, its colour averaged over neighbours of
 matching opacity and its opacity only deep inside a cloud, because the runtime
 mips the dome's texture and its denoiser smooths the march's speckle out of the
 image but keeps the outlines. Before the clouds, the clear sky toward the zenith
-is deepened back toward its blue, which the tone mapper's shoulder bleaches.
+is deepened back toward its blue, which the tone mapper's shoulder bleaches;
+only colour leaning the way the sky's band of elevation does, since a lamp's
+orange glow over the sky was pushed to red and stopped at the skyline.
 After the composite, the sun mirrored on level water glows and its glints
 streak: quarter-resolution passes keep the near-saturated pixels whose view ray,
 turned back up off the horizontal, nears the sun, and streak only those that
@@ -465,9 +669,13 @@ even when vanilla's own draws use up the budget, because in first person its
 hidden body is captured nowhere else. Rigid occurrences retain instances
 keyed by owner, category, layer, and part; strips and beams stream transient
 meshes per frame. `OverlayComposite` paints cutout overlay layers, such as a
-villager's profession or a sheep's wool, into a copy of the body texture so they
-do not render black. `RemixBlockDamagePass` submits static terrain damage
-decals. `CopperBeaconBlockEntityRenderer` submits the articulated beacon model;
+villager's profession, a sheep's wool or a GeckoLib model's layer drawn again
+vertex by vertex, into a copy of the body texture so they do not render black. `RemixBlockDamagePass` submits static terrain damage
+decals. Vanilla draws the End portal's and gateway's starfield in a shader from
+screen position, with position-only faces; `EndPortalFaces` lays vanilla's layers
+along the face in world space instead, the stars glowing over a dark sky and
+drifting with the day, and sinks a portal's layers to different depths inside its
+block so they part as the camera moves. `CopperBeaconBlockEntityRenderer` submits the articulated beacon model;
 the mount stays in terrain. `CopperBeaconPose` is shared with the per-frame disk
 light. Server-authoritative block-entity state owns the axis parameters and
 anchor tick; clients reconstruct motion from those and synchronized world time.
@@ -481,6 +689,12 @@ by its level alone, and at the plain light-level radiance a glowing cube gave
 off about fifteen times a torch while a lantern's flame lit only its glass.
 Changing the block-light multipliers updates existing lights in place over a few
 frames (`ChunkManager.refreshBlockLightIntensities`); terrain is not rebuilt. A
+lightning bolt carries a bluish sphere light a few blocks up from the strike
+while it shows, and the nearest bolt flashes over all the land through a broad
+distant light from high up it, weaker the farther the bolt, while the overcast
+dome brightens with it (`LightningFlash.reach`): the sphere alone lit only the
+ground beside it. Neither lights fog: lit in the volumetrics, the whole sky
+turned white with each strike. A
 hand-held item whose placed block shows a lit particle gets the same element in
 hand, emitted once the item's pose is on the matrix stack
 (`ItemLayerRenderStateMixin`), so first person, the hidden shadow model, and
@@ -489,8 +703,15 @@ held item's lit element is burning: the local player's Toggle Held Lights key
 puts out everything in their own hands, and by default an open flame goes out
 for any holder whose eyes are under water. When the time of day jumps by more
 than a hundredth of a day in one frame, `LightManager` clears the runtime's
-radiance cache (`rtx.spatiallyHashedRadianceCache.resetHistory`), which would
-otherwise keep the old light for half a minute where few paths refresh it.
+radiance caches (`rtx.spatiallyHashedRadianceCache.resetHistory`, and
+`rtx.neuralRadianceCache.resetHistory` for the presets that use it), which would
+otherwise keep the old light for half a minute where few paths refresh it, and
+marks the jump (`SkyTimeJump`): the clouds' panorama is marched afresh, the lens
+drops its measurements of the sky and its histories, and for four seconds it
+shows the image's own clouds, then fades its marched ones back in over one. The
+runtime's land and dome clouds take about four seconds to darken from noon into
+midnight while its clear sky changes at once; measured meanwhile, the lens's
+clouds went orange and blue, then white.
 
 Terrain block lights are per-frame draws, not retained instances: every frame
 `ChunkManager.draw` submits each surviving `TerrainLight` (the `RemixLight`
@@ -519,8 +740,12 @@ diluting the sampler's candidate pool.
   workers hand over CPU data through bounded, generation-tagged queues
   (`BlockDataQueue`, `ChunkManager`).
 - A retained instance is submitted where it is created or mutated, never once
-  per frame (`ChunkManager`, `RemixEntitySubmitter`, `LodTerrain`).
-- A prepared particle payload holds world-space vertices and a live bucket, so
+  per frame, and every one in the scene again the frame the scene origin moves
+  (`ChunkManager`, `RemixEntitySubmitter`, `LodTerrain`, `RemixInstanceStore`).
+- Every position handed to Remix is in scene space: converted through
+  `SceneSpace`, or a retained instance placed with `setWorldTranslation`, never
+  a world double cast to float (`SceneSpaceBoundaryTest`).
+- A prepared particle payload holds scene-space vertices and a live bucket, so
   every path that suspends or tears down rendering discards it rather than
   publishing it, including a world swap that keeps the connection alive
   (`RemixRenderer`).
@@ -532,6 +757,9 @@ diluting the sampler's candidate pool.
   because the volumetric grid reuses the previous frame's radiance and a
   camera-locked emitter would smear into distant geometry (`LightManager`).
 - Ordinary classes must not live in the mixin package (`MixinPackageBoundaryTest`).
+- The `asset`, `profiling` and `util` packages name nothing from Minecraft, Mojang
+  or Fabric, so a module shared by several game versions and loaders could hold
+  them unchanged (`CorePackageBoundaryTest`).
 - A mixin that skips vanilla render work skips a whole draw or submit, never
   part of a `RenderPass`'s setup: pipelines carry their own state, so nothing
   needs replaying, but a half-skipped pass leaves uniforms and samplers half set
@@ -622,6 +850,8 @@ diluting the sampler's candidate pool.
   `cloud_field.glsl`; the dome's march and the lens's per-pixel march include
   it, so the clouds on screen and the panorama they replace agree
   (`CloudField`, `VolumetricCloudGenerator`, `LensEffects`).
+- Every noise period in `cloud_field.glsl` divides `VolumetricClouds.WRAP_PERIOD`,
+  or the whole sky changes when the clouds' frame wraps (`VolumetricCloudsTest`).
 - Anything drawn after the lens reads the main target, never the runtime's raw
   image, or it undoes the lens where it draws (`RemixWeatherRenderer`).
 - The developer tools launch only through a signed-in Prism; they never pass

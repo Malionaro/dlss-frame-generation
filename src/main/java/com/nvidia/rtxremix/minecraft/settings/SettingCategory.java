@@ -9,7 +9,8 @@ enum SettingCategory {
     PERFORMANCE("rtxremix.settings.category.performance"),
     LIGHTING("rtxremix.settings.category.lighting"),
     IMAGE("rtxremix.settings.category.image"),
-    MATERIALS("rtxremix.settings.category.materials");
+    MATERIALS("rtxremix.settings.category.materials"),
+    DEBUG("rtxremix.settings.category.debug");
 
     private final String labelKey;
 

@@ -4,6 +4,7 @@
  */
 package com.nvidia.rtxremix.minecraft;
 
+import com.nvidia.rtxremix.minecraft.asset.SceneSpace;
 import com.nvidia.rtxremix.minecraft.weather.RemixWeatherRenderer;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.texture.AtlasAnimationForwarder;
@@ -35,6 +36,7 @@ import com.nvidia.rtxremix.minecraft.light.BlockLightRuleManager;
 import com.nvidia.rtxremix.minecraft.input.RemixMouseAccess;
 import com.nvidia.rtxremix.minecraft.input.RemixKeyboardAccess;
 import com.nvidia.rtxremix.minecraft.input.RemixInputGate;
+import com.nvidia.rtxremix.minecraft.gl.ModOverlayLayer;
 import com.nvidia.rtxremix.minecraft.gl.TextureOverlay;
 import com.nvidia.rtxremix.minecraft.entity.CopperBeaconBlockEntityRenderer;
 import com.nvidia.rtxremix.minecraft.camera.CameraController;
@@ -81,6 +83,7 @@ import net.minecraft.client.gui.screens.MenuScreens;
 import net.minecraft.client.gui.screens.options.OptionsScreen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderers;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -89,6 +92,7 @@ import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.storage.LevelResource;
+import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -184,6 +188,7 @@ public class RtxRemixMod implements ClientModInitializer {
     private static boolean firstPersonSmokeEnabled = true;
 
     private TextureOverlay textureOverlay;
+    private final ModOverlayLayer modOverlay = new ModOverlayLayer();
     private ProfileScope worldRenderPhaseScope;
     private boolean remixFrameReadyToSubmit;
     /** Latches the frame-failure log so a persistent failure reports once, not every frame. */
@@ -261,6 +266,21 @@ public class RtxRemixMod implements ClientModInitializer {
      * own controls, the runtime's menu hotkey, or its First Use Guide. Called at the start of
      * every frame from {@link com.nvidia.rtxremix.minecraft.mixin.GameRendererMixin}.
      */
+    /**
+     * Moves the scene origin ({@link SceneSpace}) if the camera calls for it. At the head of the
+     * frame's extraction, before entities and the hands are captured, so every position a
+     * frame hands to Remix is taken against one origin; the renderer brings the retained scene
+     * along when it submits the frame.
+     */
+    public static void advanceSceneOrigin() {
+        Minecraft client = Minecraft.getInstance();
+        if (renderer == null || !renderer.isInitialized() || client.level == null || !isRtxEnabled()) {
+            return;
+        }
+        Vec3 camera = client.gameRenderer.mainCamera().position();
+        SceneSpace.advance(camera.x, camera.z);
+    }
+
     public static void followRemixMenuVisibility() {
         if (renderer == null || !renderer.isInitialized()) {
             return;
@@ -582,6 +602,9 @@ public class RtxRemixMod implements ClientModInitializer {
                     && renderer.isInitialized()
                     && isRtxEnabled()) {
                 renderer.captureBlockOutline(context.levelState(), outlineState);
+                // Remix draws the outline; vanilla's would show over it with the other
+                // mods' draws (ModOverlayLayer).
+                return false;
             }
             return true;
         });
@@ -669,8 +692,30 @@ public class RtxRemixMod implements ClientModInitializer {
                                 .vertexCount(weather.getLastQuadCount() * 4);
                     }
                 }
+                mod.modOverlay.composite();
             }
         }
+    }
+
+    /**
+     * Readies the main target for the other mods' world draws: transparent colour and the
+     * last Remix frame's depth. Called at the start of the level render's main pass.
+     */
+    public static void prepareModOverlay(CameraRenderState camera) {
+        RtxRemixMod mod = instance;
+        if (mod == null || renderer == null || !renderer.isInitialized() || !isRtxEnabled()) return;
+        try {
+            mod.modOverlay.prepare(renderer.getInteropDepthTexture(), renderer.getFarPlane(),
+                    camera == null ? null : camera.projectionMatrix);
+        } catch (RuntimeException e) {
+            LOGGER.error("Failed to prepare the mod overlay layer", e);
+        }
+    }
+
+    /** Keeps the other mods' world draws. Called when the level render has returned. */
+    public static void captureModOverlay() {
+        RtxRemixMod mod = instance;
+        if (mod != null) mod.modOverlay.capture();
     }
 
     /**
@@ -2209,6 +2254,7 @@ public class RtxRemixMod implements ClientModInitializer {
             textureOverlay.shutdown();
             textureOverlay = null;
         }
+        modOverlay.shutdown();
         shutdownRemix();
     }
 

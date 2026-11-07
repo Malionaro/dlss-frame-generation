@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.WeakHashMap;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.blockentity.AbstractEndPortalRenderer;
 import net.minecraft.client.renderer.rendertype.RenderSetup;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.resources.Identifier;
@@ -119,8 +120,8 @@ final class RenderLayerUtils {
 
     /**
      * Whether a layer that draws without a texture still carries geometry worth
-     * submitting to Remix. In 26.3 the lead between a mob and its holder is the
-     * only such layer.
+     * submitting to Remix. In 26.3 those are the lead between a mob and its holder
+     * and the lightning bolt.
      *
      * <p>Two conditions, both about what the layer can actually shade with.
      * Vertex colour is the only surface detail such a layer has, so a layer
@@ -128,13 +129,15 @@ final class RenderLayerUtils {
      * exists to write depth. And of the untextured layers that do have colour,
      * the triangle strips are world geometry while the quads are screen
      * furniture such as the nameplate background, which should not become
-     * scene geometry that lights and casts shadows.
+     * scene geometry that lights and casts shadows. The lightning bolt's quads
+     * are the exception: dropped with the rest, no bolt was ever drawn.
      */
     static boolean isCapturableUntexturedLayer(RenderType layer) {
         // Only layers with no texture at all qualify: a textured layer that
         // capturableTexture declined must not re-enter capture through here.
         return extractTexture(layer).isEmpty()
-                && topology(layer).filter(t -> t == Topology.TRIANGLE_STRIP).isPresent()
+                && (topology(layer).filter(t -> t == Topology.TRIANGLE_STRIP).isPresent()
+                        || layer.pipeline() == RenderPipelines.LIGHTNING)
                 && layer.format().contains(DefaultVertexFormat.COLOR_SEMANTIC_NAME);
     }
 
@@ -156,7 +159,11 @@ final class RenderLayerUtils {
         RenderPipeline pipeline = layer.pipeline();
         boolean beaconBeamProgram = pipeline == RenderPipelines.BEACON_BEAM_OPAQUE
                 || pipeline == RenderPipelines.BEACON_BEAM_TRANSLUCENT;
-        return classifyStreamedPerFrame(topology(layer).orElse(Topology.QUADS), beaconBeamProgram);
+        // The End portal's stars drift with the day too (EndPortalFaces).
+        boolean endPortalStars = extractTexture(layer)
+                .filter(AbstractEndPortalRenderer.END_PORTAL_LOCATION::equals).isPresent();
+        return classifyStreamedPerFrame(topology(layer).orElse(Topology.QUADS),
+                beaconBeamProgram || endPortalStars);
     }
 
     static boolean classifyStreamedPerFrame(Topology topology, boolean beaconBeamProgram) {
@@ -177,7 +184,8 @@ final class RenderLayerUtils {
         RenderPipeline pipeline = layer.pipeline();
         return classifySurfaceMode(
                 pipeline == RenderPipelines.EYES
-                        || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE,
+                        || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE
+                        || pipeline == RenderPipelines.LIGHTNING,
                 usesBlend(pipeline, BlendFunction.ADDITIVE),
                 usesBlend(pipeline, BlendFunction.TRANSLUCENT)
                         || pipeline == RenderPipelines.CRUMBLING,

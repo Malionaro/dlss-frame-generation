@@ -75,23 +75,38 @@ final class OverlayComposite {
 
     /**
      * Whether every part of {@code overlay} repeats a part of {@code base}: the same cuboid
-     * faces, positions and texture coordinates, hung off a bone with the same transform.
-     * Only then can the overlay be painted into the body's texture.
+     * faces, or for geometry captured vertex by vertex the same vertices, with the same
+     * positions and texture coordinates, hung off a bone with the same transform. Only then
+     * can the overlay be painted into the body's texture. GeckoLib's layers draw the whole
+     * model again that way, a no-armour tier with a fully transparent texture.
      */
     static boolean repeatsBase(RemixCapturingConsumer base, RemixCapturingConsumer overlay, float[] boneData) {
         int parts = overlay.getPartCount();
         if (parts == 0) return false;
         for (int p = 0; p < parts; p++) {
             ModelPart.Polygon[] sides = overlay.getPartSides(p);
-            if (sides == null) return false;
             boolean found = false;
             for (int q = 0; q < base.getPartCount() && !found; q++) {
-                found = sameCuboid(sides, base.getPartSides(q))
+                found = (sides != null
+                                ? sameCuboid(sides, base.getPartSides(q))
+                                : base.getPartSides(q) == null && sameVertices(overlay, p, base, q))
                         && sameBone(boneData, overlay.getPartBone(p), base.getPartBone(q));
             }
             if (!found) return false;
         }
         return true;
+    }
+
+    static boolean sameVertices(RemixCapturingConsumer a, int partA, RemixCapturingConsumer b, int partB) {
+        int count = a.getPartVertexCount(partA);
+        if (count == 0 || count != b.getPartVertexCount(partB)) return false;
+        int startA = a.getPartStart(partA);
+        int startB = b.getPartStart(partB);
+        return Arrays.equals(a.getPx(), startA, startA + count, b.getPx(), startB, startB + count)
+                && Arrays.equals(a.getPy(), startA, startA + count, b.getPy(), startB, startB + count)
+                && Arrays.equals(a.getPz(), startA, startA + count, b.getPz(), startB, startB + count)
+                && Arrays.equals(a.getTu(), startA, startA + count, b.getTu(), startB, startB + count)
+                && Arrays.equals(a.getTv(), startA, startA + count, b.getTv(), startB, startB + count);
     }
 
     static boolean sameCuboid(ModelPart.Polygon[] a, ModelPart.Polygon[] b) {

@@ -100,13 +100,21 @@ public class BlockTextureManager {
     private AtlasSprites.Padding atlasPadding;
     private final List<SpriteEntry> sprites = new ArrayList<>();
     private final Map<Identifier, SpriteEntry> spriteById = new HashMap<>();
+    /** Sprites' colours averaged down for the puddles' copies of the ground; see {@link #spriteSamples}. */
+    private final Map<Identifier, int[]> spriteSamples = new HashMap<>();
     private final Map<Long, RemixMaterial> materials = new HashMap<>();
     private final RemixMaterial[] atlasMaterials = new RemixMaterial[LAYER_COUNT];
+    /**
+     * The atlas materials less the emissive atlas, for terrain whose sprite emits nothing. A
+     * face seen edge on samples the atlas at its coarsest mip, where every lamp, torch and
+     * lava texel is averaged in, and glowed yellow along lines through the camera at night.
+     */
+    private final RemixMaterial[] atlasMaterialsWithoutEmission = new RemixMaterial[LAYER_COUNT];
+    /** Without emission too: an emitting sprite takes {@link #atlasMaterials} and loses its SSS. */
     private final RemixMaterial[] atlasMaterialsSSS = new RemixMaterial[LAYER_COUNT];
     private final List<RemixTexture> managedTextures = new ArrayList<>();
     private final List<RemixMaterial> managedMaterials = new ArrayList<>();
     private RemixMaterial waterSurfaceMaterial;
-    private RemixMaterial puddleWaterMaterial;
     /** The water's animated normals; null when they failed to build. */
     private WaterNormals waterNormals;
     private RemixMaterial waterCameraMediumMaterial;
@@ -178,6 +186,8 @@ public class BlockTextureManager {
         private final BitSet transparentPixels;
         RemixTexture albedo, normal, roughness, metallic, height, emissive, sss, sssAlbedo;
         public boolean hasPBR, hasSSS;
+        /** Whether the sprite has texels in the emissive atlas. */
+        public boolean hasEmission;
         float[] lightColor;
 
         SpriteEntry(int i, Identifier id, TextureAtlasSprite s) {
@@ -362,6 +372,7 @@ public class BlockTextureManager {
         atlasPadding = AtlasSprites.padding(
                 ((SpriteAtlasAccessor) atlas).getSprites().values(), atlasW, atlasH);
         albedoRGBA = stitchAtlasRGBA(atlas);
+        spriteSamples.clear();
         atlasAlbedo = upload(api, "block_atlas", albedoRGBA, atlasW, atlasH,
                 TextureFormat.RGBA8_UNORM, TexturePurpose.COLOR);
         LOGGER.info("Atlas {}x{} (stitched from {} sprites, {} off their own grid)",
@@ -533,10 +544,12 @@ public class BlockTextureManager {
                 if (needsEmissive) {
                     LabPBRConverter.blitEmissive(emissiveAtlas, atlasW, albedoRGBA, sI,
                             se.pixX, se.pixY, se.pixW, se.pixH, 0f, BuiltinEmission.gain(se.id));
+                    se.hasEmission = true;
                     hasAnyEmissive = true;
                 } else if (BuiltinEmission.mask(se.id) != null) {
                     LabPBRConverter.blitEmissiveMask(emissiveAtlas, atlasW, albedoRGBA,
                             se.pixX, se.pixY, se.pixW, se.pixH, BuiltinEmission.mask(se.id));
+                    se.hasEmission = true;
                     hasAnyEmissive = true;
                 }
             } finally {
@@ -583,13 +596,17 @@ public class BlockTextureManager {
         for (int lt = 0; lt < LAYER_COUNT; lt++) {
             if (lt == L_TRANS) {
                 atlasMaterials[lt] = createAtlasTransMaterial(emissiveTex, normalTex);
+                atlasMaterialsWithoutEmission[lt] = createAtlasTransMaterial(null, normalTex);
             } else if (lt == L_GLASS) {
                 atlasMaterials[lt] = createAtlasGlassMaterial(emissiveTex, normalTex);
+                atlasMaterialsWithoutEmission[lt] = createAtlasGlassMaterial(null, normalTex);
             } else {
                 atlasMaterials[lt] = createAtlasOpaqueMaterial(lt, normalTex, heightTex,
                         roughnessTex, metallicTex, emissiveTex, null, null);
+                atlasMaterialsWithoutEmission[lt] = createAtlasOpaqueMaterial(lt, normalTex, heightTex,
+                        roughnessTex, metallicTex, null, null, null);
                 atlasMaterialsSSS[lt] = hasAnySSS ? createAtlasOpaqueMaterial(lt, normalTex, heightTex,
-                        roughnessTex, metallicTex, emissiveTex,
+                        roughnessTex, metallicTex, null,
                         sssTex, sssAlbedoTex) : null;
             }
         }
@@ -771,19 +788,6 @@ public class BlockTextureManager {
     /** The colour above is what three blocks of water let through, so a riverbed shows several blocks down. */
     private static final float DEFAULT_WATER_TRANSMITTANCE_DISTANCE = 3f;
     private static final float WATER_CAMERA_MEDIUM_TRANSMITTANCE = 0.98f;
-    /**
-     * Thickness of a puddle's water, in blocks. The material is thin walled, so the ground
-     * beneath shows straight through rather than bent by the ripples, and only a trace of the
-     * light is lost on the way.
-     */
-    private static final float PUDDLE_THICKNESS = 0.0125f;
-    /** Wet ground under a puddle reads darker, which lets its reflection stand out. */
-    private static final float PUDDLE_TRANSMITTANCE = 0.85f;
-    /**
-     * Above water's 1.33, so the sheet reflects about 8% at normal incidence instead of 2%:
-     * seen from above, real puddles look like mirrors because the ground under them is dark.
-     */
-    private static final float PUDDLE_IOR = 1.8f;
     private static final float WATER_CAMERA_MEDIUM_TRANSMITTANCE_DISTANCE = 1f;
     private static final String WATER_WHITE_TEXTURE_NAME = "water_white";
 
@@ -819,8 +823,6 @@ public class BlockTextureManager {
         waterSurfaceMaterial = null;
         destroyManagedMaterial(waterCameraMediumMaterial);
         waterCameraMediumMaterial = null;
-        destroyManagedMaterial(puddleWaterMaterial);
-        puddleWaterMaterial = null;
 
         destroyManagedTexture(waterWhiteTexture);
         waterWhiteTexture = null;
@@ -828,6 +830,7 @@ public class BlockTextureManager {
         if (waterNormals != null) {
             waterNormals.release();
             destroyManagedTexture(waterNormals.texture());
+            destroyManagedTexture(waterNormals.puddleTexture());
             waterNormals = null;
         }
     }
@@ -880,20 +883,6 @@ public class BlockTextureManager {
                             .build())
                     .build());
 
-            // Clear and colourless, with the water's normals so the raindrop rings ripple it too.
-            puddleWaterMaterial = createMaterialViaStore(MaterialInfo.builder()
-                    .albedoTexture(waterWhiteTexture.getHandle())
-                    .normalTexture(waterNormals.texture().getHandle())
-                    .filterMode(1)
-                    .translucentExt(MaterialInfoTranslucentEXT.builder()
-                            .refractiveIndex(PUDDLE_IOR)
-                            .transmittanceColor(PUDDLE_TRANSMITTANCE, PUDDLE_TRANSMITTANCE, PUDDLE_TRANSMITTANCE)
-                            .transmittanceMeasurementDistance(PUDDLE_THICKNESS)
-                            .thinWall(PUDDLE_THICKNESS)
-                            .useDiffuseLayer(false)
-                            .build())
-                    .build());
-
             if (waterSurfaceMaterial != null && waterCameraMediumMaterial != null) {
                 LOGGER.info("Water surface and camera-medium materials created "
                                 + "(ior={}, surfaceTransmittance=({}, {}, {}), distance={}, "
@@ -914,8 +903,49 @@ public class BlockTextureManager {
 
     public RemixMaterial getWaterSurfaceMaterial() { return waterSurfaceMaterial; }
 
-    /** The clear, thin-walled water of rain puddles, or null when the water materials failed. */
-    public RemixMaterial getPuddleWaterMaterial() { return puddleWaterMaterial; }
+    /**
+     * The rain puddles' normals, the raindrop rings over {@link WaterNormals#PUDDLE_TILE_BLOCKS},
+     * or null when the water materials failed. The texture is replaced whenever they are rebuilt.
+     */
+    public RemixTexture getPuddleNormalTexture() {
+        return waterNormals != null && waterSurfaceMaterial != null ? waterNormals.puddleTexture() : null;
+    }
+
+    /**
+     * The colours of {@code sprite} as the atlas holds them, LabPBR's occlusion applied,
+     * averaged down to {@code size} by {@code size} ARGB texels, rows from the sprite's top;
+     * null for a sprite the atlas does not hold. Kept until the atlas is rebuilt. Render
+     * thread only.
+     */
+    public int[] spriteSamples(TextureAtlasSprite sprite, int size) {
+        SpriteEntry entry = albedoRGBA != null ? spriteById.get(sprite.contents().name()) : null;
+        if (entry == null) return null;
+        int[] cached = spriteSamples.get(entry.id);
+        if (cached != null && cached.length == size * size) return cached;
+        int[] samples = new int[size * size];
+        for (int ty = 0; ty < size; ty++) {
+            int y0 = ty * entry.pixH / size;
+            int y1 = Math.max(y0 + 1, (ty + 1) * entry.pixH / size);
+            for (int tx = 0; tx < size; tx++) {
+                int x0 = tx * entry.pixW / size;
+                int x1 = Math.max(x0 + 1, (tx + 1) * entry.pixW / size);
+                int r = 0, g = 0, b = 0, a = 0, n = 0;
+                for (int y = y0; y < y1; y++) {
+                    for (int x = x0; x < x1; x++) {
+                        int at = ((entry.pixY + y) * atlasW + entry.pixX + x) * 4;
+                        r += albedoRGBA[at] & 0xFF;
+                        g += albedoRGBA[at + 1] & 0xFF;
+                        b += albedoRGBA[at + 2] & 0xFF;
+                        a += albedoRGBA[at + 3] & 0xFF;
+                        n++;
+                    }
+                }
+                samples[ty * size + tx] = (a / n) << 24 | (r / n) << 16 | (g / n) << 8 | b / n;
+            }
+        }
+        spriteSamples.put(entry.id, samples);
+        return samples;
+    }
 
     /** Shows the water's waves and the rain on it; see {@link WaterNormals#update}. */
     public void updateWaterSurfaces(float rain, double seconds) {
@@ -953,7 +983,7 @@ public class BlockTextureManager {
         return true;
     }
 
-    float terrainEmissionIntensity() {
+    public float terrainEmissionIntensity() {
         return terrainEmissionIntensity(appliedTerrainEmissionMultiplier);
     }
 
@@ -1038,7 +1068,7 @@ public class BlockTextureManager {
     private void rebuildAtlasSssMaterial(int layerType) {
         destroyManagedMaterial(atlasMaterialsSSS[layerType]);
         atlasMaterialsSSS[layerType] = createAtlasOpaqueMaterial(layerType, atlasNormalTex,
-                atlasHeightTex, atlasRoughnessTex, atlasMetallicTex, atlasEmissive, atlasSssTex,
+                atlasHeightTex, atlasRoughnessTex, atlasMetallicTex, null, atlasSssTex,
                 atlasSssAlbedoTex);
     }
 
@@ -1067,6 +1097,11 @@ public class BlockTextureManager {
     /** Returns the atlas-based material (no SSS) for the given layer type. */
     public RemixMaterial getAtlasMaterial(int layerType) {
         return atlasMaterials[layerType];
+    }
+
+    /** Returns the atlas-based material without the emissive atlas for the given layer type. */
+    public RemixMaterial getAtlasMaterialWithoutEmission(int layerType) {
+        return atlasMaterialsWithoutEmission[layerType];
     }
 
     /** Returns the atlas-based SSS material for the given layer type, or null if none. */
@@ -1425,8 +1460,9 @@ public class BlockTextureManager {
         for (RemixTexture tex : managedTextures)
             if (!tex.isDeleted()) tex.destroy();
         managedTextures.clear();
-        materials.clear(); sprites.clear(); spriteById.clear(); spriteLightColors.clear();
+        materials.clear(); sprites.clear(); spriteById.clear(); spriteLightColors.clear(); spriteSamples.clear();
         Arrays.fill(atlasMaterials, null);
+        Arrays.fill(atlasMaterialsWithoutEmission, null);
         Arrays.fill(atlasMaterialsSSS, null);
         atlasNormalTex = null;
         atlasHeightTex = null;
@@ -1440,7 +1476,6 @@ public class BlockTextureManager {
         } else {
             waterSurfaceMaterial = null;
             waterCameraMediumMaterial = null;
-            puddleWaterMaterial = null;
             waterWhiteTexture = null;
         }
         albedoRGBA = null; initialized = false;

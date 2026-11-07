@@ -179,6 +179,14 @@ class DirectQuadWriterTest {
     }
 
     @Test
+    void emissiveBucketsKeepTheirLayerName() {
+        // BlockMeshBuilder.resolveMaterial strips the suffix to find the layer's atlas material.
+        for (String layer : new String[] {"solid", "cutout", "cutout_mipped", "translucent", "glass"}) {
+            assertEquals(layer + "_emissive", DirectQuadWriter.emissiveBucketKey(layer));
+        }
+    }
+
+    @Test
     void clearGlassBlendsInItsOwnBucket() {
         // Clear glass refracts: it must blend like vanilla's translucent
         // layer, yet never share a surface with it, because the two take different

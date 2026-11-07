@@ -6,6 +6,7 @@ package com.nvidia.rtxremix.minecraft.mixin;
 
 import com.nvidia.rtxremix.minecraft.terrain.capture.RegionBuilderRelease;
 import com.nvidia.rtxremix.minecraft.terrain.WorldRendererTerrainAccess;
+import com.nvidia.rtxremix.minecraft.terrain.TerrainBackendProvider;
 import com.nvidia.rtxremix.minecraft.profiling.WorldRendererProfilingAccess;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
 import com.nvidia.rtxremix.minecraft.RemixRenderer;
@@ -114,6 +115,9 @@ public abstract class WorldRendererMixin
 
     @Override
     public LongSet rtxremix$builtSectionPositions() {
+        if ((Object) this instanceof TerrainBackendProvider provider) {
+            return provider.rtxremix$terrainBackend().rtxremix$builtSectionPositions();
+        }
         LongOpenHashSet built = new LongOpenHashSet();
         if (viewArea == null) {
             return built;
@@ -128,6 +132,10 @@ public abstract class WorldRendererMixin
 
     @Override
     public void rtxremix$queueSectionsForRemix(LongSet sections, Consumer<LongSet> onQueued) {
+        if ((Object) this instanceof TerrainBackendProvider provider) {
+            provider.rtxremix$terrainBackend().rtxremix$queueSectionsForRemix(sections, onQueued);
+            return;
+        }
         Minecraft client = Minecraft.getInstance();
         rtxremix$pendingRecapture = sections;
         rtxremix$pendingRecaptureCallback = onQueued;
@@ -235,6 +243,10 @@ public abstract class WorldRendererMixin
 
     @Override
     public void rtxremix$scheduleResidentSectionRebuild(int cx, int sy, int cz) {
+        if ((Object) this instanceof TerrainBackendProvider provider) {
+            provider.rtxremix$terrainBackend().rtxremix$scheduleResidentSectionRebuild(cx, sy, cz);
+            return;
+        }
         // The extractor's tracker ignores a section outside its window.
         Minecraft.getInstance().levelExtractor.setSectionDirty(cx, sy, cz);
     }
@@ -256,6 +268,16 @@ public abstract class WorldRendererMixin
         if (mod != null && mod.getRenderer() != null) {
             mod.getRenderer().beginEntityFrame();
         }
+    }
+
+    /**
+     * The main pass's body, as the frame graph runs it: before Fabric's START_MAIN and any
+     * draw of the pass, so the other mods' world draws land on transparency over the last
+     * Remix frame's depth.
+     */
+    @Inject(method = "lambda$addMainPass$0", at = @At("HEAD"))
+    private void rtxremix$prepareModOverlay(CallbackInfo ci) {
+        RtxRemixMod.prepareModOverlay(levelRenderState.cameraRenderState);
     }
 
     @Inject(method = "render", at = @At("RETURN"))

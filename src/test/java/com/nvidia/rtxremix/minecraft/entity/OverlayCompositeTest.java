@@ -5,7 +5,9 @@
 package com.nvidia.rtxremix.minecraft.entity;
 
 import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.resources.Identifier;
+import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
@@ -70,6 +72,41 @@ class OverlayCompositeTest {
         assertFalse(OverlayComposite.sameCuboid(a, moved));
         assertFalse(OverlayComposite.sameCuboid(a, otherUv));
         assertFalse(OverlayComposite.sameCuboid(a, null));
+    }
+
+    /** Two bones with the same identity transform, as two layers of one model see them. */
+    private static final float[] BONES = {
+            1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0,
+            1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+
+    /** A layer drawn vertex by vertex, as GeckoLib draws through custom geometry. */
+    private static RemixCapturingConsumer quadLayer(float uOffset) {
+        RemixCapturingConsumer consumer = new RemixCapturingConsumer(null, true);
+        Matrix4f pose = new Matrix4f();
+        float[][] corners = {{0, 0, 0}, {1, 0, 0}, {1, 0, 1}, {0, 0, 1}};
+        for (float[] c : corners) {
+            consumer.addVertex(pose, c[0], c[1], c[2])
+                    .setColor(-1)
+                    .setUv(c[0] * 0.25f + uOffset, c[2] * 0.25f)
+                    .setOverlay(OverlayTexture.NO_OVERLAY)
+                    .setLight(0)
+                    .setNormal(0, 1, 0);
+        }
+        consumer.finishOpenVertex();
+        return consumer;
+    }
+
+    @Test
+    void aLayerRepeatingTheBodyVertexByVertexRepeatsItAndOneOnOtherCoordinatesDoesNot() {
+        EntityRenderContext.get().begin(true);
+        try {
+            RemixCapturingConsumer body = quadLayer(0.0f);
+            assertEquals(1, body.getPartCount());
+            assertTrue(OverlayComposite.repeatsBase(body, quadLayer(0.0f), BONES));
+            assertFalse(OverlayComposite.repeatsBase(body, quadLayer(0.5f), BONES));
+        } finally {
+            EntityRenderContext.get().reset();
+        }
     }
 
     private static ModelPart.Polygon quad(float x, float u) {

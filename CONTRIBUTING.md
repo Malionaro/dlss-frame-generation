@@ -417,10 +417,21 @@ git config user.email
 
 Three rules apply:
 
-1. Use your real name. Anonymous contributions and pseudonyms cannot be
-   accepted.
-2. The sign-off address must match the commit author address.
+1. Sign off with your real name or with the GitHub handle you contribute
+   under. Use the same name throughout the pull request.
+2. The sign-off address must match the commit author address. It does not have
+   to accept mail. GitHub's no-reply address, `ID+USERNAME@users.noreply.github.com`
+   from your GitHub email settings, is fine and keeps your personal address out
+   of the public history.
 3. Every commit in the pull request needs the trailer, not only the last one.
+
+To contribute under your handle and no-reply address, set them for this
+repository before you commit:
+
+```bash
+git config user.name "USERNAME"
+git config user.email "ID+USERNAME@users.noreply.github.com"
+```
 
 To add the trailer to the most recent commit:
 

@@ -4,11 +4,17 @@
  */
 package com.nvidia.rtxremix.minecraft.sky;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VolumetricCloudsTest {
 
@@ -61,5 +67,24 @@ class VolumetricCloudsTest {
         float[] east = {(float) Math.cos(Math.toRadians(30.0)), (float) Math.sin(Math.toRadians(30.0)), 0.0f};
         assertEquals(0.5f, VolumetricClouds.opacityToward(pixels, east), 1e-3f);
         assertEquals(0.0f, VolumetricClouds.opacityToward(pixels, new float[] {-east[0], east[1], 0.0f}), 1e-6f);
+    }
+
+    @Test
+    void everyNoisePeriodDividesTheWrap() throws IOException {
+        String source;
+        try (InputStream in = VolumetricCloudsTest.class.getResourceAsStream(
+                "/assets/rtx-remix-renderer/shaders/cloud_field.glsl")) {
+            source = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        Matcher period = Pattern.compile("const float (\\w+_PERIOD) = ([0-9.]+)(?: / ([0-9.]+))?;").matcher(source);
+        int found = 0;
+        while (period.find()) {
+            double blocks = Double.parseDouble(period.group(2))
+                    / (period.group(3) == null ? 1.0 : Double.parseDouble(period.group(3)));
+            double tiles = VolumetricClouds.WRAP_PERIOD / blocks;
+            assertEquals(Math.rint(tiles), tiles, 1e-6, period.group(1) + " does not divide the wrap");
+            found++;
+        }
+        assertTrue(found >= 7, "found " + found + " periods");
     }
 }

@@ -41,6 +41,10 @@ import org.slf4j.LoggerFactory;
  * waves, which drew the lattice at whatever size a layer was laid. The larger layers bring
  * back waves of those lengths without one, and the sum repeats only once a texture.
  *
+ * <p>Rain puddles get a texture of their own with the rings alone, smaller and more of them,
+ * over {@link #PUDDLE_TILE_BLOCKS}: standing water in a puddle has no waves, and once the rain
+ * stops it lies still.
+ *
  * <p>The frames come from the flipbook's second mip level, decoded on a worker; until then
  * the water is calm. A frame is composed on a thread of its own and uploaded on the render
  * thread once it is done.
@@ -54,6 +58,15 @@ public final class WaterNormals {
     /** Texels across a flipbook frame at its second mip level. */
     private static final int FRAME_SIZE = 512;
     private static final int FRAMES_ACROSS = 4;
+    /** Blocks the puddles' texture spans, which the puddles' tiles match. */
+    public static final int PUDDLE_TILE_BLOCKS = 16;
+    /** Texels across the puddles' texture: their rings, a half of it across, laid twice each way. */
+    private static final int PUDDLE_SIZE = 512;
+    private static final int PUDDLE_RING_PX = PUDDLE_SIZE / 2;
+    /** The puddles' rings against the water's: smaller, and more of them, as fine drops on shallow water. */
+    private static final float PUDDLE_RING_SIZE = 0.6f;
+    private static final float PUDDLE_RING_DENSITY = 2.5f;
+    private static final long PUDDLE_RIPPLE_SEED = 0x50524E44L;
     /**
      * Each layer's share of the slope, at the flipbook's own size, twice and four times it: half
      * as much again as they would need for their slopes to add up to the flipbook's, since the
@@ -104,14 +117,22 @@ public final class WaterNormals {
 
     private final RemixAPI api;
     private final RemixTexture texture;
+    private final RemixTexture puddleTexture;
     /** Per frame, the high-passed slopes, x and y, as signed byte pairs; see {@link #highPass}. */
     private final CompletableFuture<byte[][]> ocean;
     private final CompletableFuture<RainRipples> ripples;
+    private final CompletableFuture<RainRipples> puddleRipples;
     private final byte[] texels = new byte[SIZE * SIZE * 4];
+    private final byte[] puddleTexels = new byte[PUDDLE_SIZE * PUDDLE_SIZE * 4];
     private final ByteBuffer staging;
+    private final ByteBuffer puddleStaging;
     private final TexturePatch patch = new TexturePatch();
+    private final TexturePatch puddlePatch = new TexturePatch();
     private final TextureBatchEntry entry = new TextureBatchEntry();
-    private final TexturePatchInfo patchInfo = new TexturePatchInfo();
+    private final TextureBatchEntry puddleEntry = new TextureBatchEntry();
+    /** Both textures, or the water's alone when the puddles' rings did not change. */
+    private final TexturePatchInfo bothInfo = new TexturePatchInfo();
+    private final TexturePatchInfo waterInfo = new TexturePatchInfo();
     private final ExecutorService composer = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "rtx-water-normals");
         thread.setDaemon(true);
@@ -123,21 +144,31 @@ public final class WaterNormals {
     private int composingOceanFrame;
     private int composingRingFrame;
     private float composingStrength;
+    private boolean composingPuddle;
     private int appliedOceanFrame = -1;
     private int appliedRingFrame = -1;
     private float appliedStrength;
     private boolean released;
 
-    private WaterNormals(RemixAPI api, RemixTexture texture, Path flipbook, float tileBlocks, boolean rings) {
+    private WaterNormals(RemixAPI api, RemixTexture texture, RemixTexture puddleTexture, Path flipbook,
+                         float tileBlocks, boolean rings) {
         this.api = api;
         this.texture = texture;
+        this.puddleTexture = puddleTexture;
         this.staging = DirectBufferPool.acquire(texels.length);
+        this.puddleStaging = DirectBufferPool.acquire(puddleTexels.length);
         patch.width = SIZE;
         patch.height = SIZE;
         patch.rowPitch = SIZE * 4;
         patch.format = TextureFormat.RGBA8_UNORM;
         entry.patches = new TexturePatch[] {patch};
-        patchInfo.entries = new TextureBatchEntry[] {entry};
+        puddlePatch.width = PUDDLE_SIZE;
+        puddlePatch.height = PUDDLE_SIZE;
+        puddlePatch.rowPitch = PUDDLE_SIZE * 4;
+        puddlePatch.format = TextureFormat.RGBA8_UNORM;
+        puddleEntry.patches = new TexturePatch[] {puddlePatch};
+        bothInfo.entries = new TextureBatchEntry[] {entry, puddleEntry};
+        waterInfo.entries = new TextureBatchEntry[] {entry};
         ocean = CompletableFuture.supplyAsync(() -> {
             try {
                 return highPass(decodeFrames(flipbook));
@@ -150,17 +181,25 @@ public final class WaterNormals {
         ripples = rings
                 ? CompletableFuture.supplyAsync(() -> RainRipples.generate(FRAME_SIZE, tileBlocks / FRAMES_ACROSS, RIPPLE_SEED))
                 : CompletableFuture.completedFuture(null);
+        puddleRipples = rings
+                ? CompletableFuture.supplyAsync(() -> RainRipples.generate(PUDDLE_RING_PX, PUDDLE_TILE_BLOCKS / 2f,
+                        PUDDLE_RIPPLE_SEED, PUDDLE_RING_SIZE, PUDDLE_RING_DENSITY))
+                : CompletableFuture.completedFuture(null);
     }
 
     /**
-     * Creates calm water normals over a tile {@code tileBlocks} wide, or returns null when the
-     * texture fails. {@code rings} adds raindrop rings in the rain.
+     * Creates calm water normals over a tile {@code tileBlocks} wide, and the puddles' over
+     * {@link #PUDDLE_TILE_BLOCKS}, or returns null when a texture fails; the uploader's owner
+     * destroys any it made. {@code rings} adds raindrop rings in the rain.
      */
     public static WaterNormals create(RemixAPI api, Uploader uploader, Path flipbook, float tileBlocks,
                                       boolean rings) {
-        RemixTexture texture = uploader.upload("water_normals", calmNormals(), SIZE, SIZE,
+        RemixTexture texture = uploader.upload("water_normals", calmNormals(SIZE), SIZE, SIZE,
                 TextureFormat.RGBA8_UNORM, TexturePurpose.NORMAL_OTH);
-        return texture == null ? null : new WaterNormals(api, texture, flipbook, tileBlocks, rings);
+        if (texture == null) return null;
+        RemixTexture puddle = uploader.upload("puddle_normals", calmNormals(PUDDLE_SIZE), PUDDLE_SIZE, PUDDLE_SIZE,
+                TextureFormat.RGBA8_UNORM, TexturePurpose.NORMAL_OTH);
+        return puddle == null ? null : new WaterNormals(api, texture, puddle, flipbook, tileBlocks, rings);
     }
 
     /** Creates a texture the owner manages and destroys. */
@@ -170,6 +209,11 @@ public final class WaterNormals {
 
     public RemixTexture texture() {
         return texture;
+    }
+
+    /** The puddles' normals: the rings alone, over {@link #PUDDLE_TILE_BLOCKS}. */
+    public RemixTexture puddleTexture() {
+        return puddleTexture;
     }
 
     /**
@@ -198,11 +242,19 @@ public final class WaterNormals {
                 && Math.abs(strength - appliedStrength) < STRENGTH_EPSILON)) {
             return;
         }
+        boolean puddle = appliedOceanFrame < 0 || ringFrame != appliedRingFrame
+                || Math.abs(strength - appliedStrength) >= STRENGTH_EPSILON;
         composingOceanFrame = oceanFrame;
         composingRingFrame = ringFrame;
         composingStrength = strength;
+        composingPuddle = puddle;
         byte[] ringRg = rings != null ? rings.normals(ringFrame) : null;
-        composing = CompletableFuture.runAsync(() -> compose(frames, oceanFrame, ringRg, strength, texels), composer);
+        RainRipples puddleRings = rings != null ? puddleRipples.getNow(null) : null;
+        byte[] puddleRg = puddleRings != null ? puddleRings.normals(ringFrame) : null;
+        composing = CompletableFuture.runAsync(() -> {
+            compose(frames, oceanFrame, ringRg, strength, texels);
+            if (puddle) composeRings(puddleRg, strength, puddleTexels);
+        }, composer);
     }
 
     private void upload() {
@@ -210,8 +262,15 @@ public final class WaterNormals {
         staging.put(texels).flip();
         patch.pixelData = staging;
         entry.handle = texture.getHandle();
+        boolean puddle = composingPuddle && !puddleTexture.isDeleted();
+        if (puddle) {
+            puddleStaging.clear();
+            puddleStaging.put(puddleTexels).flip();
+            puddlePatch.pixelData = puddleStaging;
+            puddleEntry.handle = puddleTexture.getHandle();
+        }
         try {
-            api.updateTextureFromMemory(patchInfo);
+            api.updateTextureFromMemory(puddle ? bothInfo : waterInfo);
             appliedOceanFrame = composingOceanFrame;
             appliedRingFrame = composingRingFrame;
             appliedStrength = composingStrength;
@@ -219,6 +278,34 @@ public final class WaterNormals {
             LOGGER.warn("Failed to update the water normals: {}", e.getMessage());
         } finally {
             patch.pixelData = null;
+            puddlePatch.pixelData = null;
+        }
+    }
+
+    /**
+     * Writes the puddles' texture: one frame of their rings' slopes, laid twice each way and
+     * scaled by {@code strength}, or flat water without rings, in the same encoding as
+     * {@link #compose}.
+     */
+    static void composeRings(byte[] ringRg, float strength, byte[] rgba) {
+        int mask = PUDDLE_RING_PX - 1;
+        for (int j = 0; j < PUDDLE_SIZE; j++) {
+            for (int i = 0; i < PUDDLE_SIZE; i++) {
+                float sx = 0f;
+                float sy = 0f;
+                if (ringRg != null && strength > 0f) {
+                    int at = ((j & mask) * PUDDLE_RING_PX + (i & mask)) * 2;
+                    int p = (ringRg[at] & 0xFF) << 8 | (ringRg[at + 1] & 0xFF);
+                    sx = strength * SLOPE_X[p];
+                    sy = strength * SLOPE_Y[p];
+                }
+                float norm = Math.abs(sx) + Math.abs(sy) + 1f;
+                int out = (j * PUDDLE_SIZE + i) * 4;
+                rgba[out] = encode(sx / norm);
+                rgba[out + 1] = encode(sy / norm);
+                rgba[out + 2] = 0;
+                rgba[out + 3] = (byte) 0xFF;
+            }
         }
     }
 
@@ -370,8 +457,10 @@ public final class WaterNormals {
         released = true;
         ocean.cancel(false);
         ripples.cancel(false);
+        puddleRipples.cancel(false);
         composer.shutdownNow();
         DirectBufferPool.release(staging);
+        DirectBufferPool.release(puddleStaging);
     }
 
     /** Every frame of the flipbook at {@link #MIP_LEVEL}, as red-green pairs per texel. */
@@ -460,10 +549,10 @@ public final class WaterNormals {
         return (byte) Math.round((component * 0.5f + 0.5f) * 255f);
     }
 
-    /** Straight-up normals in the runtime's octahedral encoding. */
-    private static byte[] calmNormals() {
-        byte[] rgba = new byte[SIZE * SIZE * 4];
-        for (int i = 0; i < SIZE * SIZE; i++) {
+    /** Straight-up normals in the runtime's octahedral encoding, {@code size} texels across. */
+    private static byte[] calmNormals(int size) {
+        byte[] rgba = new byte[size * size * 4];
+        for (int i = 0; i < size * size; i++) {
             rgba[i * 4] = (byte) 128;
             rgba[i * 4 + 1] = (byte) 128;
             rgba[i * 4 + 3] = (byte) 255;

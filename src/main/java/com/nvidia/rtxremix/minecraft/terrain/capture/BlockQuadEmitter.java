@@ -27,7 +27,7 @@ import net.minecraft.client.renderer.block.ModelBlockRenderer;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
-import net.minecraft.client.renderer.texture.TextureAtlas;
+import net.minecraft.data.AtlasIds;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.core.BlockPos;
@@ -88,6 +88,14 @@ public final class BlockQuadEmitter {
      * it meets; see {@link #meetsNeighbourFace}.
      */
     static final float SHARED_FACE_PUSH = 1f / 512f;
+
+    /**
+     * Block units a see-through block's face against a solid block moves into its own block;
+     * see {@link #touchesSolidBlock}. The runtime restarts a ray past a surface by four float
+     * steps of the largest scene coordinate, which stays under 7000 blocks ({@code SceneSpace})
+     * and so under 4 mm; 1/128 holds to 16 000 ({@code BlockQuadEmitterSharedFaceTest}).
+     */
+    static final float CONTACT_FACE_INSET = 1f / 128f;
 
     private static final int HEIGHT_NOT_READ = Integer.MIN_VALUE;
     private static final int HEIGHT_UNKNOWN = Integer.MIN_VALUE + 1;
@@ -213,6 +221,15 @@ public final class BlockQuadEmitter {
         return INSTANCE.get();
     }
 
+    /** Releases a retiring build worker's buffers, without creating an emitter. */
+    public static void releaseCurrent() {
+        BlockQuadEmitter emitter = INSTANCE.get();
+        if (emitter == null) return;
+        emitter.abortSection();
+        emitter.writer.releaseBuffers();
+        INSTANCE.remove();
+    }
+
     public static int getWaterTopOcclusionRadius() {
         return WATER_TOP_CULL_RADIUS;
     }
@@ -264,6 +281,17 @@ public final class BlockQuadEmitter {
     }
 
     public boolean isActive() { return active; }
+
+    /** Releases an unfinished build immediately, including cancellation without a result. */
+    public void abortSection() {
+        if (!active) return;
+        active = false;
+        writer.releaseBuffers();
+        lights.clear();
+        parts.clear();
+        frapiState = null;
+        frapiWorld = null;
+    }
     public int getBlockCount() { return blockCount; }
     public int getFluidCount() { return fluidCount; }
 
@@ -493,6 +521,17 @@ public final class BlockQuadEmitter {
                     }
                 }
                 if ((sideDrawn & sideBit) == 0) {
+                    if (touchesSolidBlock(world, state, dir)) {
+                        setFacePush(dir, -CONTACT_FACE_INSET);
+                        for (int q = 0, quadCount = culledQuads.size(); q < quadCount; q++) {
+                            BakedQuad quad = culledQuads.get(q);
+                            BakedQuad.MaterialInfo material = quad.materialInfo();
+                            if (closesMedium(layerOverride, material.layer(), material.sprite())) {
+                                stageBakedQuad(quad, layerOverride, state, world, lx, ly, lz);
+                            }
+                        }
+                        setFacePush(null);
+                    }
                     continue;
                 }
                 setFacePush(meetsNeighbourFace(world, state, dir) ? dir : null);
@@ -695,8 +734,10 @@ public final class BlockQuadEmitter {
      */
     private QuadEmitter frapiEmitter;
 
+    /** Leaves a see-through block's side against a solid block to the model; {@link #captureFrapiQuad} keeps its medium. */
     private final Predicate<@Nullable Direction> frapiCullTest =
-            dir -> dir != null && !shouldDrawBlockSide(frapiWorld, frapiState, dir);
+            dir -> dir != null && !shouldDrawBlockSide(frapiWorld, frapiState, dir)
+                    && !touchesSolidBlock(frapiWorld, frapiState, dir);
 
     private void emitFrapiBlock(BlockAndTintGetter world, BlockState state,
                                  BlockStateModel model, @Nullable String layerOverride,
@@ -724,11 +765,16 @@ public final class BlockQuadEmitter {
         // The cull test is only advisory to the model, so a quad on a culled side
         // can still arrive here.
         Direction cull = quad.cullFace();
-        if (cull != null && frapiCullTest.test(cull)) {
-            return;
+        if (cull != null && !shouldDrawBlockSide(frapiWorld, frapiState, cull)) {
+            if (!touchesSolidBlock(frapiWorld, frapiState, cull)
+                    || !closesMedium(frapiLayerOverride, quad.chunkLayer(),
+                            frapiSpriteFinder != null ? frapiSpriteFinder.find(quad) : null)) {
+                return;
+            }
+            setFacePush(cull, -CONTACT_FACE_INSET);
+        } else {
+            setFacePush(cull != null && meetsNeighbourFace(frapiWorld, frapiState, cull) ? cull : null);
         }
-
-        setFacePush(cull != null && meetsNeighbourFace(frapiWorld, frapiState, cull) ? cull : null);
         for (int v = 0; v < 4; v++) {
             tempPositions[v * 3]     = quad.x(v) + frapiX + facePushX;
             tempPositions[v * 3 + 1] = quad.y(v) + frapiY + facePushY;
@@ -765,14 +811,14 @@ public final class BlockQuadEmitter {
                 spriteId, su0, sv0, su1, sv1, layerName);
     }
 
-    private static SpriteFinder blockSpriteFinder() {
+    public static SpriteFinder blockSpriteFinder() {
         Minecraft client = Minecraft.getInstance();
         if (client == null) {
             return null;
         }
-        return client.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS) instanceof TextureAtlas atlas
-                ? atlas.spriteFinder()
-                : null;
+        // A read of the atlas map, safe on a section worker. TextureManager.getTexture loads a
+        // texture it does not hold, a GL call, and crashed a Sodium worker under water.
+        return client.getAtlasManager().getAtlasOrThrow(AtlasIds.BLOCKS).spriteFinder();
     }
 
     private static int multiplyRgb(int argb, int tint) {
@@ -787,7 +833,7 @@ public final class BlockQuadEmitter {
      * so their quads are exactly what {@link BlockStateModelPart#getQuads} returns.
      * A modded model or part may emit different quads through FRAPI.
      */
-    private static boolean isVanillaModel(BlockStateModel model, List<BlockStateModelPart> parts) {
+    public static boolean isVanillaModel(BlockStateModel model, List<BlockStateModelPart> parts) {
         if (!VANILLA_CLASS.get(model.getClass())) {
             return false;
         }
@@ -929,6 +975,7 @@ public final class BlockQuadEmitter {
         }
 
         // Side faces
+        BlockState fluidBlock = getCachedBlockState(world, fluidPos.getX(), fluidPos.getY(), fluidPos.getZ());
         for (Direction dir : HORIZONTAL_DIRECTIONS) {
             fluidCheckPos.set(
                 fluidPos.getX() + dir.getStepX(),
@@ -965,6 +1012,17 @@ public final class BlockQuadEmitter {
                             lx, ly + sideH1, lz + 1, lx, ly + sideH0, lz);
                 }
                 default -> { continue; }
+            }
+
+            // Against a block short of a full cube (a dirt path) the side lies on the block's
+            // own face, and from under water the ray restarted past the translucent side
+            // carried on past that face too, so the block showed hollow. Moved into the
+            // block, as see-through block faces are, the block's face is met first.
+            if (meetsNeighbourFace(fluidBlock, sideState, dir)) {
+                for (int v = 0; v < 4; v++) {
+                    tempPositions[v * 3] += dir.getStepX() * SHARED_FACE_PUSH;
+                    tempPositions[v * 3 + 2] += dir.getStepZ() * SHARED_FACE_PUSH;
+                }
             }
 
             float fnx = dir.getStepX(), fny = 0, fnz = dir.getStepZ();
@@ -1216,13 +1274,43 @@ public final class BlockQuadEmitter {
                 && Block.shouldRenderFace(neighbour, state, side.getOpposite());
     }
 
+    /**
+     * Whether the current block is see-through and its face on {@code side} rests against a
+     * solid block, which vanilla culls it for. A path tracer needs that face: without it
+     * glass, ice, slime or honey on stone is an open shell, and a ray that enters has no
+     * surface to leave through, so the block looks half clear and does not tint what it
+     * rests on. Only the quads that {@link #closesMedium} are kept, moved
+     * {@link #CONTACT_FACE_INSET} into the block so they never share the stone's plane.
+     */
+    private boolean touchesSolidBlock(BlockAndTintGetter world, BlockState state, Direction side) {
+        return touchesSolidBlock(state, neighbourState(world, side));
+    }
+
+    static boolean touchesSolidBlock(BlockState state, BlockState neighbour) {
+        return !state.canOcclude() && neighbour.isSolidRender();
+    }
+
+    /** Whether a quad draws a see-through medium: glass, or a translucent sprite that reads as one. */
+    private boolean closesMedium(@Nullable String layerOverride, ChunkSectionLayer layer,
+                                 @Nullable TextureAtlasSprite sprite) {
+        if (layerOverride != null) {
+            return "glass".equals(layerOverride);
+        }
+        return layer == ChunkSectionLayer.TRANSLUCENT
+                && readsAsTranslucent(sprite != null ? sprite.contents().name() : null);
+    }
+
     private void setFacePush(@Nullable Direction side) {
+        setFacePush(side, SHARED_FACE_PUSH);
+    }
+
+    private void setFacePush(@Nullable Direction side, float distance) {
         if (side == null) {
             facePushX = facePushY = facePushZ = 0f;
         } else {
-            facePushX = side.getStepX() * SHARED_FACE_PUSH;
-            facePushY = side.getStepY() * SHARED_FACE_PUSH;
-            facePushZ = side.getStepZ() * SHARED_FACE_PUSH;
+            facePushX = side.getStepX() * distance;
+            facePushY = side.getStepY() * distance;
+            facePushZ = side.getStepZ() * distance;
         }
     }
 

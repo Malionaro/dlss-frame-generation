@@ -20,8 +20,12 @@ import com.nvidia.rtxremix.minecraft.asset.RemixMaterialStore;
 import com.nvidia.rtxremix.minecraft.asset.RemixMeshStore;
 import com.nvidia.rtxremix.minecraft.asset.RemixTexture;
 import com.nvidia.rtxremix.minecraft.asset.RemixTextureStore;
+import com.nvidia.rtxremix.minecraft.asset.SceneSpace;
 import com.nvidia.rtxremix.minecraft.benchmark.BenchmarkController;
 import com.nvidia.rtxremix.minecraft.gl.GlInterop;
+import com.nvidia.rtxremix.minecraft.gl.RemixPresentationWindow;
+import com.nvidia.rtxremix.minecraft.gl.PresentationMode;
+import com.nvidia.rtxremix.minecraft.util.CleanupSteps;
 import com.nvidia.rtxremix.minecraft.light.LightManager;
 import com.nvidia.rtxremix.minecraft.logic.ViewDistanceFade;
 import com.nvidia.rtxremix.minecraft.profiling.PerformanceTimer;
@@ -31,6 +35,7 @@ import com.nvidia.rtxremix.minecraft.sky.SkyRenderer;
 import com.nvidia.rtxremix.minecraft.terrain.ChunkManager;
 import com.nvidia.rtxremix.minecraft.lod.LodTerrain;
 import com.nvidia.rtxremix.minecraft.texture.AtlasAnimationForwarder;
+import com.nvidia.rtxremix.minecraft.compat.immediatelyfast.SignTextGeometryCache;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.texture.ParticleAtlasManager;
 import com.nvidia.rtxremix.minecraft.particle.RemixParticleRenderer.PreparedFrame;
@@ -123,6 +128,11 @@ public class RemixRenderer {
     private RemixAPI remixApi;
     private boolean initialized = false;
     private long windowHandle;
+    private long sdlWindowHandle;
+    private RemixPresentationWindow presentationWindow;
+    private int presentationSourceFbo = -1;
+    private int presentationSourceWidth;
+    private int presentationSourceHeight;
     
     private GlInterop interopGlVk = null;
     
@@ -166,6 +176,7 @@ public class RemixRenderer {
     private RemixParticleRenderer particleRenderer;
     private RemixWeatherRenderer weatherRenderer;
     private final LensEffects lensEffects = new LensEffects();
+    private float farPlane = 1000.0f;
     private final RainSurfaces rainSurfaces = new RainSurfaces();
     private final Puddles puddles = new Puddles();
     private final ExecutorService particleExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -248,6 +259,7 @@ public class RemixRenderer {
 
             Minecraft client = Minecraft.getInstance();
             long sdlHandle = client.getWindow().handle();
+            sdlWindowHandle = sdlHandle;
             
             windowHandle = getHwndFromSdl(sdlHandle);
             
@@ -293,7 +305,7 @@ public class RemixRenderer {
             // RTXREMIX_WINDOW_POS="x,y" moves the window before startup() so the
             // swapchain is created on the monitor that will display it (benchmarks
             // use this to target a specific monitor, e.g. a 4K panel at a negative
-            // desktop coordinate). Must run on the render thread, which owns the window.
+            // desktop coordinate). SDL dispatches to its window thread when required.
             String windowPos = System.getenv("RTXREMIX_WINDOW_POS");
             if (windowPos != null && !windowPos.isBlank()) {
                 String[] parts = windowPos.split(",");
@@ -315,6 +327,13 @@ public class RemixRenderer {
                     throw new RuntimeException("GL interop: required GL extensions are not supported");
                 }
 
+                PresentationMode presentationMode = PresentationMode.configured();
+                if (presentationMode == PresentationMode.CHILD) {
+                    presentationWindow = new RemixPresentationWindow(windowHandle,
+                            client.getWindow().getWidth(), client.getWindow().getHeight());
+                    windowHandle = presentationWindow.handle();
+                }
+                LOGGER.info("Remix presentation mode: {}", presentationMode);
                 StartupInfo startupInfo = StartupInfo.builder()
                     .hwnd(windowHandle)
                     .interopImage(true)
@@ -557,6 +576,7 @@ public class RemixRenderer {
         boolean recaptureTerrain = pendingTerrainRecaptureAfterTextureReload;
         pendingTextureReload = false;
         LOGGER.info("Reloading textures, materials, and terrain");
+        SignTextGeometryCache.clear();
         joinInFlightParticleRenderTask();
         discardPendingParticleFrame();
         AtlasAnimationForwarder.clear();
@@ -761,6 +781,19 @@ public class RemixRenderer {
         return true;
     }
 
+    /**
+     * Brings the retained scene to the scene origin if it moved this frame, before anything else
+     * is submitted: the camera moves with the origin, so an instance left behind would show
+     * thousands of blocks off. The radiance caches are keyed on scene positions, so they start
+     * over, as after a jump in the time of day.
+     */
+    private void followSceneOrigin() {
+        if (!RemixInstanceStore.get().syncToOrigin()) return;
+        if (lightManager != null) lightManager.resetRadianceCaches();
+        SceneSpace.Origin origin = SceneSpace.current();
+        LOGGER.info("Scene origin moved to ({}, {})", origin.x(), origin.z());
+    }
+
     public void renderAndSubmitFrame() {
         if (!initialized || remixApi == null) {
             return;
@@ -774,6 +807,7 @@ public class RemixRenderer {
         }
 
         perfTimer.beginFrame();
+        followSceneOrigin();
 
         CompletableFuture<ParticleRenderResult> particleFuture = null;
         boolean entityFrameClosed = false;
@@ -1062,14 +1096,16 @@ public class RemixRenderer {
             return null;
         }
 
+        SceneSpace.Origin origin = SceneSpace.current();
         CompletableFuture<ParticleRenderResult> future = CompletableFuture.supplyAsync(
-                () -> renderParticlesOnWorker(tickDelta, frameIndex),
+                () -> renderParticlesOnWorker(tickDelta, frameIndex, origin),
                 particleExecutor);
         particleRenderFuture = future;
         return future;
     }
 
-    private ParticleRenderResult renderParticlesOnWorker(float tickDelta, long frameIndex) {
+    private ParticleRenderResult renderParticlesOnWorker(float tickDelta, long frameIndex,
+                                                         SceneSpace.Origin origin) {
         RemixAPI.tracyThreadName("Particles");
         long previousFrameIndex = ProfileScope.setFrameIndexForCurrentThread(frameIndex);
         PreparedFrame preparedFrame = null;
@@ -1077,7 +1113,7 @@ public class RemixRenderer {
         // belongs. It is deliberately not returned to the render thread: it is off the critical
         // path, so charging it to a render-thread section overstates that section.
         try (ProfileScope particleScope = ProfileScope.begin("Particles")) {
-            preparedFrame = particleRenderer.prepare(tickDelta);
+            preparedFrame = particleRenderer.prepare(tickDelta, origin);
             particleScope
                     .captureCount(preparedFrame.particleCount())
                     .drawCalls(preparedFrame.plannedDrawCount())
@@ -1266,6 +1302,7 @@ public class RemixRenderer {
                         aspect);
             }
             float farPlane = Math.max(1000.0f, lodRadius * 1.25f);
+            this.farPlane = farPlane;
             LightManager.SkyLightState sky = lightManager != null
                     ? lightManager.getSkyLightState() : LightManager.SkyLightState.empty();
             // Only a sky with a lit sun draws its starburst; the empty state's sun points up.
@@ -1276,7 +1313,7 @@ public class RemixRenderer {
             lensEffects.updateCamera(camera, client.level, worldFov, aspect, farPlane, sunDirection);
     
             CameraInfoParameterizedEXT worldCameraParams = CameraInfoParameterizedEXT.builder()
-                .position((float) pos.x, (float) pos.y, (float) pos.z)
+                .position(SceneSpace.x(pos.x), SceneSpace.y(pos.y), SceneSpace.z(pos.z))
                 .forward(forwardX, forwardY, forwardZ)
                 .up(upX, upY, upZ)
                 .right(rightX, rightY, rightZ)
@@ -1407,11 +1444,13 @@ public class RemixRenderer {
             try (ProfileScope ignored = ProfileScope.begin("Remix.Present")) {
                 remixApi.present(presentInfo);
             }
+            if (presentationWindow != null) presentationWindow.show();
             submitFrameCalled = false;
         } catch (Exception e) {
             failed = true;
             logPresentFailureOnce("Error presenting frame", e);
         }
+        presentationSourceFbo = -1;
         if (!failed) {
             presentFailureLogged = false;
         }
@@ -1444,6 +1483,13 @@ public class RemixRenderer {
         }
     }
 
+    /** Called after the GL backend attaches the completed frame's texture. Render thread only. */
+    public void setPresentationSource(int framebuffer, int width, int height) {
+        presentationSourceFbo = framebuffer;
+        presentationSourceWidth = width;
+        presentationSourceHeight = height;
+    }
+
     private void blitGlToRemix() {
         if (!submitFrameCalled) {
             // if there was no submitFrame, then interop image might not be allocated yet
@@ -1455,8 +1501,10 @@ public class RemixRenderer {
         InteropInfo interopInfo = remixApi.dxvkGetInteropInfo();
         interopGlVk.recreateImagesIf(interopInfo);
 
-        int srcFbo = 0; // 0 is a default framebuffer
-        interopGlVk.copyFromFramebuffer(srcFbo);
+        if (presentationSourceFbo >= 0) {
+            interopGlVk.copyFromFramebuffer(presentationSourceFbo,
+                    presentationSourceWidth, presentationSourceHeight);
+        }
 
         // signal that GL is done copying, so VK can read the image and present
         interopGlVk.signalDone();
@@ -1465,7 +1513,12 @@ public class RemixRenderer {
     public int getInteropDepthTexture() {
         return interopGlVk.getDepthTexture();
     }
-    
+
+    /** The far plane of the last world camera given to Remix, which its depth is written against. */
+    public float getFarPlane() {
+        return farPlane;
+    }
+
     /** Runs on the client executor so the clear lands during teardown, before the next world initializes. */
     public void clearWorld() {
         LOGGER.info("World clear requested (will execute on render thread)");
@@ -1516,6 +1569,7 @@ public class RemixRenderer {
      */
     private void doClearWorld() {
         LOGGER.info("Clearing world resources...");
+        SignTextGeometryCache.clear();
         joinInFlightParticleRenderTask();
         discardPendingParticleFrame();
         
@@ -1566,6 +1620,11 @@ public class RemixRenderer {
         LOGGER.info("Shutting down RTX Remix renderer...");
 
         initialized = false;
+        presentationSourceFbo = -1;
+        CleanupSteps cleanup = new CleanupSteps();
+        if (presentationWindow != null) {
+            cleanup.run(presentationWindow::stop);
+        }
         pendingTextureReload = false;
         pendingTerrainRecaptureAfterTextureReload = false;
 
@@ -1573,77 +1632,84 @@ public class RemixRenderer {
         // records into a list that will never be drained.
         AtlasAnimationForwarder.clear();
 
-        joinInFlightParticleRenderTask();
-        discardPendingParticleFrame();
-        shutdownParticleExecutor();
-        doClearWorld();
+        cleanup.run(this::joinInFlightParticleRenderTask);
+        cleanup.run(this::discardPendingParticleFrame);
+        cleanup.run(this::shutdownParticleExecutor);
+        cleanup.run(this::doClearWorld);
         if (skyRenderer != null) {
-            skyRenderer.shutdown();
-            skyRenderer = null;
+            cleanup.run(() -> { skyRenderer.shutdown(); skyRenderer = null; });
         }
 
         // Release the conf option-layers while the runtime is still alive
         // (remixApi shutdown itself is deferred until window close).
         if (confLayerDriver != null) {
-            confLayerDriver.releaseAll();
-            confLayerDriver = null;
+            cleanup.run(() -> { confLayerDriver.releaseAll(); confLayerDriver = null; });
         }
 
         if (chunkManager != null) {
-            chunkManager.destroy();
+            cleanup.run(chunkManager::destroy);
         }
         if (lodTerrain != null) {
-            lodTerrain.destroy();
+            cleanup.run(lodTerrain::destroy);
         }
 
         // Retained entity meshes reference the block atlas and particle atlas
         // materials their managers own, so the submitter goes before both.
         if (entitySubmitter != null) {
-            entitySubmitter.close();
-            entitySubmitter = null;
+            cleanup.run(() -> { entitySubmitter.close(); entitySubmitter = null; });
         }
         if (particleRenderer != null) {
-            particleRenderer.cleanup();
-            particleRenderer = null;
+            cleanup.run(() -> { particleRenderer.cleanup(); particleRenderer = null; });
         }
         if (weatherRenderer != null) {
-            weatherRenderer.cleanup();
-            weatherRenderer = null;
+            cleanup.run(() -> { weatherRenderer.cleanup(); weatherRenderer = null; });
         }
-        lensEffects.cleanup();
+        cleanup.run(lensEffects::cleanup);
         if (particleAtlasManager != null) {
-            particleAtlasManager.cleanup();
-            particleAtlasManager = null;
+            cleanup.run(() -> { particleAtlasManager.cleanup(); particleAtlasManager = null; });
         }
         if (textureManager != null) {
-            textureManager.cleanup();
-            textureManager = null;
+            cleanup.run(() -> { textureManager.cleanup(); textureManager = null; });
         }
         if (firstPersonPass != null) {
-            firstPersonPass.close();
-            firstPersonPass = null;
+            cleanup.run(() -> { firstPersonPass.close(); firstPersonPass = null; });
         }
         if (blockOutlinePass != null) {
-            blockOutlinePass.close();
-            blockOutlinePass = null;
+            cleanup.run(() -> { blockOutlinePass.close(); blockOutlinePass = null; });
         }
 
-        shutdownAssetStores();
+        cleanup.run(this::shutdownAssetStores);
 
         if (interopGlVk != null) {
-            interopGlVk.destroy();
-            interopGlVk = null;
+            cleanup.run(() -> { interopGlVk.destroy(); interopGlVk = null; });
         }
 
         LOGGER.info("RTX Remix native runtime shutdown deferred until Minecraft window close");
         LOGGER.info("RTX Remix renderer shut down");
+        cleanup.finish();
     }
 
     /**
      * Completes native runtime shutdown after Minecraft has destroyed its SDL window.
      */
     public void shutdownNativeRuntime() {
-        shutdownRemixApi();
+        try {
+            shutdownRemixApi();
+        } finally {
+            if (presentationWindow != null) {
+                presentationWindow.close();
+                presentationWindow = null;
+            }
+        }
+    }
+
+    /** Destroys this renderer's SDL parent synchronously before deferred native shutdown. */
+    public void destroySdlWindow(long sdlHandle, Runnable destruction) {
+        if (presentationWindow != null && sdlHandle == sdlWindowHandle) {
+            presentationWindow.destroyParentWindow(destruction);
+        } else {
+            destruction.run();
+        }
     }
 
     private void shutdownRemixApi() {
@@ -1659,11 +1725,13 @@ public class RemixRenderer {
     }
 
     private void shutdownAssetStores() {
-        RemixInstanceStore.shutdown();
-        RemixMeshStore.shutdown();
-        RemixLightStore.shutdown();
-        RemixMaterialStore.shutdown();
-        RemixTextureStore.shutdown();
+        CleanupSteps cleanup = new CleanupSteps();
+        cleanup.run(RemixInstanceStore::shutdown);
+        cleanup.run(RemixMeshStore::shutdown);
+        cleanup.run(RemixLightStore::shutdown);
+        cleanup.run(RemixMaterialStore::shutdown);
+        cleanup.run(RemixTextureStore::shutdown);
+        cleanup.finish();
     }
 
     private void shutdownParticleExecutor() {

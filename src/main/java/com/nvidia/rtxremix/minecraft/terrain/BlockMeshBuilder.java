@@ -383,6 +383,10 @@ public final class BlockMeshBuilder {
     }
 
     private RemixMaterial resolveMaterial(String bucketKey, BlockTextureManager tex) {
+        if (bucketKey.endsWith("_emissive")) {
+            return tex.getAtlasMaterial(BlockTextureManager.layerType(
+                    bucketKey.substring(0, bucketKey.length() - "_emissive".length())));
+        }
         boolean isSss = bucketKey.endsWith("_sss");
         String baseName = isSss ? bucketKey.substring(0, bucketKey.length() - 4) : bucketKey;
 
@@ -390,7 +394,7 @@ public final class BlockMeshBuilder {
 
         int layerType = BlockTextureManager.layerType(baseName);
         return isSss ? tex.getAtlasMaterialSSS(layerType)
-                     : tex.getAtlasMaterial(layerType);
+                     : tex.getAtlasMaterialWithoutEmission(layerType);
     }
 
 

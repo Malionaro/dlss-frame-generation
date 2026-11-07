@@ -6,6 +6,7 @@ package com.nvidia.rtxremix.minecraft.settings;
 
 import com.nvidia.rtxremix.RemixAPI;
 import com.nvidia.rtxremix.RemixException;
+import com.nvidia.rtxremix.minecraft.asset.SceneSpace;
 import com.nvidia.rtxremix.minecraft.light.BlockLightIntensityControls;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.terrain.ChunkManager;
@@ -16,8 +17,10 @@ import com.nvidia.rtxremix.minecraft.cloud.CloudRenderer;
 import com.nvidia.rtxremix.minecraft.cloud.CloudStyle;
 import com.nvidia.rtxremix.minecraft.RtxRemixMod;
 import com.nvidia.rtxremix.minecraft.sky.SkyLook;
+import com.nvidia.rtxremix.minecraft.lens.LensEffects;
 import com.nvidia.rtxremix.minecraft.lens.LensLook;
 import com.nvidia.rtxremix.minecraft.sky.SkyRenderer;
+import com.nvidia.rtxremix.minecraft.weather.Puddles;
 import com.nvidia.rtxremix.minecraft.UnfocusedFramerateLimit;
 import com.nvidia.rtxremix.minecraft.entity.RemixEntityPass;
 
@@ -85,6 +88,11 @@ public final class RtxSettingsFactory {
         list.add(RtxSetting.ofBool("dist.lod", SettingGroup.RENDER_DISTANCE,
                 "rtxremix.setting.dist.lod", "rtxremix.setting.dist.lod.tip",
                 lod.isEnabled(), lod::isEnabled, lod::setEnabled));
+        list.add(RtxSetting.ofInt(RtxOptionFactory.LOD_MEMORY_ID, SettingGroup.RENDER_DISTANCE,
+                "rtxremix.setting.dist.lodMemory", "rtxremix.setting.dist.lodMemory.tip",
+                LodTerrain.MIN_MEMORY_MIB, LodTerrain.UNLIMITED_MEMORY_MIB, LodTerrain.DEFAULT_MEMORY_MIB,
+                lod::getMemoryMib, lod::setMemoryMib)
+                .withStep(LodTerrain.MEMORY_STEP_MIB).deferSliderApply());
 
         // Both ranges are 0 to 32 chunks and both zeros mean Auto, Minecraft's
         // render distance. 32 is Minecraft's maximum render distance and
@@ -288,6 +296,31 @@ public final class RtxSettingsFactory {
                 "rtx.materials.smoothReliefMapFiltering",
                 remix::getConfigVariableResolved, remix::setConfigVariable)
                 .ifPresent(list::add);
+        // Deferred: a new amount or reflection rebuilds every puddle.
+        list.add(RtxSetting.ofFloat("materials.puddleAmount", SettingGroup.MATERIALS,
+                "rtxremix.setting.materials.puddleAmount", "rtxremix.setting.materials.puddleAmount.tip",
+                0.0, 1.0, Puddles.DEFAULT_AMOUNT,
+                () -> (double) Puddles.getAmount(), v -> Puddles.setAmount(v.floatValue()))
+                .deferSliderApply());
+        list.add(RtxSetting.ofFloat("materials.puddleReflection", SettingGroup.MATERIALS,
+                "rtxremix.setting.materials.puddleReflection", "rtxremix.setting.materials.puddleReflection.tip",
+                0.0, 1.0, Puddles.DEFAULT_REFLECTION,
+                () -> (double) Puddles.getReflection(), v -> Puddles.setReflection(v.floatValue()))
+                .deferSliderApply());
+        list.add(RtxSetting.ofBool("materials.puddlesWhenDry", SettingGroup.MATERIALS,
+                "rtxremix.setting.materials.puddlesWhenDry", "rtxremix.setting.materials.puddlesWhenDry.tip",
+                false, Puddles::isKeptWhenDry, Puddles::setKeptWhenDry));
+
+        // --- Debug views: switches for looking into what the renderer does, never needed to play ---
+        list.add(RtxSetting.ofBool("debug.puddleMask", SettingGroup.DEBUG_VIEWS,
+                "rtxremix.setting.debug.puddleMask", "rtxremix.setting.debug.puddleMask.tip",
+                false, Puddles::isMaskShown, Puddles::setMaskShown));
+        list.add(RtxSetting.ofBool("debug.domeClouds", SettingGroup.DEBUG_VIEWS,
+                "rtxremix.setting.debug.domeClouds", "rtxremix.setting.debug.domeClouds.tip",
+                false, LensEffects::isDomeCloudsShown, LensEffects::setDomeCloudsShown));
+        list.add(RtxSetting.ofBool("debug.sceneOriginOffset", SettingGroup.DEBUG_VIEWS,
+                "rtxremix.setting.debug.sceneOriginOffset", "rtxremix.setting.debug.sceneOriginOffset.tip",
+                false, SceneSpace::debugOffset, SceneSpace::setDebugOffset));
 
         // --- Tonemapping ---
         list.add(floatSetting("post.exposure", SettingGroup.TONEMAPPING,

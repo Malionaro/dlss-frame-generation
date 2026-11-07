@@ -93,10 +93,15 @@ final class VolumetricCloudGenerator {
         float cirrusAngle;
         /** How much of the cirrus layer shows: its brightness, with the weather taken out. */
         float cirrusStrength;
+        /**
+         * A lightning flash in the clouds' frame and the irradiance it gives a cloud right at
+         * it, zero with none; see cloud_field.glsl's Flash.
+         */
+        final float[] flash = new float[4];
         final CloudShapes shapes = new CloudShapes();
     }
 
-    private final ByteBuffer parameters = BufferUtils.createByteBuffer(8 * 4 * Float.BYTES);
+    private final ByteBuffer parameters = BufferUtils.createByteBuffer(9 * 4 * Float.BYTES);
     private ReadbackRing panoramaReadback;
     private float cameraExtinction;
 
@@ -296,6 +301,7 @@ final class VolumetricCloudGenerator {
                 .putFloat(frame.hazeDistance).putFloat(frame.brightness);
         parameters.putFloat(frame.detail).putFloat(frame.cirrusAngle).putFloat(frame.cirrusStrength)
                 .putFloat(frame.coverage[2]);
+        putVector(frame.flash, frame.flash[3]);
         parameters.flip();
     }
 

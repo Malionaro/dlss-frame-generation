@@ -26,11 +26,17 @@ class LodMeshBuilderTest {
 
     private final LodMeshBuilder.Bucket ground = new LodMeshBuilder.Bucket(false);
     private final LodMeshBuilder.Bucket water = new LodMeshBuilder.Bucket(true);
+    private final LodMeshBuilder.Bucket glass = new LodMeshBuilder.Bucket(LodMeshBuilder.Paint.GLASS);
+    private final LodMeshBuilder.Bucket glow = new LodMeshBuilder.Bucket(LodMeshBuilder.Paint.PALETTE);
+    private final LodMeshBuilder.Bucket lamp = new LodMeshBuilder.Bucket(LodMeshBuilder.Paint.PALETTE);
 
     @AfterEach
     void releaseBuckets() {
         ground.release();
         water.release();
+        glass.release();
+        glow.release();
+        lamp.release();
     }
 
     @Test
@@ -88,6 +94,41 @@ class LodMeshBuilderTest {
     }
 
     @Test
+    void glowingBlocksAndLavaReadTheirColourFromThePalette() {
+        ByteBuffer dh = quads(2);
+        top(dh, 0, 16, 40, 0, 16, LodMeshBuilder.LAVA_MATERIAL, 0xD0, 0x60, 0x10);
+        top(dh, 16, 32, 70, 0, 16, LodMeshBuilder.ILLUMINATED_MATERIAL, 0xF0, 0xE0, 0x90);
+
+        convertSplit(dh, quads(0), LodMeshBuilder.Clip.NONE, 0, 0);
+
+        assertEquals(0, ground.quads);
+        assertEquals(1, glow.quads, "lava glows at the terrain's emission");
+        assertEquals(1, lamp.quads, "other blocks that give off light glow dimmer");
+        assertEquals(0xFFFFFFFF, glow.vertices.getInt(32), "the vertex colour leaves the texel alone");
+        assertEquals(LodPalette.u(0xD06010), glow.vertices.getFloat(24));
+        assertEquals(LodPalette.v(0xD06010), glow.vertices.getFloat(28));
+        assertEquals(LodPalette.u(0xF0E090), lamp.vertices.getFloat(24));
+    }
+
+    @Test
+    void translucentBuffersBecomeGlassTintedByTheirHue() {
+        ByteBuffer opaque = quads(1);
+        top(opaque, 0, 16, 64, 0, 16, STONE, 0x50, 0x50, 0x50);
+        ByteBuffer translucent = quads(2);
+        top(translucent, 0, 16, 70, 0, 16, STONE, 0xC0, 0x30, 0x30);
+        top(translucent, 0, 16, 60, 0, 16, LodMeshBuilder.WATER_MATERIAL, 0x20, 0x40, 0xC0);
+
+        convertSplit(opaque, translucent, LodMeshBuilder.Clip.NONE, 0, 0);
+
+        assertEquals(1, ground.quads);
+        assertEquals(1, water.quads, "water stays water in the translucent buffer");
+        assertEquals(1, glass.quads);
+        int tint = LodPalette.glassTint(0xC03030);
+        assertEquals(LodPalette.u(tint), glass.vertices.getFloat(24));
+        assertEquals(LodPalette.v(tint), glass.vertices.getFloat(28));
+    }
+
+    @Test
     void theSignatureChangesOnlyWithTheChunksItRemoves() {
         LodMeshBuilder.Clip near = LodMeshBuilder.Clip.disk(0, 0, 4);
         assertEquals(0, near.signature(1024, 1024, 64), "a far section loses nothing");
@@ -120,6 +161,18 @@ class LodMeshBuilderTest {
         LodGeometry geometry = LodGeometry.copyOf(List.of(dh), List.of());
         try {
             LodMeshBuilder.convert(geometry, clip, originX, originZ, ground, water);
+        } finally {
+            geometry.release();
+        }
+    }
+
+    private void convertSplit(ByteBuffer opaque, ByteBuffer translucent, LodMeshBuilder.Clip clip,
+                              int originX, int originZ) {
+        opaque.flip();
+        translucent.flip();
+        LodGeometry geometry = LodGeometry.copyOf(List.of(opaque), List.of(translucent));
+        try {
+            LodMeshBuilder.convert(geometry, clip, originX, originZ, ground, water, glass, glow, lamp);
         } finally {
             geometry.release();
         }

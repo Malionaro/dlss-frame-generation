@@ -17,8 +17,8 @@ public final class CloudShapes {
 
     public static final int MAX_SHAPES = 1;
     private static final float KIND_CREEPER = 1.0f;
-    /** Cells along each side of the wrap period, so cells line up across the wrap. */
-    private static final int CELLS_PER_PERIOD = 4;
+    /** Cells along each side of the wrap period, so cells line up across the wrap: 4500 blocks each. */
+    private static final int CELLS_PER_PERIOD = 40;
     /** The chance a calm cell holds a creeper's head on a given day. */
     private static final double CREEPER_CHANCE = 0.03;
     /** Blocks of a creeper's head's half size, at cloud size 1. */

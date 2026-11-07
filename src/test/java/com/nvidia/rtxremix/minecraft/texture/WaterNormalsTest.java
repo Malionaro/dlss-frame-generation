@@ -125,6 +125,18 @@ class WaterNormalsTest {
         assertTrue((rgba[0] & 0xFF) > still, "a ring adds to a wave's own slope: " + (rgba[0] & 0xFF) + " over " + still);
     }
 
+    @Test
+    void puddlesHoldStillWithoutRainAndRippleWithIt() {
+        byte[] rgba = new byte[FRAME_TEXELS * 4];
+        WaterNormals.composeRings(null, 0f, rgba);
+        for (int at = 0; at < rgba.length; at += 4 * 997) {
+            assertEquals(128, rgba[at] & 0xFF, 1);
+            assertEquals(128, rgba[at + 1] & 0xFF, 1);
+        }
+        WaterNormals.composeRings(constantFrame(160, 128), 1f, rgba);
+        assertTrue((rgba[0] & 0xFF) > 150, "a ring tilts a puddle: " + (rgba[0] & 0xFF));
+    }
+
     private static byte[] constantFrame(int red, int green) {
         byte[] frame = new byte[FRAME_TEXELS * 2];
         for (int i = 0; i < FRAME_TEXELS; i++) {

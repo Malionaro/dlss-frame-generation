@@ -75,12 +75,12 @@ class RainRipplesTest {
 
     @Test
     void theLoopRunsFromItsLastFrameIntoItsFirst() {
-        float[][] drops = RainRipples.drops(TILE_BLOCKS, 11L);
+        float[][] drops = RainRipples.drops(TILE_BLOCKS, 11L, 1f);
         float texel = TILE_BLOCKS / FRAME_PX;
         float[] start = new float[FRAME_PX * FRAME_PX];
         float[] end = new float[FRAME_PX * FRAME_PX];
-        RainRipples.heightField(start, FRAME_PX, texel, drops, 0f);
-        RainRipples.heightField(end, FRAME_PX, texel, drops, RainRipples.LOOP_SECONDS);
+        RainRipples.heightField(start, FRAME_PX, texel, drops, 0f, 1f);
+        RainRipples.heightField(end, FRAME_PX, texel, drops, RainRipples.LOOP_SECONDS, 1f);
         assertArrayEquals(start, end, 1.0e-7f);
     }
 
@@ -89,7 +89,7 @@ class RainRipplesTest {
         float texel = TILE_BLOCKS / FRAME_PX;
         float[][] drop = {{0.01f, TILE_BLOCKS / 2f, 0f}};
         float[] height = new float[FRAME_PX * FRAME_PX];
-        RainRipples.heightField(height, FRAME_PX, texel, drop, 0.2f);
+        RainRipples.heightField(height, FRAME_PX, texel, drop, 0.2f, 1f);
         int row = FRAME_PX / 2;
         float lastColumn = 0f;
         for (int x = FRAME_PX - 8; x < FRAME_PX; x++) lastColumn += Math.abs(height[row * FRAME_PX + x]);

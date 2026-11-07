@@ -21,6 +21,12 @@ The named owner class defines each property's current default, accepted range,
 and invalid-value behaviour. Sizes are in bytes and durations in nanoseconds
 unless the key name says otherwise.
 
+## Presentation
+
+| Key | Effect | Owner |
+|---|---|---|
+| `rtxremix.presentation` | Windows presentation host, selected once at startup: `child` (default) uses a separate non-OpenGL child window; `parent` uses the original SDL/OpenGL window on systems that support sharing it. Values are case-sensitive; an invalid or blank value logs a warning and uses `child`. Restart after changing this setting | `PresentationMode` |
+
 ## Terrain Capture
 
 Vanilla's chunk workers capture section geometry and hand it to the render
@@ -33,7 +39,7 @@ long a worker may wait.
 | `rtxremix.chunk.unseenCompilesPerFrame` | Dirty sections outside the frustum handed to vanilla's compile per frame, nearest first, while its queue holds fewer than 16; 0 turns this off and leaves the ground behind the camera uncaptured until it comes into view | `UnseenSectionCompiles` |
 | `rtxremix.blockDataQueue.maxPendingItems` | Section captures queued for the render thread | `BlockDataQueue` |
 | `rtxremix.blockDataQueue.maxPendingBytes` | Bytes of queued captures | `BlockDataQueue` |
-| `rtxremix.blockDataQueue.maxDrainItems` | Captures drained per render-thread pass | `BlockDataQueue` |
+| `rtxremix.blockDataQueue.maxDrainItems` | Captures drained per batch; the render thread takes batches while `chunk.captureDrainBudgetNs` lasts | `BlockDataQueue` |
 | `rtxremix.blockDataQueue.maxDrainBytes` | Bytes drained per pass | `BlockDataQueue` |
 | `rtxremix.blockDataQueue.publishWaitBudgetNs` | Initial worker wait budget before attempting FIFO eviction. In-flight reservations can require additional waits; it is not a total-wait limit | `BlockDataQueue` |
 | `rtxremix.chunk.localBatchPacing` | Pace the integrated server's chunk delivery while capture is on, spreading chunk-load bursts across frames. Set to false to restore vanilla's single batch per tick | `LocalChunkBatchPacing` |
@@ -76,9 +82,14 @@ per-frame budgets.
 | Key | Effect | Owner |
 |---|---|---|
 | `rtxremix.chunk.meshBuildThreads` | Threads in the column merge executor | `ChunkManager` |
+| `rtxremix.lod.lampEmission` | Share of the terrain's emission at which LOD blocks that give off light glow, lava aside, 0.2 by default | `LodTerrain` |
 | `rtxremix.lod.buildThreads` | Low-priority threads building LOD terrain meshes against the current clip, 3 by default | `LodTerrain` |
 | `rtxremix.chunk.maxPendingBuilds` | Merges outstanding at once | `ChunkManager` |
 | `rtxremix.chunk.maxPendingMeshBytes` | Bytes of merged but not yet installed geometry | `ChunkManager` |
+| `rtxremix.chunk.captureDrainBudgetNs` | Render-thread time per frame spent taking section captures, in `blockDataQueue.maxDrainItems` batches, 2 ms by default | `ChunkManager` |
+| `rtxremix.chunk.maxCapturesPerFrame` | Section captures taken per frame at most, 256 by default | `ChunkManager` |
+| `rtxremix.chunk.deepCaveCull` | `false` keeps unlit cave sections in distant columns' meshes while the camera is above ground | `DeepCaveCull` |
+| `rtxremix.chunk.deepCaveNearChunks` | Chunks around the camera whose columns keep their unlit cave sections, 4 by default | `DeepCaveCull` |
 | `rtxremix.chunk.installBudgetNs` | Render-thread time per frame spent installing columns | `ChunkManager` |
 | `rtxremix.chunk.maxInstalledColumnsPerFrame` | Columns published per frame | `ChunkManager` |
 | `rtxremix.chunk.columnStreamSettleFrames` | Frames a column waits for its neighbours before publishing | `ChunkManager` |

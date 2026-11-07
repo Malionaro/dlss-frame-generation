@@ -325,7 +325,9 @@ public final class DirectQuadWriter {
         String bk = isWater ? "water" : renderLayer;
         BlockTextureManager.SpriteEntry se = (spriteId != null && tex != null)
                 ? tex.getSpriteById(spriteId) : null;
-        if (se != null && se.hasSSS && tex != null && tex.getAtlasMaterialSSS(layerType) != null) {
+        if (se != null && se.hasEmission) {
+            bk = emissiveBucketKey(bk);
+        } else if (se != null && se.hasSSS && tex != null && tex.getAtlasMaterialSSS(layerType) != null) {
             bk = sssBucketKeyForOriginalLayer(renderLayer, bk);
         }
         final String bucketKey = bk;
@@ -366,7 +368,9 @@ public final class DirectQuadWriter {
             if (cat == ChunkManager.CAT_SOLID && layerType != solidType) {
                 bk = "solid";
             }
-            if (se != null && se.hasSSS && tex != null && tex.getAtlasMaterialSSS(layerType) != null) {
+            if (se != null && se.hasEmission) {
+                bk = emissiveBucketKey(bk);
+            } else if (se != null && se.hasSSS && tex != null && tex.getAtlasMaterialSSS(layerType) != null) {
                 bk = sssBucketKeyForOriginalLayer(layer, bk);
             }
             final String bucketKey = bk;
@@ -690,6 +694,21 @@ public final class DirectQuadWriter {
             case "glass" -> "glass_sss";
             case "water" -> "water_sss";
             default -> bucketKey + "_sss";
+        };
+    }
+
+    /**
+     * The bucket for a sprite with texels in the emissive atlas; only these quads take the
+     * atlas material that samples it ({@code BlockMeshBuilder.resolveMaterial}).
+     */
+    static String emissiveBucketKey(String bucketKey) {
+        return switch (bucketKey) {
+            case "solid" -> "solid_emissive";
+            case "cutout" -> "cutout_emissive";
+            case "cutout_mipped" -> "cutout_mipped_emissive";
+            case "translucent" -> "translucent_emissive";
+            case "glass" -> "glass_emissive";
+            default -> bucketKey + "_emissive";
         };
     }
 

@@ -8,10 +8,10 @@ import com.nvidia.rtxremix.InstanceCategoryBit;
 import com.nvidia.rtxremix.InstanceInfoBlendEXT;
 import com.nvidia.rtxremix.MaterialInfo;
 import com.nvidia.rtxremix.MaterialInfoOpaqueEXT;
+import com.nvidia.rtxremix.MaterialInfoTranslucentEXT;
 import com.nvidia.rtxremix.RemixAPI;
 import com.nvidia.rtxremix.TextureFormat;
 import com.nvidia.rtxremix.TexturePurpose;
-import com.nvidia.rtxremix.Transform;
 import com.nvidia.rtxremix.minecraft.ClientViewDistance;
 import com.nvidia.rtxremix.minecraft.asset.RemixInstance;
 import com.nvidia.rtxremix.minecraft.asset.RemixInstanceStore;
@@ -30,9 +30,6 @@ import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.opengl.GL;
-import org.lwjgl.opengl.GL11C;
-import org.lwjgl.opengl.NVXGPUMemoryInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -70,6 +67,13 @@ public final class LodTerrain {
     private static final boolean DISTANT_HORIZONS =
             FabricLoader.getInstance().isModLoaded("distanthorizons");
     private static final long INSTALL_BUDGET_NS = 1_000_000L;
+    /** Common glass, as Minecraft's own glass takes it. */
+    private static final float GLASS_IOR = 1.52f;
+    /** A glass face's thickness; its transmittance is measured over the same, so a face passes its tint once. */
+    private static final float GLASS_WALL = 0.05f;
+    /** Share of the terrain's emission at which blocks that give off light, lava aside, glow. */
+    private static final float LAMP_EMISSION = Math.max(0f,
+            Float.parseFloat(System.getProperty("rtxremix.lod.lampEmission", "0.2")));
     /**
      * Low-priority threads building meshes. One fell some eighty sections behind a camera
      * flying across the city, and the sections it had not reached showed LOD ground over
@@ -85,12 +89,17 @@ public final class LodTerrain {
     /** Frames between clips while columns keep changing, so sections near loading chunks finish. */
     private static final int CLIP_INTERVAL_FRAMES = 4;
     /**
-     * Mesh data the LOD terrain may hold, a sixteenth of the video memory and at most 2 GiB.
-     * Remix's buffers and acceleration structures take about twice the mesh data: the 2 GiB a
-     * 32 GB card affords held 4.3 GB of it there, more than an 8 GB card has to spare.
+     * The LOD Memory setting, the mesh data the LOD terrain may hold, in MiB. Remix's buffers
+     * and acceleration structures take about twice the mesh data. A budget worked out from
+     * the card's memory, a sixteenth of it, held an 8 GB card to 512 MiB and drew Distant
+     * Horizons' higher qualities only around the player, where 2 GiB had run on it.
      */
-    private static final long MAX_INSTALLED_BYTES = 2L << 30;
-    private static final long MIN_INSTALLED_BYTES = 256L << 20;
+    public static final int DEFAULT_MEMORY_MIB = 2048;
+    public static final int MIN_MEMORY_MIB = 256;
+    public static final int MAX_MEMORY_MIB = 4096;
+    public static final int MEMORY_STEP_MIB = 256;
+    /** The slider's last step, past {@link #MAX_MEMORY_MIB}: no budget at all. */
+    public static final int UNLIMITED_MEMORY_MIB = MAX_MEMORY_MIB + MEMORY_STEP_MIB;
     private static final InstanceInfoBlendEXT BLEND = InstanceInfoBlendEXT.textureTimesVertexColor();
     /** Frames a hidden section may linger while the sections replacing it are built. */
     private static final int MAX_LINGER_FRAMES = 600;
@@ -131,7 +140,8 @@ public final class LodTerrain {
     private int epoch;
     private int buildsInFlight;
     private long installedBytes;
-    private long maxInstalledBytes = MAX_INSTALLED_BYTES;
+    private int memoryMib = DEFAULT_MEMORY_MIB;
+    private long maxInstalledBytes = (long) DEFAULT_MEMORY_MIB << 20;
     private boolean budgetWarned;
     /**
      * Blocks from the camera past which no section is drawn, shrunk from infinity when the mesh
@@ -149,12 +159,17 @@ public final class LodTerrain {
     private int clipCenterX = Integer.MIN_VALUE;
     private int clipCenterZ = Integer.MIN_VALUE;
     private RemixMaterial groundMaterial;
+    private RemixTexture palette;
+    private RemixMaterial glassMaterial;
+    private RemixMaterial glowMaterial;
+    private RemixMaterial lampMaterial;
 
     public LodTerrain(PerformanceTimer timer) {
         this.timer = timer;
         cntAwaited = timer.registerCounter("Lod.Awaited");
         cntLingering = timer.registerCounter("Lod.Lingering");
         cntHeld = timer.registerCounter("Lod.Held");
+        if (DISTANT_HORIZONS) DistantHorizonsCompat.bindEvents();
     }
 
     public boolean isEnabled() {
@@ -163,6 +178,30 @@ public final class LodTerrain {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    /** The LOD Memory setting, in MiB. */
+    public int getMemoryMib() {
+        return memoryMib;
+    }
+
+    /**
+     * Render thread. A smaller budget gives up the farthest sections at once; a larger one
+     * builds again the sections it had given up.
+     */
+    public void setMemoryMib(int mib) {
+        memoryMib = mib;
+        long budget = mib >= UNLIMITED_MEMORY_MIB ? Long.MAX_VALUE : (long) mib << 20;
+        boolean grew = budget > maxInstalledBytes;
+        maxInstalledBytes = budget;
+        budgetWarned = false;
+        if (!capturing) return;
+        if (installedBytes > budget) {
+            makeRoom(0.0, 0);
+        } else if (grew) {
+            budgetRadius = Double.POSITIVE_INFINITY;
+            revisitStarved();
+        }
     }
 
     /** Radius of the LOD terrain being drawn, in blocks, or 0 when there is none. */
@@ -212,6 +251,8 @@ public final class LodTerrain {
             if (section.enabled) setSwap(section, SWAP_AWAITED);
         }
         retirement.clear();
+        // Every instance is gone, so the emission strength can change with the reload.
+        destroyPaletteMaterials();
     }
 
     /** Drops everything when the world goes; the next world's sections arrive afresh. */
@@ -224,12 +265,23 @@ public final class LodTerrain {
         builder.shutdownNow();
         if (groundMaterial != null && !groundMaterial.isDeleted()) groundMaterial.destroy();
         groundMaterial = null;
+        destroyPaletteMaterials();
+        if (palette != null && !palette.isDeleted()) palette.destroy();
+        palette = null;
+    }
+
+    private void destroyPaletteMaterials() {
+        if (glassMaterial != null && !glassMaterial.isDeleted()) glassMaterial.destroy();
+        if (glowMaterial != null && !glowMaterial.isDeleted()) glowMaterial.destroy();
+        if (lampMaterial != null && !lampMaterial.isDeleted()) lampMaterial.destroy();
+        glassMaterial = null;
+        glowMaterial = null;
+        lampMaterial = null;
     }
 
     private void setCapturing(boolean on) {
         capturing = on;
         LodSection.capturing = on;
-        if (on) maxInstalledBytes = installBudget();
         if (!on) {
             epoch++;
             dropSwaps();
@@ -250,13 +302,6 @@ public final class LodTerrain {
         // Starting asks the mod to rebuild every section so the copies arrive;
         // stopping hands it back its own shading and drawing.
         DistantHorizonsCompat.setCapturing(on);
-    }
-
-    /** Render thread. The mesh budget for this card's video memory, or the most without NVIDIA's query. */
-    private static long installBudget() {
-        if (!GL.getCapabilities().GL_NVX_gpu_memory_info) return MAX_INSTALLED_BYTES;
-        long videoMemory = (long) GL11C.glGetInteger(NVXGPUMemoryInfo.GL_GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX) << 10;
-        return Math.clamp(videoMemory / 16, MIN_INSTALLED_BYTES, MAX_INSTALLED_BYTES);
     }
 
     /** Whether events are left for the next frame. */
@@ -538,6 +583,9 @@ public final class LodTerrain {
         RemixMaterial ground = groundMaterial();
         RemixMaterial water = textures != null ? textures.getWaterSurfaceMaterial() : null;
         if (ground == null) return;
+        RemixMaterial glass = glassMaterial();
+        RemixMaterial glow = textures != null ? glowMaterial(textures.terrainEmissionIntensity()) : null;
+        RemixMaterial lamp = textures != null ? lampMaterial(textures.terrainEmissionIntensity()) : null;
 
         while (buildsInFlight < MAX_BUILDS_IN_FLIGHT && !buildQueue.isEmpty()) {
             LodSection section = buildQueue.poll();
@@ -560,7 +608,7 @@ public final class LodTerrain {
                 Throwable failure = null;
                 try {
                     mesh = LodMeshBuilder.build(geometry, buildClip, section.minX, section.minZ,
-                            ground, water);
+                            ground, water, glass, glow, lamp);
                 } catch (Throwable t) {
                     failure = t;
                 } finally {
@@ -626,10 +674,8 @@ public final class LodTerrain {
         try {
             RemixMeshStore.get().create(mesh);
             boolean visible = section.swap == SWAP_LINGERING || (section.enabled && section.swap != SWAP_HELD);
-            Transform transform = Transform.identity();
-            transform.setTranslation(section.minX, section.minY, section.minZ);
             instance = new RemixInstance(mesh)
-                    .setTransform(transform)
+                    .setWorldTranslation(section.minX, section.minY, section.minZ)
                     .setCategoryFlags(visible ? 0 : InstanceCategoryBit.HIDDEN)
                     .setBlendExt(BLEND)
                     .setDoubleSided(true);
@@ -696,5 +742,87 @@ public final class LodTerrain {
             groundMaterial = null;
         }
         return groundMaterial;
+    }
+
+    private RemixTexture palette() {
+        if (palette != null && !palette.isDeleted()) return palette;
+        ByteBuffer pixels = LodPalette.fill(DirectBufferPool.acquire(LodPalette.WIDTH * LodPalette.HEIGHT * 4));
+        try {
+            palette = RemixTextureStore.get().create(new RemixTexture(LodPalette.WIDTH, LodPalette.HEIGHT,
+                    TextureFormat.RGBA8_UNORM, TexturePurpose.COLOR, pixels));
+        } catch (RuntimeException e) {
+            LOGGER.error("Failed to create the LOD colour palette", e);
+            palette = null;
+        }
+        return palette;
+    }
+
+    /**
+     * Glass, ice and the LOD mod's other translucent blocks: each face lets its
+     * palette tint through, as a thin wall, so a pane neither refracts by a whole
+     * block nor darkens with the block's depth.
+     */
+    private RemixMaterial glassMaterial() {
+        if (glassMaterial != null && !glassMaterial.isDeleted()) return glassMaterial;
+        RemixTexture texture = palette();
+        if (texture == null) return null;
+        try {
+            MaterialInfo info = MaterialInfo.builder()
+                    .albedoTexture(texture.getHandle())
+                    .filterMode(0)
+                    .translucentExt(MaterialInfoTranslucentEXT.builder()
+                            .refractiveIndex(GLASS_IOR)
+                            .transmittanceTexture(texture.getHandle())
+                            .transmittanceMeasurementDistance(GLASS_WALL)
+                            .thinWall(GLASS_WALL)
+                            .build())
+                    .build();
+            glassMaterial = RemixMaterialStore.get().create(new RemixMaterial(info, List.of(texture), null));
+        } catch (RuntimeException e) {
+            LOGGER.error("Failed to create the LOD glass material", e);
+            glassMaterial = null;
+        }
+        return glassMaterial;
+    }
+
+    /** Lava glows in its own colour at the terrain's emission. */
+    private RemixMaterial glowMaterial(float intensity) {
+        if (glowMaterial != null && !glowMaterial.isDeleted()) return glowMaterial;
+        glowMaterial = paletteGlow(intensity, "glow");
+        return glowMaterial;
+    }
+
+    /**
+     * Other blocks that give off light glow at {@link #LAMP_EMISSION} of the terrain's emission.
+     * The LOD mod draws an area of many blocks as one of them, so a rooftop torch became a box
+     * several blocks across, which at the full emission lit the roofs around and bloomed to
+     * white (#23); the block's own texture glows only where its flame is.
+     */
+    private RemixMaterial lampMaterial(float intensity) {
+        if (lampMaterial != null && !lampMaterial.isDeleted()) return lampMaterial;
+        lampMaterial = paletteGlow(intensity * LAMP_EMISSION, "lamp");
+        return lampMaterial;
+    }
+
+    private RemixMaterial paletteGlow(float intensity, String name) {
+        RemixTexture texture = palette();
+        if (texture == null) return null;
+        try {
+            MaterialInfo info = MaterialInfo.builder()
+                    .albedoTexture(texture.getHandle())
+                    .emissiveTexture(texture.getHandle())
+                    .emissiveIntensity(intensity)
+                    .filterMode(0)
+                    .opaqueExt(MaterialInfoOpaqueEXT.builder()
+                            .albedoConstant(1f, 1f, 1f)
+                            .roughnessConstant(0.9f)
+                            .metallicConstant(0f)
+                            .build())
+                    .build();
+            return RemixMaterialStore.get().create(new RemixMaterial(info, List.of(texture), null));
+        } catch (RuntimeException e) {
+            LOGGER.error("Failed to create the LOD {} material", name, e);
+            return null;
+        }
     }
 }

@@ -35,6 +35,8 @@ public final class CloudField {
     private static final float[] LAYERS = new float[8];
     /** LightDirection, LightIrradiance, AmbientTop and AmbientBottom, three each. */
     private static final float[] LIGHT = new float[12];
+    /** A lightning flash's position in the clouds' frame and its irradiance, as Flash. */
+    private static final float[] FLASH = new float[4];
     private static String source;
     private static int noiseTexture;
     private static int cirrusTexture;
@@ -134,6 +136,10 @@ public final class CloudField {
         return LIGHT;
     }
 
+    public static float[] flash() {
+        return FLASH;
+    }
+
     public static float brightness() {
         return brightness;
     }
@@ -180,6 +186,7 @@ public final class CloudField {
         hazeDistance = frame.hazeDistance;
         cirrusAngle = frame.cirrusAngle;
         cirrusStrength = frame.cirrusStrength;
+        System.arraycopy(frame.flash, 0, FLASH, 0, 4);
         shapes = frame.shapes;
         framed = true;
     }

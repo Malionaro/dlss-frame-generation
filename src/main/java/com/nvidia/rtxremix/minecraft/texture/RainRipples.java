@@ -47,12 +47,20 @@ public final class RainRipples {
 
     /** Simulates every frame of the loop over a tile {@code framePx} texels across. */
     public static RainRipples generate(int framePx, float tileBlocks, long seed) {
-        float[][] drops = drops(tileBlocks, seed);
+        return generate(framePx, tileBlocks, seed, 1f, 1f);
+    }
+
+    /**
+     * Simulates every frame of the loop, its rings {@code size} times as large, with the
+     * slopes they had, and {@code density} times as many drops.
+     */
+    public static RainRipples generate(int framePx, float tileBlocks, long seed, float size, float density) {
+        float[][] drops = drops(tileBlocks, seed, density);
         float texel = tileBlocks / framePx;
         float[] height = new float[framePx * framePx];
         byte[][] normals = new byte[FRAMES][];
         for (int frame = 0; frame < FRAMES; frame++) {
-            heightField(height, framePx, texel, drops, frame * (LOOP_SECONDS / FRAMES));
+            heightField(height, framePx, texel, drops, frame * (LOOP_SECONDS / FRAMES), size);
             normals[frame] = new byte[framePx * framePx * 2];
             finish(height, framePx, texel, normals[frame]);
         }
@@ -97,9 +105,9 @@ public final class RainRipples {
     }
 
     /** Each drop as {x, z, landing time}, in blocks and seconds within one loop. */
-    static float[][] drops(float tileBlocks, long seed) {
+    static float[][] drops(float tileBlocks, long seed, float density) {
         SplittableRandom random = new SplittableRandom(seed);
-        int count = Math.max(1, Math.round(DROPS_PER_BLOCK_SECOND * tileBlocks * tileBlocks * LOOP_SECONDS));
+        int count = Math.max(1, Math.round(DROPS_PER_BLOCK_SECOND * density * tileBlocks * tileBlocks * LOOP_SECONDS));
         float[][] drops = new float[count][];
         for (int i = 0; i < count; i++) {
             drops[i] = new float[] {
@@ -111,16 +119,17 @@ public final class RainRipples {
     }
 
     /** Surface height in blocks over one frame, wrapping at the tile's edges. */
-    static void heightField(float[] height, int framePx, float texel, float[][] drops, float time) {
+    static void heightField(float[] height, int framePx, float texel, float[][] drops, float time, float size) {
         Arrays.fill(height, 0f);
         for (float[] drop : drops) {
             float age = time - drop[2];
             if (age < 0f) age += LOOP_SECONDS;
             if (age >= LIFETIME) continue;
-            float radius = RING_SPEED * age;
-            float width = BASE_WIDTH + WIDTH_GROWTH * radius;
+            float radius = RING_SPEED * size * age;
+            float width = BASE_WIDTH * size + WIDTH_GROWTH * radius;
             float fade = 1f - age / LIFETIME;
-            float amplitude = AMPLITUDE * fade * fade;
+            float amplitude = AMPLITUDE * size * fade * fade;
+            float wavelength = WAVELENGTH * size;
             float reach = radius + 3f * width;
             int span = (int) Math.ceil(reach / texel);
             int centerX = (int) Math.floor(drop[0] / texel);
@@ -133,7 +142,7 @@ public final class RainRipples {
                     float offset = r - radius;
                     if (Math.abs(offset) > 3f * width) continue;
                     float envelope = (float) Math.exp(-(offset * offset) / (width * width));
-                    float wave = (float) Math.cos(2.0 * Math.PI * offset / WAVELENGTH);
+                    float wave = (float) Math.cos(2.0 * Math.PI * offset / wavelength);
                     int x = Math.floorMod(centerX + dx, framePx);
                     int z = Math.floorMod(centerZ + dz, framePx);
                     height[z * framePx + x] += amplitude * envelope * wave;

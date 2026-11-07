@@ -32,6 +32,12 @@ final class CloudWeather {
     private static final double AHEAD_TICKS = 9000.0;
     /** Ticks after the rain over which the sky clears again. */
     private static final double AFTER_TICKS = 9000.0;
+    /**
+     * Ticks the closing ahead of the rain takes at least to go all the way: the server's timer
+     * jumps when the rain ends, for a tick after a night is slept through, and on a weather
+     * command, and the sky turned into other clouds at once each time.
+     */
+    private static final double AHEAD_EASE_TICKS = 2400.0;
     /** Rain at which the sky counts as rained on, for the clearing after it. */
     private static final float WET_RAIN = 0.2f;
     private static final int UNSTABLE_SALT = 21;
@@ -49,6 +55,8 @@ final class CloudWeather {
 
     private int levelIdentity;
     private long lastWetTick = Long.MIN_VALUE;
+    private double ahead = Double.NaN;
+    private long aheadTick;
 
     /**
      * Works out this moment's weather.
@@ -61,9 +69,10 @@ final class CloudWeather {
     void update(ClientLevel level, float rain, float thunder, float coverageSetting) {
         long tick = level.getGameTime();
         int identity = System.identityHashCode(level);
-        if (identity != levelIdentity || (lastWetTick != Long.MIN_VALUE && tick < lastWetTick)) {
+        if (identity != levelIdentity || (lastWetTick != Long.MIN_VALUE && tick < lastWetTick) || tick < aheadTick) {
             levelIdentity = identity;
             lastWetTick = Long.MIN_VALUE;
+            ahead = Double.NaN;
         }
         if (rain > WET_RAIN) {
             lastWetTick = tick;
@@ -73,7 +82,9 @@ final class CloudWeather {
         double moist = mood(clock, MOIST_SALT);
         double untilRain = ticksUntilRain(level);
         boolean commandedClear = untilRain < 0.0;
-        double ahead = commandedClear ? 0.0 : smoothstep(AHEAD_TICKS, 0.0, untilRain);
+        ahead = ease(ahead, commandedClear ? 0.0 : smoothstep(AHEAD_TICKS, 0.0, untilRain),
+                (tick - aheadTick) / AHEAD_EASE_TICKS);
+        aheadTick = tick;
         double after = commandedClear || lastWetTick == Long.MIN_VALUE
                 ? 0.0 : 1.0 - Math.clamp((tick - lastWetTick) / AFTER_TICKS, 0.0, 1.0);
 
@@ -90,6 +101,12 @@ final class CloudWeather {
         coverage[2] = (float) Math.clamp(alto, 0.0, 1.0);
         calm = (float) ((1.0 - Math.max(rain, thunder)) * (1.0 - smoothstep(0.3, 0.6, unstable))
                 * (1.0 - smoothstep(0.4, 0.7, moist)) * (1.0 - ahead) * (1.0 - after));
+    }
+
+    /** {@code value} moved toward {@code target} by at most {@code step}; the target when the value is unset. */
+    static double ease(double value, double target, double step) {
+        if (Double.isNaN(value)) return target;
+        return value + Math.clamp(target - value, -step, step);
     }
 
     /**

@@ -26,6 +26,7 @@ import com.nvidia.rtxremix.TexturePatchInfo;
 import com.nvidia.rtxremix.TexturePurpose;
 import com.nvidia.rtxremix.Transform;
 import com.nvidia.rtxremix.minecraft.RemixRenderer;
+import com.nvidia.rtxremix.minecraft.asset.SceneSpace;
 import com.nvidia.rtxremix.minecraft.cloud.CloudRenderer;
 import com.nvidia.rtxremix.minecraft.asset.RemixAssetBase;
 import com.nvidia.rtxremix.minecraft.asset.RemixLight;
@@ -78,6 +79,11 @@ public class SkyRenderer {
     private static final float OVERCAST_MEAN_G = 0.26890025f;
     private static final float OVERCAST_MEAN_B = 0.31064802f;
     private static final float WEATHER_UPDATE_DELTA = 1.0e-4f;
+    /**
+     * Radiance a lightning flash adds to the overcast dome ({@link LightningFlash#reach}), so the
+     * whole sky lights with the land, by night as by day.
+     */
+    private static final float LIGHTNING_SKY_RADIANCE = 8.0f;
     private static final Identifier SUN_TEXTURE =
             Identifier.withDefaultNamespace("textures/environment/sun.png");
     private static final Identifier MOON_PHASES_TEXTURE =
@@ -98,7 +104,11 @@ public class SkyRenderer {
 
     /** Sky ambient rect light: Y position just above the 1.18+ overworld build limit (y=320). */
     private static final float SKY_AMBIENT_RECT_Y = 325.0f;
-    /** Sky ambient rect light: half-size in blocks, so it covers 8000 blocks from origin. */
+    /**
+     * Sky ambient rect light: half-size in blocks, so it covers 8000 blocks from the scene
+     * origin ({@link SceneSpace}), which the camera never leaves by more than 6144; centred on
+     * world zero, it stopped covering the camera 8000 blocks out.
+     */
     private static final float SKY_AMBIENT_RECT_HALF_SIZE = 8000.0f;
     /**
      * Constant sky for the End, in the atmospheric dome's radiance units: vanilla end_sky.png's
@@ -192,6 +202,11 @@ public class SkyRenderer {
 
     private static boolean enabled = true;
     private static boolean skyAmbientRectEnabled = DEFAULT_SKY_AMBIENT_RECT_ENABLED;
+
+    /** How strongly the aurora showed last frame, 0 when it did not. Render thread only. */
+    public static float auroraVisibility() {
+        return SkyLayers.auroraVisibility;
+    }
     private static float skyDomeMultiplier = 1.0f;
 
     public SkyRenderer(RemixRenderer renderer) {
@@ -430,7 +445,8 @@ public class SkyRenderer {
             return false;
         }
 
-        float domeIntensity = weather.intensity() * skyDomeMultiplier;
+        float domeIntensity = (weather.intensity() + LIGHTNING_SKY_RADIANCE * LightningFlash.reach())
+                * skyDomeMultiplier;
         boolean needsUpdate = overcastDomeLightAsset == null
                 || Math.abs(weather.opacity() - lastWeatherOpacity) > WEATHER_UPDATE_DELTA
                 || Math.abs(domeIntensity - lastWeatherIntensity) > WEATHER_UPDATE_DELTA;
@@ -950,15 +966,15 @@ public class SkyRenderer {
         transform.matrix[0] = rx * halfSize;
         transform.matrix[1] = ux * halfSize;
         transform.matrix[2] = dx;
-        transform.matrix[3] = (float) cameraPos.x + dx * CELESTIAL_DISTANCE;
+        transform.matrix[3] = SceneSpace.x(cameraPos.x) + dx * CELESTIAL_DISTANCE;
         transform.matrix[4] = ry * halfSize;
         transform.matrix[5] = uy * halfSize;
         transform.matrix[6] = dy;
-        transform.matrix[7] = (float) cameraPos.y + dy * CELESTIAL_DISTANCE;
+        transform.matrix[7] = SceneSpace.y(cameraPos.y) + dy * CELESTIAL_DISTANCE;
         transform.matrix[8] = rz * halfSize;
         transform.matrix[9] = uz * halfSize;
         transform.matrix[10] = dz;
-        transform.matrix[11] = (float) cameraPos.z + dz * CELESTIAL_DISTANCE;
+        transform.matrix[11] = SceneSpace.z(cameraPos.z) + dz * CELESTIAL_DISTANCE;
     }
 
     private static void updateStarTransform(
@@ -970,9 +986,9 @@ public class SkyRenderer {
                 .rotateY(-(float) Math.PI / 2.0f)
                 .rotateX(skyAngle * (float) (Math.PI * 2.0));
         Transform rotated = Transform.fromTRS(
-                (float) cameraPos.x,
-                (float) cameraPos.y,
-                (float) cameraPos.z,
+                SceneSpace.x(cameraPos.x),
+                SceneSpace.y(cameraPos.y),
+                SceneSpace.z(cameraPos.z),
                 rotation,
                 STAR_DISTANCE_SCALE);
         System.arraycopy(rotated.matrix, 0, transform.matrix, 0, transform.matrix.length);

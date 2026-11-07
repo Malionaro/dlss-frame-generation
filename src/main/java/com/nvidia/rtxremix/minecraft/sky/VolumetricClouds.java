@@ -24,6 +24,7 @@ import com.nvidia.rtxremix.minecraft.asset.RemixMeshStore;
 import com.nvidia.rtxremix.minecraft.asset.RemixMeshSurface;
 import com.nvidia.rtxremix.minecraft.asset.RemixTexture;
 import com.nvidia.rtxremix.minecraft.asset.RemixTextureStore;
+import com.nvidia.rtxremix.minecraft.asset.SceneSpace;
 import com.nvidia.rtxremix.minecraft.cloud.CloudRenderer;
 import com.nvidia.rtxremix.minecraft.light.LightManager;
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
@@ -71,6 +72,14 @@ final class VolumetricClouds {
     private static final long MOVING_DISPATCH_INTERVAL_NANOS = 30_000_000L;
     /** Blocks the camera moves between marches beyond which it is moving. */
     private static final double MOVING_BLOCKS = 0.001;
+    /** Blocks above the clouds' base where a lightning bolt's light sits in them. */
+    private static final float FLASH_HEIGHT_IN_CLOUD = 40.0f;
+    /**
+     * The irradiance a lightning flash gives a cloud right at the bolt, in the units of the
+     * sun's: about what sunlight gives a cloud by day, so the cloud around the bolt shows as
+     * brightly as a lit cloud.
+     */
+    private static final float FLASH_IRRADIANCE = 30.0f;
     /** Averages a texel over about seven marches, which at 7.5 a second follows the light within a second. */
     private static final float HISTORY_WEIGHT = 0.15f;
     /** A camera move this far between dispatches is a teleport, and restarts the running average. */
@@ -85,8 +94,12 @@ final class VolumetricClouds {
     private static final double WIND_BLOCKS_PER_TICK = 0.15;
     private static final double WIND_X = 0.96;
     private static final double WIND_Z = 0.28;
-    /** Every noise period in the shader divides this at feature scale 1, so wrapping by it shows no seam. */
-    private static final double WRAP_PERIOD = 18000.0;
+    /**
+     * Every noise period in cloud_field.glsl divides this at feature scale 1, so wrapping by it
+     * shows no seam. At 18000, which most of them did not divide, the whole sky turned into
+     * other clouds whenever the wind or the camera carried the frame across the wrap.
+     */
+    static final double WRAP_PERIOD = 180000.0;
     private static final float HAZE_DISTANCE = 9000.0f;
     private static final float GROUND_ALBEDO = 0.3f;
     /**
@@ -115,6 +128,7 @@ final class VolumetricClouds {
     private long lastDispatchNanos;
     private int dispatches;
     private boolean restart = true;
+    private int seenTimeJump = SkyTimeJump.generation();
     private double lastCameraX;
     private double lastCameraY;
     private double lastCameraZ;
@@ -172,7 +186,14 @@ final class VolumetricClouds {
             // and its reflections stepped along with it; on the move it is marched thirty times.
             boolean moving = cameraPos.distanceToSqr(lastCameraX, lastCameraY, lastCameraZ)
                     > MOVING_BLOCKS * MOVING_BLOCKS;
-            long interval = moving ? MOVING_DISPATCH_INTERVAL_NANOS : DISPATCH_INTERVAL_NANOS;
+            // After a jump in the time of day the panorama starts over from the new light.
+            if (SkyTimeJump.generation() != seenTimeJump) {
+                seenTimeJump = SkyTimeJump.generation();
+                restart = true;
+            }
+            // A lightning flash lasts a few frames, so it is marched every frame while it changes.
+            long interval = LightningFlash.changing() ? 0L
+                    : moving ? MOVING_DISPATCH_INTERVAL_NANOS : DISPATCH_INTERVAL_NANOS;
             if ((restart || now - lastDispatchNanos >= interval)
                     && dispatch(world, cameraPos, tickDelta, clouds, base, light, ambientTop, rain)) {
                 lastDispatchNanos = now;
@@ -200,9 +221,9 @@ final class VolumetricClouds {
             builtSkyMeshGeneration = skyMeshGeneration;
             if (mesh != null) {
                 float[] m = transform.matrix;
-                m[0] = 1.0f; m[1] = 0.0f; m[2] = 0.0f;  m[3] = (float) cameraPos.x;
-                m[4] = 0.0f; m[5] = 1.0f; m[6] = 0.0f;  m[7] = (float) cameraPos.y;
-                m[8] = 0.0f; m[9] = 0.0f; m[10] = 1.0f; m[11] = (float) cameraPos.z;
+                m[0] = 1.0f; m[1] = 0.0f; m[2] = 0.0f;  m[3] = SceneSpace.x(cameraPos.x);
+                m[4] = 0.0f; m[5] = 1.0f; m[6] = 0.0f;  m[7] = SceneSpace.y(cameraPos.y);
+                m[8] = 0.0f; m[9] = 0.0f; m[10] = 1.0f; m[11] = SceneSpace.z(cameraPos.z);
                 api.drawInstance(mesh.getHandle(), m, InstanceCategoryBit.SKY, 1, blendPNext);
             }
         } catch (RuntimeException e) {
@@ -263,7 +284,13 @@ final class VolumetricClouds {
         double dz = cameraPos.z - lastCameraZ;
         double moved = Math.sqrt(dx * dx + dy * dy + dz * dz);
         boolean jumped = restart || moved > RESET_DISTANCE;
-        frame.historyWeight = jumped ? 1.0f : (float) Math.min(1.0, HISTORY_WEIGHT + moved / MOTION_BLOCKS);
+        frame.historyWeight = jumped || LightningFlash.changing() ? 1.0f
+                : (float) Math.min(1.0, HISTORY_WEIGHT + moved / MOTION_BLOCKS);
+        // The bolt reaches into the clouds above where it struck, a little up into their base.
+        frame.flash[0] = (float) (frame.cameraX + LightningFlash.x() - cameraPos.x);
+        frame.flash[1] = base + FLASH_HEIGHT_IN_CLOUD;
+        frame.flash[2] = (float) (frame.cameraZ + LightningFlash.z() - cameraPos.z);
+        frame.flash[3] = LightningFlash.strength() * FLASH_IRRADIANCE;
         frame.brightness = clouds.getUnboundBrightness();
         frame.parity = dispatches & 1;
         frame.hazeDistance = HAZE_DISTANCE;

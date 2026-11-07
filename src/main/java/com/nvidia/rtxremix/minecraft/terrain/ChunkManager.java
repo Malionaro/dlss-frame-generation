@@ -19,8 +19,10 @@ import com.nvidia.rtxremix.minecraft.light.BlockLightRuleManager;
 import com.nvidia.rtxremix.minecraft.light.BlockLightKey;
 import com.nvidia.rtxremix.minecraft.light.BlockLightIntensityControls;
 import com.nvidia.rtxremix.minecraft.asset.RemixMeshStore;
+import com.nvidia.rtxremix.minecraft.asset.RemixMaterialStore;
 import com.nvidia.rtxremix.minecraft.asset.RemixMesh;
 import com.nvidia.rtxremix.minecraft.asset.RemixLightStore;
+import com.nvidia.rtxremix.minecraft.asset.SceneSpace;
 import com.nvidia.rtxremix.minecraft.asset.RemixLight;
 import com.nvidia.rtxremix.minecraft.asset.RemixInstanceStore;
 import com.nvidia.rtxremix.minecraft.asset.RemixInstance;
@@ -36,7 +38,6 @@ import com.nvidia.rtxremix.LightInfoLightShaping;
 import com.nvidia.rtxremix.LightInfoRectEXT;
 import com.nvidia.rtxremix.LightInfoSphereEXT;
 import com.nvidia.rtxremix.RemixAPI;
-import com.nvidia.rtxremix.Transform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -99,6 +100,13 @@ public class ChunkManager {
     private final ArrayList<ColumnRenderState> dirtyBuildScratch = new ArrayList<>();
 
     private ClientLevel currentWorld;
+    private final DeepCaveCull caveCull = new DeepCaveCull();
+    private DeepCaveCull.LevelDarkness caveDarkness;
+    private ClientLevel caveDarknessWorld;
+    private int caveCullCx = Integer.MIN_VALUE;
+    private int caveCullCz = Integer.MIN_VALUE;
+    /** Sections the published columns leave out, held with the other gauges. */
+    private int heldCulledCaveSections;
     /**
      * Live count of pages across every render column, maintained where activePages changes.
      * Published through {@link TerrainDiagnostics#retainedPages()} as Chunk.RetainedPages,
@@ -440,6 +448,10 @@ public class ChunkManager {
             Long.getLong("rtxremix.chunk.installBudgetNs", 2_000_000L));
     private static final int MAX_INSTALLED_COLUMNS_PER_FRAME = Math.max(1,
             Integer.getInteger("rtxremix.chunk.maxInstalledColumnsPerFrame", MAX_PENDING));
+    private static final long CAPTURE_DRAIN_BUDGET_NS = Math.max(250_000L,
+            Long.getLong("rtxremix.chunk.captureDrainBudgetNs", 2_000_000L));
+    private static final int MAX_CAPTURES_PER_FRAME = Math.max(1,
+            Integer.getInteger("rtxremix.chunk.maxCapturesPerFrame", 256));
     private static final int COLUMN_STREAM_SETTLE_FRAMES = Math.max(0,
             Integer.getInteger("rtxremix.chunk.columnStreamSettleFrames", 4));
     private static final int COLUMN_STREAM_MAX_WAIT_FRAMES = Math.max(
@@ -470,6 +482,12 @@ public class ChunkManager {
         boolean urgentBuild;
         long dirtySinceFrame = Long.MIN_VALUE;
         long settleUntilFrame;
+        /** Whether the last build found sections {@link DeepCaveCull} would leave out. */
+        boolean hasDarkSections;
+        /** Sections the last build left out. */
+        int culledSections;
+        /** Set when sky light changed since the last build judged the cull; see {@link #updateCaveCull}. */
+        boolean cullStale;
 
         ColumnRenderState(long key, int cx, int cz) {
             this.key = key;
@@ -557,6 +575,7 @@ public class ChunkManager {
                 new TerrainDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 
+    private int cntRemixMeshes, cntRemixInstances, cntRemixMaterials;
     private int cntCap = -1, cntLightsCulled, cntLightsDrawn, cntLightsBeyondReach, cntReachable, cntWorkerMem, cntPooledDirectMB,
             cntBucketGrows, cntBucketGrowKB, cntDroppedQuads, cntPendingBuilds, cntPendingMeshMB, cntCaptureQueue,
             cntCaptureQueueMB, cntCaptureBackpressure, cntCaptureEvicted, cntLightRebuildsSkipped, cntPacedChunks,
@@ -566,7 +585,7 @@ public class ChunkManager {
             cntKnownSections, cntColumns, cntPublishedColumns, cntGeometryColumns,
             cntMissingColumns, cntMissingSections, cntRetainedPages,
             cntPagesInstalled, cntInstallBytes, cntInstancesAdded, cntInstancesRemoved,
-            cntMeshesDestroyed;
+            cntMeshesDestroyed, cntCulledCaveSections, cntUnderground;
     private int cntFloodIncrementalUs;
     private int perfBfs = -1;
     private volatile TerrainDiagnostics lastTerrainDiagnostics = TerrainDiagnostics.EMPTY;
@@ -581,7 +600,16 @@ public class ChunkManager {
     private static final int ZOMBIE_AUDIT_INTERVAL = 600; // frames (~10 s at 60 fps)
     private static final int ZOMBIE_AUDIT_COLUMNS_PER_FRAME = 64;
     private static final int ZOMBIE_AUDIT_REMOVALS_PER_FRAME = 2;
+    /**
+     * Chunks beyond the render distance a column is kept for. A mod that keeps chunks past it
+     * (Bobby holds the ones left behind for a minute) left their columns in the scene: flying on,
+     * twice the view area's instances piled up and the runtime drew whole columns with the wrong
+     * mesh or none. Vanilla draws nothing out there either.
+     */
+    private static final int RETENTION_MARGIN_CHUNKS = 2;
     private int framesSinceAudit = 0;
+    private int auditCenterX;
+    private int auditCenterZ;
     private long terrainFrame;
     /** The user's light cull distance in chunks; 0 means Auto, the render distance. */
     private int lightCullChunks = DEFAULT_LIGHT_CULL_CHUNKS;
@@ -762,6 +790,11 @@ public class ChunkManager {
                 cntFloodIncrementalUs = timer.registerCounter("Chunk.FloodIncrementalUs");
                 cntWorkerMem = timer.registerCounter("Chunk.WorkerMemKB");
                 cntPooledDirectMB = timer.registerCounter("Chunk.PooledDirectMB");
+                // Every live Remix object of the session, terrain or not: the GPU-resident scene
+                // has fixed capacities, and past them it truncates meshes or aliases surfaces.
+                cntRemixMeshes = timer.registerCounter("Remix.Meshes");
+                cntRemixInstances = timer.registerCounter("Remix.Instances");
+                cntRemixMaterials = timer.registerCounter("Remix.Materials");
                 cntBucketGrows = timer.registerCounter("Chunk.BucketGrows");
                 cntBucketGrowKB = timer.registerCounter("Chunk.BucketGrowKB");
                 cntDroppedQuads = timer.registerCounter("Chunk.DroppedQuads");
@@ -796,6 +829,8 @@ public class ChunkManager {
                 cntInstancesAdded = timer.registerCounter("Chunk.InstancesAdded");
                 cntInstancesRemoved = timer.registerCounter("Chunk.InstancesRemoved");
                 cntMeshesDestroyed = timer.registerCounter("Chunk.MeshesDestroyed");
+                cntCulledCaveSections = timer.registerCounter("Chunk.CulledCaveSections");
+                cntUnderground = timer.registerCounter("Chunk.Underground");
                 perfBfs      = timer.registerSection("Chunk.BFS");
             }
 
@@ -812,9 +847,10 @@ public class ChunkManager {
                         (int) Math.floor(cam.y),
                         (int) Math.floor(cam.z));
                 syncLightCullDistance();
+                updateCaveCull(pcx, pcz, cam);
 
                 long maintenanceDeadline = System.nanoTime() + MAINTENANCE_TIME_BUDGET_NS;
-                drainColumnUnloads(maintenanceDeadline);
+                drainColumnUnloads(maintenanceDeadline, pcx, pcz);
                 drainSectionRemovals(maintenanceDeadline);
                 drainLightWork(System.nanoTime() + LIGHT_TIME_BUDGET_NS);
                 int capturesProcessed = drainBlockData();
@@ -824,6 +860,9 @@ public class ChunkManager {
                 // Retained section meshes live in the pool; this is the off-heap footprint
                 // the collector no longer accounts for.
                 timer.count(cntPooledDirectMB, DirectBufferPool.allocatedBytes() / (1024 * 1024));
+                timer.count(cntRemixMeshes, RemixMeshStore.get().size());
+                timer.count(cntRemixInstances, RemixInstanceStore.get().size());
+                timer.count(cntRemixMaterials, RemixMaterialStore.get().size());
                 timer.count(cntBucketGrows, DirectQuadWriter.drainGrowthEvents());
                 timer.count(cntBucketGrowKB, DirectQuadWriter.drainGrowthCopiedBytes() / 1024);
                 timer.count(cntDroppedQuads, DirectQuadWriter.drainDroppedQuads());
@@ -848,7 +887,7 @@ public class ChunkManager {
                 timer.count(cntChunkUnloadUs, LocalChunkBatchPacing.unloadMicrosPerChunk());
                 timer.count(cntSurfaceScansSeeded, SkyLightSurfaceScanPolicy.drainSeeded());
 
-                advanceZombieAudit(maintenanceDeadline);
+                advanceZombieAudit(maintenanceDeadline, pcx, pcz);
                 submitDirtyBuilds(tex, pcx, pcz);
 
                 try (ProfileScope installScope = ProfileScope.begin("installReadyMeshes")) {
@@ -864,6 +903,8 @@ public class ChunkManager {
                 timer.count(cntMissingColumns, diag.columnsMissingGeometry());
                 timer.count(cntMissingSections, diag.missingGeometrySections());
                 timer.count(cntRetainedPages, diag.retainedPages());
+                timer.count(cntCulledCaveSections, heldCulledCaveSections);
+                timer.count(cntUnderground, caveCull.underground() ? 1 : 0);
 
                 retirementQueue.drainFrame();
 
@@ -878,7 +919,7 @@ public class ChunkManager {
 
             timer.begin(perfDraw);
             try (ProfileScope drawScope = ProfileScope.begin("Chunk.Draw")) {
-                drawScope.drawCalls(draw(api, timer, cam));
+                drawScope.drawCalls(draw(api, timer, cam, tex));
             } finally {
                 timer.end(perfDraw);
             }
@@ -886,7 +927,12 @@ public class ChunkManager {
     }
     // --- event draining ---
 
-    private void drainColumnUnloads(long deadline) {
+    private static boolean retained(int cx, int cz, int pcx, int pcz) {
+        int radius = ClientViewDistance.chunks() + RETENTION_MARGIN_CHUNKS;
+        return Math.abs(cx - pcx) <= radius && Math.abs(cz - pcz) <= radius;
+    }
+
+    private void drainColumnUnloads(long deadline, int pcx, int pcz) {
         Long key;
         while ((key = chunkUnloadEvents.poll()) != null) {
             // Cancel light tasks at ingestion, not when the entry reaches the
@@ -916,7 +962,7 @@ public class ChunkManager {
             LevelChunk liveChunk = currentWorld == null
                     ? null
                     : currentWorld.getChunkSource().getChunk(cx, cz, false);
-            if (liveChunk != null) {
+            if (liveChunk != null && retained(cx, cz, pcx, pcz)) {
                 iterator.remove();
                 continue;
             }
@@ -1000,7 +1046,23 @@ public class ChunkManager {
         return wc != null && wc.getSection(wc.getSectionIndexFromSectionY(sy)).hasOnlyAir();
     }
 
+    /**
+     * Takes captures in the queue's bounded batches for as long as the frame's budget lasts.
+     * One batch a frame held the queue at its cap while Bobby loaded a ring of cached chunks at
+     * once: vanilla's workers waited on it, and terrain came in far behind vanilla's own.
+     */
     private int drainBlockData() {
+        long deadline = System.nanoTime() + CAPTURE_DRAIN_BUDGET_NS;
+        int processed = 0;
+        do {
+            processed += drainBlockDataBatch();
+        } while (processed < MAX_CAPTURES_PER_FRAME
+                && BlockDataQueue.pendingCount() > 0
+                && System.nanoTime() < deadline);
+        return processed;
+    }
+
+    private int drainBlockDataBatch() {
         BlockDataQueue.consumerAlive();
         if (pendingCaptureIndex >= pending.size()) {
             pending.clear();
@@ -1225,12 +1287,15 @@ public class ChunkManager {
     }
 
     private LightInfo buildBlockLightInfo(LightEntry entry, BlockLightRadiance radiance) {
+        float x = SceneSpace.x(entry.x());
+        float y = SceneSpace.y(entry.y());
+        float z = SceneSpace.z(entry.z());
         LightInfo.Builder builder = LightInfo.builder()
                 .radiance(radiance.r(), radiance.g(), radiance.b());
         return switch (entry.shape()) {
             case SPHERE -> {
                 LightInfoSphereEXT.Builder sphere = LightInfoSphereEXT.builder()
-                        .position(entry.x(), entry.y(), entry.z())
+                        .position(x, y, z)
                         .radius(entry.radius())
                         .volumetricRadianceScale(entry.volumetricRadianceScale());
                 // Spot lights: only sphere/rect/disk accept shaping in the Remix
@@ -1242,7 +1307,7 @@ public class ChunkManager {
             }
             case CYLINDER -> builder
                     .cylinderExt(LightInfoCylinderEXT.builder()
-                            .position(entry.x(), entry.y(), entry.z())
+                            .position(x, y, z)
                             .radius(entry.radius())
                             .axis(entry.axisX(), entry.axisY(), entry.axisZ())
                             .axisLength(entry.axisLength())
@@ -1251,7 +1316,7 @@ public class ChunkManager {
                     .build();
             case RECT -> builder
                     .rectExt(LightInfoRectEXT.builder()
-                            .position(entry.x(), entry.y(), entry.z())
+                            .position(x, y, z)
                             .xAxis(entry.xAxisX(), entry.xAxisY(), entry.xAxisZ())
                             .xSize(entry.xSize())
                             .yAxis(entry.yAxisX(), entry.yAxisY(), entry.yAxisZ())
@@ -1262,7 +1327,7 @@ public class ChunkManager {
                     .build();
             case DISK -> builder
                     .diskExt(LightInfoDiskEXT.builder()
-                            .position(entry.x(), entry.y(), entry.z())
+                            .position(x, y, z)
                             .xAxis(entry.xAxisX(), entry.xAxisY(), entry.xAxisZ())
                             .xRadius(entry.xSize())
                             .yAxis(entry.yAxisX(), entry.yAxisY(), entry.yAxisZ())
@@ -1351,7 +1416,8 @@ public class ChunkManager {
             boolean streamSettled = terrainFrame >= state.settleUntilFrame;
             boolean maxWaitElapsed = state.dirtySinceFrame != Long.MIN_VALUE
                     && terrainFrame - state.dirtySinceFrame >= COLUMN_STREAM_MAX_WAIT_FRAMES;
-            if (state.dirtyMask != 0 && !state.buildInFlight
+            if ((state.dirtyMask != 0 || state.cullStale && state.hasPublishedState)
+                    && !state.buildInFlight
                     && (state.urgentBuild || streamSettled || maxWaitElapsed)) {
                 dirtyBuildScratch.add(state);
             }
@@ -1373,8 +1439,9 @@ public class ChunkManager {
             if (column == null || column.isEmpty()) continue;
 
             List<TerrainState.SectionSnapshot> snapshots = terrain.createSnapshot(column);
+            cullDeepSections(state, snapshots, playerCx, playerCz);
             int[] fingerprints = columnCategoryFingerprints(snapshots);
-            int requestedMask = state.dirtyMask;
+            int requestedMask = state.dirtyMask | (state.cullStale ? (1 << CAT_COUNT) - 1 : 0);
             int buildMask = requestedMask;
             if (state.hasPublishedState) {
                 for (int category = 0; category < CAT_COUNT; category++) {
@@ -1387,6 +1454,7 @@ public class ChunkManager {
             }
             if (buildMask == 0) {
                 state.dirtyMask &= ~requestedMask;
+                state.cullStale = false;
                 clearDirtyTimingIfClean(state);
                 state.publishedTopSectionY = topSectionY(column);
                 publish(state);
@@ -1412,6 +1480,7 @@ public class ChunkManager {
             // released (retain throws) leaves nothing to unwind.
             retainSnapshots(snapshots);
             state.dirtyMask &= ~requestedMask;
+            state.cullStale = false;
             clearDirtyTimingIfClean(state);
             state.buildInFlight = true;
             pendingResults.incrementAndGet();
@@ -1446,6 +1515,71 @@ public class ChunkManager {
             }
         }
         dirtyBuildScratch.clear();
+    }
+
+    /**
+     * Rebuilds the columns whose deep-cave cull changes: every column with dark sections beyond
+     * the near box when the camera goes underground or comes up, and those that cross the box's
+     * edge when the camera crosses a chunk. The builds queue at the usual budget, nearest first.
+     */
+    private void updateCaveCull(int pcx, int pcz, Vec3 cam) {
+        if (!DeepCaveCull.ENABLED || currentWorld == null) {
+            SkippedSectionRebuilds.drainSkyLightColumns(key -> { });
+            return;
+        }
+        boolean flipped = caveCull.updateUnderground(DeepCaveCull.cameraUnderground(currentWorld,
+                (int) Math.floor(cam.x), (int) Math.floor(cam.y), (int) Math.floor(cam.z)));
+        int oldCx = caveCullCx;
+        int oldCz = caveCullCz;
+        boolean moved = pcx != oldCx || pcz != oldCz;
+        caveCullCx = pcx;
+        caveCullCz = pcz;
+        int allCategories = (1 << CAT_COUNT) - 1;
+        // Sky light that changed without a block change, as when a cave beside a column opens,
+        // rebuilds nothing, and a section is judged with its side neighbours, so the column and
+        // the four beside it are judged again once any build in flight is done. Marking them
+        // dirty would throw that build away.
+        SkippedSectionRebuilds.drainSkyLightColumns(key -> {
+            int cx = (int) (key >> 32);
+            int cz = (int) key;
+            for (int i = 0; i < 5; i++) {
+                int nx = cx + (i == 1 ? 1 : i == 2 ? -1 : 0);
+                int nz = cz + (i == 3 ? 1 : i == 4 ? -1 : 0);
+                ColumnRenderState state = renderColumns.get(packChunkKey(nx, nz));
+                if (state != null && !DeepCaveCull.near(nx, nz, pcx, pcz)) state.cullStale = true;
+            }
+        });
+        if (!flipped && !(moved && caveCull.active())) return;
+        for (ColumnRenderState state : renderColumns.values()) {
+            if (!state.hasDarkSections) continue;
+            boolean nearNow = DeepCaveCull.near(state.cx, state.cz, pcx, pcz);
+            boolean rebuild = flipped
+                    ? !nearNow
+                    : nearNow != DeepCaveCull.near(state.cx, state.cz, oldCx, oldCz);
+            if (rebuild) markColumnDirty(state.cx, state.cz, allCategories, false);
+        }
+    }
+
+    /** Removes from a column's build the sections {@link DeepCaveCull} leaves out. */
+    private void cullDeepSections(ColumnRenderState state,
+                                  List<TerrainState.SectionSnapshot> snapshots, int pcx, int pcz) {
+        state.hasDarkSections = false;
+        state.culledSections = 0;
+        if (!DeepCaveCull.ENABLED || currentWorld == null) return;
+        if (caveDarknessWorld != currentWorld) {
+            caveDarkness = new DeepCaveCull.LevelDarkness(currentWorld);
+            caveDarknessWorld = currentWorld;
+        }
+        boolean cull = caveCull.active() && !DeepCaveCull.near(state.cx, state.cz, pcx, pcz);
+        for (int i = snapshots.size() - 1; i >= 0; i--) {
+            if (!DeepCaveCull.culled(caveDarkness, state.cx, snapshots.get(i).yOff() >> 4, state.cz)) {
+                continue;
+            }
+            state.hasDarkSections = true;
+            if (!cull) return;
+            snapshots.remove(i);
+            state.culledSections++;
+        }
     }
 
     private void installReadyMeshes(RemixAPI api) {
@@ -1561,7 +1695,7 @@ public class ChunkManager {
                 pages[pageIndex] = null;
 
                 instance = new RemixInstance(mesh)
-                        .setTransform(columnTransform(result.owner().cx, result.owner().cz))
+                        .setWorldTranslation(result.owner().cx * 16.0, 0.0, result.owner().cz * 16.0)
                         .setCategoryFlags(categoryFlags | InstanceCategoryBit.HIDDEN)
                         .setBlendExt(blendExtForCategory(category))
                         .setDoubleSided(true);
@@ -1884,16 +2018,19 @@ public class ChunkManager {
         int withGeometry = 0;
         int missing = 0;
         int missingSections = 0;
+        int culledCaveSections = 0;
         for (TerrainState.ChunkColumn column : terrain.columns()) {
             ColumnRenderState state = renderColumns.get(packChunkKey(column.cx, column.cz));
             if (state != null && state.hasPublishedState) {
                 published++;
                 if (state.hasGeometry()) withGeometry++;
+                culledCaveSections += state.culledSections;
             } else {
                 missing++;
                 missingSections += column.sectionCount();
             }
         }
+        heldCulledCaveSections = culledCaveSections;
         lastTerrainDiagnostics = new TerrainDiagnostics(
                 terrain.columnCount(), published, withGeometry, missing,
                 missingSections, retainedPageCount, terrain.sectionCount(),
@@ -1902,7 +2039,7 @@ public class ChunkManager {
     }
 
     /** @return the number of native instance submits this pass made */
-    private int draw(RemixAPI api, PerformanceTimer t, Vec3 cam) {
+    private int draw(RemixAPI api, PerformanceTimer t, Vec3 cam, BlockTextureManager textures) {
         t.begin(perfBfs);
         try (ProfileScope bfsScope = ProfileScope.begin("BFS reachability")) {
             terrain.ensureReachabilityOnce();
@@ -1961,6 +2098,15 @@ public class ChunkManager {
                     for (int lightIndex = 0; lightIndex < lights.size(); lightIndex++) {
                         TerrainLight light = lights.get(lightIndex);
                         if (light.shouldDraw(cam.x, cam.y, cam.z, threshold, terrainFrame)) {
+                            // A light's position is fixed in scene space when it is built, and the
+                            // runtime cannot move one, so it is built again once the origin has moved;
+                            // only the lights drawn pay, the rest when they are next drawn.
+                            LightEntry source = light.source();
+                            if (source != null && light.behindOrigin()) {
+                                BlockLightRadiance radiance = blockLightRadiance(source, textures);
+                                RemixLightStore.get().update(light.light, buildBlockLightInfo(source, radiance));
+                                light.place(source, light.power());
+                            }
                             light.light.drawFast(api);
                             light.offerFlare(cam.x, cam.y, cam.z);
                             lightsDrawn++;
@@ -2000,13 +2146,21 @@ public class ChunkManager {
     }
 
     /** Spreads the safety audit across frames so its cost does not scale with view distance in one frame. */
-    private void advanceZombieAudit(long deadline) {
+    private void advanceZombieAudit(long deadline, int pcx, int pcz) {
         if (currentWorld == null) return;
-        if (retirementQueue.retirementBackpressured() || lightWorkBackpressured()) return;
+        // Only the removals here wait out backpressure. Columns beyond the render distance are
+        // merely queued for the unload path, and in a city's light backlog the whole audit
+        // waited, so columns piled up past the runtime's capacity all the same.
+        boolean removalsBlocked = retirementQueue.retirementBackpressured() || lightWorkBackpressured();
 
         if (zombieAuditColumns == null) {
-            if (++framesSinceAudit < ZOMBIE_AUDIT_INTERVAL) return;
+            // Moving on also starts a pass, so columns left behind go while still few.
+            boolean moved = Math.max(Math.abs(pcx - auditCenterX), Math.abs(pcz - auditCenterZ))
+                    >= RETENTION_MARGIN_CHUNKS;
+            if (++framesSinceAudit < ZOMBIE_AUDIT_INTERVAL && !moved) return;
             framesSinceAudit = 0;
+            auditCenterX = pcx;
+            auditCenterZ = pcz;
             zombieAuditColumns = terrain.columnKeysSnapshot();
             zombieAuditCursor = 0;
             zombieAuditRemoved = 0;
@@ -2023,7 +2177,13 @@ public class ChunkManager {
             int cx = (int) (key >> 32);
             int cz = (int) key;
             LevelChunk chunk = currentWorld.getChunkSource().getChunk(cx, cz, false);
-            if (chunk == null && terrain.findColumn(cx, cz) != null) {
+            if (chunk != null && !retained(cx, cz, pcx, pcz)) {
+                // Leaves as an unload would, under the unload path's own budget.
+                BlockDataQueue.markChunkUnloaded(cx, cz);
+                if (pendingColumnUnloads.add(key)) cancelLightTasksForColumn(cx, cz);
+                continue;
+            }
+            if (chunk == null && !removalsBlocked && terrain.findColumn(cx, cz) != null) {
                 // The column left without an unload event, so nothing has
                 // cancelled its light tasks yet.
                 cancelLightTasksForColumn(cx, cz);
@@ -2080,6 +2240,8 @@ public class ChunkManager {
         clearLightWork();
         retirementQueue.clear();
         currentWorld = null;
+        caveDarkness = null;
+        caveDarknessWorld = null;
         for (int i = pendingCaptureIndex; i < pending.size(); i++) {
             releaseMeshData(pending.get(i).data());
         }
@@ -2115,11 +2277,6 @@ public class ChunkManager {
         };
     }
 
-    private static Transform columnTransform(int cx, int cz) {
-        Transform transform = Transform.identity();
-        transform.setTranslation(cx * 16f, 0f, cz * 16f);
-        return transform;
-    }
 
     private static int hashCapture(SectionBlockData cap) {
         int hash = cap.meshData().contentHash();

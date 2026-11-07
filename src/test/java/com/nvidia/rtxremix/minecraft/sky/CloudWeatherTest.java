@@ -47,4 +47,15 @@ class CloudWeatherTest {
         }
         assertTrue(differing > 5);
     }
+
+    @Test
+    void theClosingAheadOfTheRainEasesAfterAJumpInTheTimer() {
+        assertEquals(0.7, CloudWeather.ease(Double.NaN, 0.7, 0.01), 1.0e-12);
+        double ahead = 1.0;
+        for (int tick = 0; tick < 100; tick++) {
+            ahead = CloudWeather.ease(ahead, 0.0, 1.0 / 2400.0);
+        }
+        assertEquals(1.0 - 100.0 / 2400.0, ahead, 1.0e-9);
+        assertEquals(0.5, CloudWeather.ease(0.4, 0.5, 0.2), 1.0e-12);
+    }
 }

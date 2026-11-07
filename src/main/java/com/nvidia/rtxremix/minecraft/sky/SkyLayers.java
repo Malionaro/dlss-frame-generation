@@ -20,6 +20,7 @@ import com.nvidia.rtxremix.minecraft.asset.RemixMeshStore;
 import com.nvidia.rtxremix.minecraft.asset.RemixMeshSurface;
 import com.nvidia.rtxremix.minecraft.asset.RemixTexture;
 import com.nvidia.rtxremix.minecraft.asset.RemixTextureStore;
+import com.nvidia.rtxremix.minecraft.asset.SceneSpace;
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -87,6 +88,8 @@ final class SkyLayers {
     private final RemixMesh[] auroraMeshes = new RemixMesh[AURORA_CURTAINS];
     private CompletableFuture<byte[]> pendingAurora;
     private final float[] lastAuroraIntensity = new float[AURORA_CURTAINS];
+    /** How strongly the aurora showed last frame, 0 to its intensity setting. Render thread only. */
+    static float auroraVisibility;
 
     private final Transform transform = new Transform();
     private final BlockPos.MutableBlockPos biomePos = new BlockPos.MutableBlockPos();
@@ -169,6 +172,7 @@ final class SkyLayers {
         float step = seconds / AURORA_BIOME_FADE_SECONDS;
         coldBiome = Math.clamp(coldBiome + (cold ? step : -step), 0.0f, 1.0f);
         float visibility = strength * darkSky * coldBiome;
+        auroraVisibility = auroraTexture == null ? 0.0f : visibility;
         if (visibility <= 0.0f && auroraTexture == null) return;
 
         if (auroraTexture == null) {
@@ -237,9 +241,9 @@ final class SkyLayers {
         float cos = (float) Math.cos(angle);
         float sin = (float) Math.sin(angle);
         float[] m = transform.matrix;
-        m[0] = cos;  m[1] = 0.0f; m[2] = sin;   m[3] = (float) cameraPos.x;
-        m[4] = 0.0f; m[5] = 1.0f; m[6] = 0.0f;  m[7] = (float) cameraPos.y;
-        m[8] = -sin; m[9] = 0.0f; m[10] = cos;  m[11] = (float) cameraPos.z;
+        m[0] = cos;  m[1] = 0.0f; m[2] = sin;   m[3] = SceneSpace.x(cameraPos.x);
+        m[4] = 0.0f; m[5] = 1.0f; m[6] = 0.0f;  m[7] = SceneSpace.y(cameraPos.y);
+        m[8] = -sin; m[9] = 0.0f; m[10] = cos;  m[11] = SceneSpace.z(cameraPos.z);
     }
 
     private static RemixTexture createTexture(byte[] pixels, int width, int height) {
@@ -376,6 +380,7 @@ final class SkyLayers {
 
     /** Destroys every asset; the next frame rebuilds them. */
     void destroy() {
+        auroraVisibility = 0.0f;
         destroyCirrus();
         if (pendingCirrus != null) pendingCirrus.cancel(false);
         pendingCirrus = null;

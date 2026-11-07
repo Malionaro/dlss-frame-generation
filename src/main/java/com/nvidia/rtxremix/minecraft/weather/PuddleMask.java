@@ -63,7 +63,15 @@ final class PuddleMask {
      * is {@code wetness} wet, 0 to 1. Dry ground holds none anywhere.
      */
     static float puddle(float sum, float wetness) {
-        return Math.clamp((sum * scale(wetness) - THRESHOLD) / EDGE, 0.0f, 1.0f);
+        return Math.clamp(depth(sum, wetness), 0.0f, 1.0f);
+    }
+
+    /**
+     * {@link #puddle} before it is clamped: below 0 on ground that holds no water, by how far
+     * it falls short in widths of a puddle's edge.
+     */
+    static float depth(float sum, float wetness) {
+        return (sum * scale(wetness) - THRESHOLD) / EDGE;
     }
 
     /**

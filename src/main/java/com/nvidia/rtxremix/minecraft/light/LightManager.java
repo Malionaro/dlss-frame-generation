@@ -16,6 +16,7 @@ import com.nvidia.rtxremix.RemixException;
 import com.nvidia.rtxremix.minecraft.RemixRenderer;
 import com.nvidia.rtxremix.minecraft.asset.RemixLight;
 import com.nvidia.rtxremix.minecraft.asset.RemixLightStore;
+import com.nvidia.rtxremix.minecraft.asset.SceneSpace;
 import com.nvidia.rtxremix.minecraft.block.CopperBeaconBlock;
 import com.nvidia.rtxremix.minecraft.block.CopperBeaconBlockEntity;
 import com.nvidia.rtxremix.minecraft.block.CopperBeaconPose;
@@ -42,7 +43,9 @@ import java.util.Set;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import com.nvidia.rtxremix.minecraft.sky.LightningFlash;
 import com.nvidia.rtxremix.minecraft.sky.SkyFrame;
+import com.nvidia.rtxremix.minecraft.sky.SkyTimeJump;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.core.BlockPos;
@@ -52,6 +55,7 @@ import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.LightningBolt;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.BlockItem;
@@ -79,6 +83,25 @@ public class LightManager {
 
     private static final float RULELESS_ITEM_RADIANCE_PER_LIGHT_LEVEL = BlockLightRuleManager.RADIANCE_PER_LIGHT_LEVEL;
     private static final float ENTITY_LIGHT_RADIUS = 0.1f;
+    /**
+     * A lightning bolt's flash over the ground around the strike: a bluish sphere a few blocks
+     * up the bolt, which the path tracer shadows as it does any light, lit while the bolt shows.
+     * The bolt's own emissive quads light little beyond their glow. It lights no fog: lit in
+     * the volumetrics, the whole sky turned white with each strike.
+     */
+    private static final EntityLightSpec LIGHTNING_SPEC =
+            new EntityLightSpec(3000.0f, 1.0f, new float[] {0.75f, 0.82f, 1.0f}, 0.0f);
+    /** Blocks above the strike point the bolt's light stands. */
+    private static final double LIGHTNING_LIGHT_HEIGHT = 4.0;
+    /**
+     * Radiance of the flash a bolt casts over all the land, as a broad distant light from high up
+     * the bolt ({@link LightningFlash#reach}): the sphere at the strike lit only the ground beside
+     * it, and a bolt a little way off lit nothing in view. Like the sphere it lights no fog.
+     */
+    private static final float LIGHTNING_FLASH_RADIANCE = 10.0f;
+    /** Blocks up the bolt the flash comes from, and the flash's spread, which softens its shadows. */
+    private static final double LIGHTNING_FLASH_HEIGHT = 96.0;
+    private static final float LIGHTNING_FLASH_ANGULAR_DIAMETER_DEGREES = 20.0f;
     private static final float HELD_LIGHT_FORWARD_OFFSET = 0.35f;
     private static final float HELD_LIGHT_SIDE_OFFSET = 0.38f;
     private static final float HELD_LIGHT_HEIGHT_OFFSET = 0.88f;
@@ -118,6 +141,11 @@ public class LightManager {
     private static final float TIME_JUMP_DAYS = 0.01f;
     /** Clears the radiance cache on the next frame, then turns itself back off. */
     private static final String RADIANCE_CACHE_RESET = "rtx.spatiallyHashedRadianceCache.resetHistory";
+    /**
+     * The same for the neural radiance cache, which the higher graphics presets light the
+     * indirect light with; it went on lighting the land and the clouds with noon for seconds.
+     */
+    private static final String NEURAL_RADIANCE_CACHE_RESET = "rtx.neuralRadianceCache.resetHistory";
     private static final float BASE_SUN_LUMINANCE = 30.0f;
     /** A slight warm tint on the direct sunlight, luminance kept; the sky keeps the neutral source. */
     private static final float[] SUN_WARMTH = {1.03f, 1.0f, 0.92f};
@@ -175,6 +203,7 @@ public class LightManager {
             new CopperBeaconPose.Pose();
     private RemixLight sunLight;
     private RemixLight moonLight;
+    private RemixLight lightningFlashLight;
     private SkyLightState skyLightState = SkyLightState.empty();
     private Vec3 firstPersonShadowModelOffset = Vec3.ZERO;
     private long lastEntityLightUpdateNanos;
@@ -266,6 +295,8 @@ public class LightManager {
         lightOwnerIds.clear();
         float frameDtSeconds = entityLightFrameDtSeconds();
         boolean localFirstPersonRigUpdated = false;
+        LightningFlash.begin();
+        Vec3 cameraPosition = camera.position();
 
         for (Entity entity : world.entitiesForRendering()) {
             if (entity instanceof ItemEntity itemEntity) {
@@ -287,8 +318,15 @@ public class LightManager {
                 }
             } else if (entity instanceof Display.BlockDisplay display) {
                 ensureDisplayBeaconLight(display, tickDelta);
+            } else if (entity instanceof LightningBolt bolt) {
+                ensureSphereEntityLight(EntityLightKey.lightning(entity.getId()), LIGHTNING_SPEC,
+                        bolt.position().add(0.0, LIGHTNING_LIGHT_HEIGHT, 0.0), LIGHTNING_SPEC.radius, 1.0f);
+                LightningFlash.offer(bolt.getX(), bolt.getY(), bolt.getZ(),
+                        bolt.position().distanceToSqr(cameraPosition));
             }
         }
+        LightningFlash.end();
+        updateLightningFlashLight(cameraPosition);
 
         double beaconAnimationTick = CopperBeaconAnimationClock.sample(world, tickDelta);
         for (CopperBeaconBlockEntity beacon : CopperBeaconBlockEntity.loaded()) {
@@ -385,9 +423,9 @@ public class LightManager {
                     .radiance(red * intensity, green * intensity, blue * intensity)
                     .diskExt(LightInfoDiskEXT.builder()
                             .position(
-                                    pos.getX() + emitter.x(),
-                                    pos.getY() + emitter.y(),
-                                    pos.getZ() + emitter.z())
+                                    SceneSpace.x(pos.getX() + (double) emitter.x()),
+                                    SceneSpace.y(pos.getY() + (double) emitter.y()),
+                                    SceneSpace.z(pos.getZ() + (double) emitter.z()))
                             .xAxis(xAxis.x(), xAxis.y(), xAxis.z())
                             .xRadius(BeaconBeam.RADIUS)
                             .yAxis(yAxis.x(), yAxis.y(), yAxis.z())
@@ -568,9 +606,9 @@ public class LightManager {
                 DiskBasis basis = light.diskBasis;
                 var diskBuilder = LightInfoDiskEXT.builder()
                         .position(
-                                (float) light.position.x,
-                                (float) light.position.y,
-                                (float) light.position.z)
+                                SceneSpace.x(light.position.x),
+                                SceneSpace.y(light.position.y),
+                                SceneSpace.z(light.position.z))
                         .xAxis(
                                 (float) basis.xAxis.x,
                                 (float) basis.xAxis.y,
@@ -595,9 +633,9 @@ public class LightManager {
 
             var sphereBuilder = LightInfoSphereEXT.builder()
                     .position(
-                            (float) light.position.x,
-                            (float) light.position.y,
-                            (float) light.position.z)
+                            SceneSpace.x(light.position.x),
+                            SceneSpace.y(light.position.y),
+                            SceneSpace.z(light.position.z))
                     .radius(light.emitterRadius)
                     .volumetricRadianceScale(light.volumetricRadianceScale);
             if (light.shaping != null) {
@@ -751,9 +789,9 @@ public class LightManager {
                     .radiance(r * intensity, g * intensity, b * intensity)
                     .diskExt(LightInfoDiskEXT.builder()
                             .position(
-                                    (float) (origin.x + lens.x()),
-                                    (float) (origin.y + lens.y()),
-                                    (float) (origin.z + lens.z()))
+                                    SceneSpace.x(origin.x + lens.x()),
+                                    SceneSpace.y(origin.y + lens.y()),
+                                    SceneSpace.z(origin.z + lens.z()))
                             .xAxis(diskX.x(), diskX.y(), diskX.z())
                             .xRadius(xRadius)
                             .yAxis(diskY.x(), diskY.y(), diskY.z())
@@ -1078,13 +1116,18 @@ public class LightManager {
             return new EntityLightKey(entityId, Kind.BLOCK_DISPLAY);
         }
 
+        private static EntityLightKey lightning(int entityId) {
+            return new EntityLightKey(entityId, Kind.LIGHTNING);
+        }
+
     }
 
     private enum Kind {
         ITEM,
         MAIN_HAND,
         OFF_HAND,
-        BLOCK_DISPLAY
+        BLOCK_DISPLAY,
+        LIGHTNING
     }
 
     // ================================================================
@@ -1106,17 +1149,40 @@ public class LightManager {
         try {
             sunLight = updateDistantLight(sunLight, skyLightState.sunPosition(),
                     scaleRadiance(skyLightState.sunDirectRadiance(), 1.0f - SUN_DISC_SHARE),
-                    SUN_ANGULAR_DIAMETER_DEGREES);
+                    SUN_ANGULAR_DIAMETER_DEGREES, 1.0f);
             moonLight = updateDistantLight(moonLight, skyLightState.moonPosition(),
                     skyLightState.moonDirectRadiance(),
-                    MOON_ANGULAR_DIAMETER_DEGREES);
+                    MOON_ANGULAR_DIAMETER_DEGREES, 1.0f);
         } catch (RemixException e) {
             LOGGER.error("Failed to update sky light: {}", e.getMessage());
         }
     }
 
+    /** Points the flash from high up the nearest bolt toward the camera while the bolt flashes. */
+    private void updateLightningFlashLight(Vec3 camera) {
+        float reach = LightningFlash.reach();
+        if (reach <= 0.0f) {
+            return;
+        }
+        float dx = (float) (LightningFlash.x() - camera.x);
+        float dy = (float) (LightningFlash.y() + LIGHTNING_FLASH_HEIGHT - camera.y);
+        float dz = (float) (LightningFlash.z() - camera.z);
+        float length = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        float scale = LIGHTNING_FLASH_RADIANCE * reach;
+        float[] color = LIGHTNING_SPEC.color;
+        try {
+            lightningFlashLight = updateDistantLight(lightningFlashLight,
+                    new float[] {dx / length, dy / length, dz / length},
+                    new float[] {color[0] * scale, color[1] * scale, color[2] * scale},
+                    LIGHTNING_FLASH_ANGULAR_DIAMETER_DEGREES, 0.0f);
+        } catch (RemixException e) {
+            LOGGER.error("Failed to update the lightning flash: {}", e.getMessage());
+        }
+    }
+
     private RemixLight updateDistantLight(RemixLight light, float[] positionDirection, float[] radiance,
-                                          float angularDiameterDegrees) throws RemixException {
+                                          float angularDiameterDegrees, float volumetricRadianceScale)
+            throws RemixException {
         float[] incomingDirection = {
                 -positionDirection[0],
                 -positionDirection[1],
@@ -1128,7 +1194,7 @@ public class LightManager {
                 .distantExt(LightInfoDistantEXT.builder()
                         .direction(incomingDirection[0], incomingDirection[1], incomingDirection[2])
                         .angularDiameterDegrees(angularDiameterDegrees)
-                        .volumetricRadianceScale(1.0f)
+                        .volumetricRadianceScale(volumetricRadianceScale)
                         .build())
                 .build();
 
@@ -1158,10 +1224,17 @@ public class LightManager {
         if (!jumped) {
             return;
         }
+        SkyTimeJump.mark();
+        resetRadianceCaches();
+    }
+
+    /** Clears what the runtime's radiance caches learned, which is keyed on scene positions. */
+    public void resetRadianceCaches() {
         try {
             renderer.getRemixApi().setConfigVariable(RADIANCE_CACHE_RESET, "True");
+            renderer.getRemixApi().setConfigVariable(NEURAL_RADIANCE_CACHE_RESET, "True");
         } catch (RemixException e) {
-            LOGGER.warn("Failed to clear the radiance cache after a jump in the time of day: {}", e.getMessage());
+            LOGGER.warn("Failed to clear the radiance caches: {}", e.getMessage());
         }
     }
 
@@ -1288,6 +1361,7 @@ public class LightManager {
         try {
             if (sunLight != null) sunLight.draw(api);
             if (moonLight != null) moonLight.draw(api);
+            if (lightningFlashLight != null && LightningFlash.reach() > 0.0f) lightningFlashLight.draw(api);
             for (RemixLight light : entityLights.values())
                 light.draw(api);
             for (RemixLight light : placedBeaconLights.values())
@@ -1301,7 +1375,8 @@ public class LightManager {
         return entityLights.size()
                 + placedBeaconLights.size()
                 + (sunLight != null ? 1 : 0)
-                + (moonLight != null ? 1 : 0);
+                + (moonLight != null ? 1 : 0)
+                + (lightningFlashLight != null && LightningFlash.reach() > 0.0f ? 1 : 0);
     }
 
     public void clear() {
@@ -1325,6 +1400,10 @@ public class LightManager {
         if (moonLight != null && !moonLight.isDeleted()) {
             moonLight.destroy();
             moonLight = null;
+        }
+        if (lightningFlashLight != null && !lightningFlashLight.isDeleted()) {
+            lightningFlashLight.destroy();
+            lightningFlashLight = null;
         }
 
         skyLightState = SkyLightState.empty();

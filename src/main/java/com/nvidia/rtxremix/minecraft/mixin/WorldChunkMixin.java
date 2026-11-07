@@ -33,6 +33,12 @@ public abstract class WorldChunkMixin {
             int chunkX,
             int chunkZ,
             ClientboundLevelChunkPacketData chunkData) {
+        // Replacement light engines can omit vanilla's sky-source palette entirely.
+        // Their initializeLightSources hooks still own the original invocation.
+        if (!(self.getSkyLightSources() instanceof SkyLightSurfaceAccess surface)) {
+            original.call(self);
+            return;
+        }
         boolean worldSurfaceInPacket = chunkData.getHeightmaps().containsKey(Heightmap.Types.WORLD_SURFACE);
         if (!SkyLightSurfaceScanPolicy.seedFromHeightmap(SkyLightSurfaceScanPolicy.SEED_ALLOWED, worldSurfaceInPacket)) {
             if (SkyLightSurfaceScanPolicy.SEED_ALLOWED) {
@@ -41,8 +47,7 @@ public abstract class WorldChunkMixin {
             original.call(self);
             return;
         }
-        ((SkyLightSurfaceAccess) self.getSkyLightSources())
-                .rtxremix$refreshSurfaceY(self, self.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE));
+        surface.rtxremix$refreshSurfaceY(self, self.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE));
         // Counted only while capture is on, like the paced-chunk counters: the terrain
         // counters that drain it run only while capture and world rendering are on, and
         // seeding itself depends on neither toggle.

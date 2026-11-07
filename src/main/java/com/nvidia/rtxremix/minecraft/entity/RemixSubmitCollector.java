@@ -32,6 +32,8 @@ import net.minecraft.client.renderer.gizmos.DrawableGizmoPrimitives;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.blockentity.AbstractEndPortalRenderer;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.QuadParticleRenderState;
 import net.minecraft.client.renderer.texture.TextureAtlas;
@@ -40,6 +42,7 @@ import net.minecraft.client.renderer.texture.UvMapping;
 import net.minecraft.client.resources.model.ModelBakery;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.client.resources.model.geometry.ItemQuads;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.ARGB;
@@ -81,6 +84,15 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
     private static final Direction[] DIRECTIONS = Direction.values();
 
     private final RemixVertexConsumerProvider provider;
+    /**
+     * The block a block entity's capture belongs to. Its geometry arrives on an identity
+     * stack, block-local, and the End portal's stars are laid out in world space.
+     */
+    private BlockPos blockOrigin = BlockPos.ZERO;
+
+    void setBlockOrigin(BlockPos origin) {
+        blockOrigin = origin;
+    }
     private final QuadInstance quadInstance = new QuadInstance();
     private final Matrix4f scratchPose = new Matrix4f();
     private final PoseStack scratchStack = new PoseStack();
@@ -272,6 +284,19 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
         if (renderType.isOutline()) {
             return;
         }
+        if (renderType.pipeline() == RenderPipelines.END_PORTAL
+                || renderType.pipeline() == RenderPipelines.END_GATEWAY) {
+            Minecraft client = Minecraft.getInstance();
+            float time = client.level == null ? 0f
+                    : (client.level.getGameTime() % 24000L
+                            + client.getDeltaTracker().getGameTimeDeltaPartialTick(false)) / 24000f;
+            customGeometryRenderer.render(poseStack.last(), new EndPortalFaces(
+                    provider.getBuffer(RenderTypes.entitySolid(AbstractEndPortalRenderer.END_SKY_LOCATION)),
+                    provider.getBuffer(RenderTypes.eyes(AbstractEndPortalRenderer.END_SKY_LOCATION)),
+                    provider.getBuffer(RenderTypes.eyes(AbstractEndPortalRenderer.END_PORTAL_LOCATION)),
+                    time, blockOrigin, renderType.pipeline() == RenderPipelines.END_PORTAL));
+            return;
+        }
         customGeometryRenderer.render(poseStack.last(), provider.getBuffer(renderType));
     }
 
@@ -419,19 +444,12 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
                           int outlineColor) {
         Font font = Minecraft.getInstance().font;
         glyphs.begin(pose, lightCoords, displayMode);
-        if (outlineColor == 0) {
-            font.prepareText(string, x, y, color, dropShadow, false, backgroundColor).visit(glyphs);
-        } else {
-            // Glow ink: the outline first, then the text over it, as vanilla orders them.
-            glyphs.displayMode = Font.DisplayMode.NORMAL;
-            font.prepare8xTextOutline(string, x, y, outlineColor).visit(glyphs);
-            glyphs.displayMode = Font.DisplayMode.POLYGON_OFFSET;
-            font.prepareText(string, x, y, color, false, false, 0).visit(glyphs);
-        }
+        TextGlyphCapture.prepare(font, string, x, y, dropShadow, displayMode, color,
+                backgroundColor, outlineColor, glyphs);
     }
 
     /** Draws each laid-out glyph and effect into the capture under the text's pose. */
-    private final class TextGlyphs implements Font.GlyphVisitor {
+    private final class TextGlyphs implements TextGlyphCapture.Sink {
         private final Matrix4f pose = new Matrix4f();
         private int lightCoords;
         private Font.DisplayMode displayMode = Font.DisplayMode.NORMAL;
@@ -443,8 +461,13 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
         }
 
         @Override
+        public void displayMode(Font.DisplayMode mode) {
+            displayMode = mode;
+        }
+
+        @Override
         public void acceptRenderable(TextRenderable renderable) {
-            renderable.render(pose, provider.getBuffer(renderable.renderType(displayMode)), lightCoords, false);
+            TextGlyphCapture.render(renderable, displayMode, pose, provider, lightCoords);
         }
     }
 

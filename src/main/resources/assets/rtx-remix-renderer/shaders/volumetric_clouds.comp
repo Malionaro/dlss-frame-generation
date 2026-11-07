@@ -32,6 +32,7 @@ layout(std140, binding = 1) uniform CloudParameters {
     vec4 LayerParameters;
     vec4 OutputParameters;
     vec4 LookParameters;
+    vec4 Flash;
 };
 
 #define CameraXZ CameraAndFrame.xy
