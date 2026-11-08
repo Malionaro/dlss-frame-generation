@@ -574,6 +574,7 @@ public final class BlockQuadEmitter {
             int r = (tint >> 16) & 0xFF, g = (tint >> 8) & 0xFF, b = tint & 0xFF;
             color = 0xFF000000 | (r << 16) | (g << 8) | b;
         }
+        color = dimBrightSurface(state, color);
         String layerName = layerOverride != null ? layerOverride : layerName(material.layer());
 
         TextureAtlasSprite sprite = material.sprite();
@@ -819,6 +820,21 @@ public final class BlockQuadEmitter {
         // A read of the atlas map, safe on a section worker. TextureManager.getTexture loads a
         // texture it does not hold, a GL call, and crashed a Sodium worker under water.
         return client.getAtlasManager().getAtlasOrThrow(AtlasIds.BLOCKS).spriteFinder();
+    }
+
+    /** Snow and ice read too bright under the path tracer; take them down a little. */
+    private static int dimBrightSurface(net.minecraft.world.level.block.state.BlockState state, int argb) {
+        int f;
+        if (state.is(net.minecraft.world.level.block.Blocks.SNOW) || state.is(net.minecraft.world.level.block.Blocks.SNOW_BLOCK)
+                || state.is(net.minecraft.world.level.block.Blocks.POWDER_SNOW)) {
+            f = 222; // ~0.87
+        } else if (state.is(net.minecraft.world.level.block.Blocks.ICE) || state.is(net.minecraft.world.level.block.Blocks.PACKED_ICE)
+                || state.is(net.minecraft.world.level.block.Blocks.BLUE_ICE)) {
+            f = 230; // ~0.9
+        } else {
+            return argb;
+        }
+        return multiplyRgb(argb, 0xFF000000 | f << 16 | f << 8 | f);
     }
 
     private static int multiplyRgb(int argb, int tint) {

@@ -741,7 +741,7 @@ public class BlockTextureManager {
                     .emissiveIntensity(emissionIntensity);
         }
         return mb.translucentExt(MaterialInfoTranslucentEXT.builder()
-                .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.97f, 0.97f, 0.97f)
+                .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.9f, 0.93f, 0.94f)
                 .transmittanceTexture(atlasAlbedo.getHandle()).transmittanceMeasurementDistance(0.35f)
                 .useDiffuseLayer(false).build()).build();
     }
@@ -762,7 +762,7 @@ public class BlockTextureManager {
                     .emissiveIntensity(terrainEmissionIntensity());
         }
         return createMaterialViaStore(mb.translucentExt(MaterialInfoTranslucentEXT.builder()
-                .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.97f, 0.97f, 0.97f)
+                .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.9f, 0.93f, 0.94f)
                 .transmittanceMeasurementDistance(0.35f)
                 .useDiffuseLayer(true).build()).build());
     }
@@ -1269,7 +1269,7 @@ public class BlockTextureManager {
         if (se.normal != null)   mb.normalTexture(se.normal.getHandle());
         if (se.emissive != null) mb.emissiveTexture(se.emissive.getHandle()).emissiveIntensity(100.0f);
         return createMaterialViaStore(mb.translucentExt(MaterialInfoTranslucentEXT.builder()
-                .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.97f, 0.97f, 0.97f)
+                .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.9f, 0.93f, 0.94f)
                 .transmittanceTexture(se.albedo.getHandle()).transmittanceMeasurementDistance(0.012f)
                 .useDiffuseLayer(false).build()).build());
     }
@@ -1281,7 +1281,7 @@ public class BlockTextureManager {
         if (se.normal != null) mb.normalTexture(se.normal.getHandle());
         if (se.emissive != null) mb.emissiveTexture(se.emissive.getHandle()).emissiveIntensity(100.0f);
         return createMaterialViaStore(mb.translucentExt(MaterialInfoTranslucentEXT.builder()
-                .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.97f, 0.97f, 0.97f)
+                .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.9f, 0.93f, 0.94f)
                 .transmittanceMeasurementDistance(0.35f)
                 .useDiffuseLayer(true).build()).build());
     }
