@@ -131,6 +131,8 @@ public final class Puddles {
     private static final float AMOUNT_RANGE = 0.8f;
     /** Roughness wet ground takes where no water stands, a faint sheen. */
     private static final float WET_ROUGHNESS = 0.7f;
+    /** Standing water keeps a little roughness: a perfect mirror on the ground read as too strong. */
+    private static final float STANDING_ROUGHNESS = 0.15f;
     /** Cells across a block top. */
     private static final int GRID = 4;
     private static final int GRID_POINTS = (GRID + 1) * (GRID + 1);
@@ -764,7 +766,7 @@ public final class Puddles {
                     standing = water(depth);
                 }
                 color[out + 3] = (byte) Math.round(255.0f * alpha);
-                roughness[at] = (byte) Math.round(255.0f * WET_ROUGHNESS * (1.0f - standing));
+                roughness[at] = (byte) Math.round(255.0f * (WET_ROUGHNESS * (1.0f - standing) + STANDING_ROUGHNESS * standing));
                 metallic[at] = (byte) Math.round(255.0f * builtReflection * standing);
                 if (builtMask) {
                     color[out] = (byte) 255;

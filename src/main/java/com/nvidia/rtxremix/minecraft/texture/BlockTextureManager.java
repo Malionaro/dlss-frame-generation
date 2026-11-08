@@ -499,7 +499,7 @@ public class BlockTextureManager {
         byte[] sssAlbedoAtlas = LabPBRConverter.createSingleScatteringAlbedoFallback(albedoRGBA);
 
         Arrays.fill(heightAtlas, (byte) 255);
-        Arrays.fill(roughnessAtlas, (byte) 180);
+        Arrays.fill(roughnessAtlas, (byte) 215);
         fillRGBA(sssThicknessAtlas, THIN_SSS_DEFAULT_THICKNESS, THIN_SSS_DEFAULT_THICKNESS,
                 THIN_SSS_DEFAULT_THICKNESS, 255);
         for (int i = 0; i < pixels; i++) {
