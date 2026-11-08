@@ -48,7 +48,7 @@ public final class PerformanceOsd {
     private static int frameCount;
     private static long lastFrameNanos;
     /** Below this the renderer runs short of heap at normal render distances. */
-    static final long MIN_HEAP_BYTES = 8L * 1024 * 1024 * 1024;
+    public static final long MIN_HEAP_BYTES = 8L * 1024 * 1024 * 1024;
     private static boolean heapWarned;
 
     private PerformanceOsd() {
@@ -83,6 +83,16 @@ public final class PerformanceOsd {
                 RtxRemixMod.openSettingsScreen(null);
             }
         }
+    }
+
+    public static boolean isEnabled() {
+        return enabled;
+    }
+
+    /** Shows or hides the overlay and remembers the choice. */
+    public static void setEnabled(boolean value) {
+        enabled = value;
+        save();
     }
 
     /** Called once per HUD frame. */

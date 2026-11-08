@@ -213,5 +213,17 @@
   "rtxremix.osd.on": "on",
   "rtxremix.osd.off": "off",
   "rtxremix.osd.keys": "F7 overlay | End settings | F8 RTX",
-  "rtxremix.osd.low_memory": "§e[RTX Remix] Only %s MB of memory for Minecraft. RTX Remix needs at least 8 GB, 16 GB recommended. Modrinth: profile → Settings → Java and memory → Memory allocated; Prism: instance → Settings → Java. Then restart."
+  "rtxremix.osd.low_memory": "§e[RTX Remix] Only %s MB of memory for Minecraft. RTX Remix needs at least 8 GB, 16 GB recommended. Modrinth: profile → Settings → Java and memory → Memory allocated; Prism: instance → Settings → Java. Then restart.",
+  "rtxremix.settings.category.display": "Display",
+  "rtxremix.settings.status": "Path tracing: %s  ·  %s FPS  ·  F7 overlay  ·  F8 RTX",
+  "rtxremix.settings.group.display": "Overlay and rendering",
+  "rtxremix.settings.overlay": "Performance Overlay",
+  "rtxremix.settings.overlay.tip": "Shows FPS, frame time and the path tracing state in the top left. F7 toggles it in game.",
+  "rtxremix.settings.pathTracing": "Path Tracing",
+  "rtxremix.settings.pathTracing.tip": "Renders the world through RTX Remix. Off draws vanilla Minecraft; DLSS and frame generation then stay off as well. F8 toggles it in game.",
+  "rtxremix.settings.memory": "Java memory: %s MB (at least 8 GB, 16 GB recommended)",
+  "rtxremix.settings.group.more": "More",
+  "rtxremix.settings.rtxButton.on": "RTX: On",
+  "rtxremix.settings.rtxButton.off": "RTX: Off",
+  "rtxremix.settings.remixMenuShort": "Remix Menu"
 }

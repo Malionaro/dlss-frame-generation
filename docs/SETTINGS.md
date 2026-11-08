@@ -2,7 +2,14 @@
 
 The mod adds its own settings screen to the game. Open **Options**, then **RTX
 Remix Settings...**. It is available from the title screen and from the pause
-menu. Most controls apply as you move them. Block Lights and Block Glow
+menu, or press **End** in game. It is one screen with a tab per page along the
+top (Performance, Lighting, Image, Materials, Display and Debug), a status line
+with the path tracing state and the frame rate, and quick buttons along the
+bottom: **RTX** on or off, the **Remix Menu**, **Reset to Defaults** for the
+page, and **Done**. Switching tabs saves the page you leave. The **Display**
+tab holds the performance overlay (also **F7** in game), the path tracing
+switch (also **F8**), how much memory Java has, the RTX Remix Graphics Settings
+and **Reset All**. Most controls apply as you move them. Block Lights and Block Glow
 Intensity apply when you leave their page: Block Glow Intensity rebuilds
 terrain, and Block Lights updates every loaded light.
 
@@ -12,8 +19,8 @@ Tooltips explain each control and mark a value you have changed as
 ## Performance
 
 The renderer's quality tier is Remix's own: pick it in the runtime's Graphics
-Settings menu, which the **RTX Remix Graphics Settings** button on the landing
-page opens. Minecraft receives no keyboard or mouse input while a Remix menu is
+Settings menu, which the **Remix Menu** button at the bottom of every tab
+opens, as does **RTX Remix Graphics Settings** on the Display tab. Minecraft receives no keyboard or mouse input while a Remix menu is
 open; close it with its own close button or press **Alt+X** to return. The
 menu's button for switching to the other Remix menu works too.
 `/rtx preset <name>` sets the same tier for the current session only, for a
@@ -100,7 +107,7 @@ lantern, and a lantern's glass, shine from just outside their faces.
 The table commits changed rows together when you leave, then updates the
 loaded block lights in place over the next few frames; terrain is not rebuilt.
 It has its own Reset: the Lighting page's Reset does not reach into it, but
-Reset All on the landing page does.
+Reset All on the Display tab does.
 
 ## Image & Exposure
 
@@ -171,7 +178,7 @@ code put in for one investigation and taken out after it.
 ## Resetting
 
 Every page has **Reset to Defaults**, which restores the controls drawn on that
-page after asking for confirmation. The landing page has **Reset All**, which
+page after asking for confirmation. The Display tab has **Reset All**, which
 restores every setting the mod owns, including the Block Lights table.
 
 Both save immediately.
@@ -201,7 +208,7 @@ the picture is too dark, a map cannot darken it again a minute later.
 
 **The Remix runtime's overlays, under Alt+X.** The developer menu is the
 advanced one, aimed at people tuning the renderer itself; the Graphics Settings
-menu opens from the button on the landing page. Remix saves changes made in
+menu opens from the Remix Menu button of the settings screen. Remix saves changes made in
 either separately from the mod's own settings. A Graphics Settings change wins
 over the profiles. A developer-menu change can be held back by a stronger
 layer, such as a profile or a value this settings screen has written. The menu

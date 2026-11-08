@@ -213,5 +213,17 @@
   "rtxremix.osd.on": "オン",
   "rtxremix.osd.off": "オフ",
   "rtxremix.osd.keys": "F7 表示 | End 設定 | F8 RTX",
-  "rtxremix.osd.low_memory": "§e[RTX Remix] Minecraft のメモリが %s MB しかありません。最低 8 GB、推奨 16 GB です。ランチャーの Java 設定で割り当てて再起動してください。"
+  "rtxremix.osd.low_memory": "§e[RTX Remix] Minecraft のメモリが %s MB しかありません。最低 8 GB、推奨 16 GB です。ランチャーの Java 設定で割り当てて再起動してください。",
+  "rtxremix.settings.category.display": "表示",
+  "rtxremix.settings.status": "パストレーシング: %s  ·  %s FPS  ·  F7 表示  ·  F8 RTX",
+  "rtxremix.settings.group.display": "オーバーレイと描画",
+  "rtxremix.settings.overlay": "パフォーマンス表示",
+  "rtxremix.settings.overlay.tip": "左上に FPS、フレーム時間、パストレーシングの状態を表示します。F7 で切替。",
+  "rtxremix.settings.pathTracing": "パストレーシング",
+  "rtxremix.settings.pathTracing.tip": "RTX Remix で描画します。オフでは通常の Minecraft になり、DLSS とフレーム生成も無効です。F8 で切替。",
+  "rtxremix.settings.memory": "Java メモリ: %s MB（最低 8 GB、推奨 16 GB）",
+  "rtxremix.settings.group.more": "その他",
+  "rtxremix.settings.rtxButton.on": "RTX: オン",
+  "rtxremix.settings.rtxButton.off": "RTX: オフ",
+  "rtxremix.settings.remixMenuShort": "Remix メニュー"
 }

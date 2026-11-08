@@ -213,7 +213,8 @@ frame's GUI is extracted. The mod opens and closes menus by writing it, and the
 menus' own close and switch controls, the runtime's menu hotkey, and its First
 Use Guide change it too. Alt+X without Control toggles the developer menu over
 gameplay or a screen. The only other open command in the mod is the RTX Remix
-Graphics Settings button on the settings landing page; both open through
+Graphics Settings buttons of the settings screen (the footer's Remix Menu and
+the Display tab's); all open through
 `RtxRemixMod.openRemixMenu`, and the button queues its request so the click
 finishes dispatching first. Opening, by the mod or the runtime, finalizes held
 key bindings, vanilla's F3 combination state, and active mouse interactions

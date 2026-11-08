@@ -127,7 +127,8 @@ enabled. For a direct comparison, press `F8` to toggle path tracing, or type
 
 ## Settings
 
-The mod's own settings screen is in **Options**, then **RTX Remix Settings...**.
+The mod's own settings screen is in **Options**, then **RTX Remix Settings...**,
+or press **End** in game.
 Its pages cover distance and framerate, sky and clouds, lighting, and
 materials. The renderer's quality tier lives in Remix's own Graphics Settings
 menu, which the **RTX Remix Graphics Settings** button on that screen opens.

@@ -138,7 +138,7 @@ public class RtxRemixMod implements ClientModInitializer {
             return;
         }
         net.minecraft.client.Minecraft.getInstance().gui.setScreen(
-                new RtxSettingsScreen(parent, rtxSettings, RtxRemixMod::saveRtxSettings));
+                RtxSettingsScreen.create(parent, rtxSettings, RtxRemixMod::saveRtxSettings));
     }
 
     public static void saveRtxSettings() {
@@ -426,7 +426,7 @@ public class RtxRemixMod implements ClientModInitializer {
                     Button button = Button.builder(
                                     settingsButtonText,
                                     b -> client.gui.setScreen(
-                                            new RtxSettingsScreen(
+                                            RtxSettingsScreen.create(
                                                     screen, rtxSettings, RtxRemixMod::saveRtxSettings)))
                             .build();
                     if (done != null) {
