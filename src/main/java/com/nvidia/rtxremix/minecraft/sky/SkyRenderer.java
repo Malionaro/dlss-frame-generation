@@ -125,7 +125,7 @@ public class SkyRenderer {
      * draws here.
      */
     static final float[] SKYLESS_SKY_RADIANCE = {0.0f, 0.0f, 0.0f};
-    public static final float DEFAULT_NIGHT_AMBIENT_BOOST = 2.5f;
+    public static final float DEFAULT_NIGHT_AMBIENT_BOOST = 3.0f;
     public static final float DEFAULT_DAY_AMBIENT_BOOST = 0.0f;
     public static final boolean DEFAULT_SKY_AMBIENT_RECT_ENABLED = true;
     public static final float DEFAULT_MINIMUM_CELESTIAL_WEATHER_VISIBILITY = 0.0f;

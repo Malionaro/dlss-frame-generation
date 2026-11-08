@@ -13,11 +13,11 @@ package com.nvidia.rtxremix.minecraft.sky;
  */
 public final class SkyLook {
 
-    public static final float DEFAULT_SATURATION = 1.0f;
+    public static final float DEFAULT_SATURATION = 1.2f;
     public static final float MAX_SATURATION = 2.0f;
-    public static final float DEFAULT_SUNSET_WARMTH = 0.5f;
+    public static final float DEFAULT_SUNSET_WARMTH = 0.7f;
     public static final float MAX_SUNSET_WARMTH = 2.0f;
-    public static final float DEFAULT_SUN_GLARE = 1.0f;
+    public static final float DEFAULT_SUN_GLARE = 0.6f;
     public static final float MAX_SUN_GLARE = 4.0f;
     public static final float DEFAULT_RAINBOW = 1.0f;
     public static final float MAX_RAINBOW = 3.0f;

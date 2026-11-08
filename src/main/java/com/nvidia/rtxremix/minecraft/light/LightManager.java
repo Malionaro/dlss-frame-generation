@@ -164,7 +164,7 @@ public class LightManager {
     public static final float RAIN_SKY_INTENSITY = 2.0f;
     public static final float THUNDER_SKY_INTENSITY = 1.0f;
     public static final float DEFAULT_SUN_INTENSITY = 1.0f;
-    public static final float DEFAULT_MOON_INTENSITY = 0.2f;
+    public static final float DEFAULT_MOON_INTENSITY = 0.3f;
     /** The most moonlight the setting reaches, ten times the default. */
     public static final float MAX_MOON_INTENSITY = 2.0f;
 

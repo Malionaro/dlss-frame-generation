@@ -20,9 +20,9 @@ public final class PostProcessingSettings {
     private static final String HIGH_LIGHT_ADAPTATION_KEY = "rtx.autoExposure.evMaxValue";
 
     private static final float DEFAULT_EXPOSURE = 0.21405728f;
-    private static final float DEFAULT_SHADOWS = 1.4f;
+    private static final float DEFAULT_SHADOWS = 1.8f;
     private static final float DEFAULT_HIGHLIGHTS = 2.5f;
-    private static final float DEFAULT_LOW_LIGHT_ADAPTATION = -2.5f;
+    private static final float DEFAULT_LOW_LIGHT_ADAPTATION = -3.0f;
     private static final float DEFAULT_HIGH_LIGHT_ADAPTATION = 1.5f;
 
     private final BiConsumer<String, String> configWriter;

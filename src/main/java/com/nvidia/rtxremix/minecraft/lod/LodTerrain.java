@@ -788,7 +788,9 @@ public final class LodTerrain {
     /** Lava glows in its own colour at the terrain's emission. */
     private RemixMaterial glowMaterial(float intensity) {
         if (glowMaterial != null && !glowMaterial.isDeleted()) return glowMaterial;
-        glowMaterial = paletteGlow(intensity, "glow");
+        // At the same share as near lava (BuiltinEmission), so distant lava fields do not
+        // bloom into red patches on the horizon.
+        glowMaterial = paletteGlow(intensity * 0.55f, "glow");
         return glowMaterial;
     }
 

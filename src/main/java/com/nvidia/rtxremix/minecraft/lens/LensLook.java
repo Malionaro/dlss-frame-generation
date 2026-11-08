@@ -11,9 +11,9 @@ package com.nvidia.rtxremix.minecraft.lens;
  */
 public final class LensLook {
 
-    public static final float DEFAULT_DEPTH_OF_FIELD = 0.4f;
+    public static final float DEFAULT_DEPTH_OF_FIELD = 0.15f;
     public static final float MAX_DEPTH_OF_FIELD = 2.0f;
-    public static final float DEFAULT_FLARE = 0.5f;
+    public static final float DEFAULT_FLARE = 0.2f;
     public static final float MAX_FLARE = 2.0f;
     public static final float DEFAULT_CAUSTICS = 1.0f;
     public static final float MAX_CAUSTICS = 2.0f;

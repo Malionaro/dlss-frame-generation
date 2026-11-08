@@ -193,14 +193,17 @@ final class SkyLayers {
         }
 
         for (int i = 0; i < AURORA_CURTAINS; i++) {
-            // Each curtain brightens and dims on its own slow beat, and sways a little.
-            float flicker = (0.7f + 0.3f * (float) Math.sin(clock * 0.6 + i * 2.1))
-                    * (0.9f + 0.1f * (float) Math.sin(clock * 2.3 + i * 1.7));
+            // Each curtain pulses on its own beat, with quicker ripples running through
+            // it, and drifts across the sky, so the aurora never sits still.
+            float flicker = (0.6f + 0.4f * (float) Math.sin(clock * 0.9 + i * 2.1))
+                    * (0.8f + 0.2f * (float) Math.sin(clock * 3.1 + i * 1.7))
+                    * (0.92f + 0.08f * (float) Math.sin(clock * 7.3 + i * 0.9));
             float intensity = AURORA_RADIANCE * visibility * flicker;
             updateIntensity(auroraMaterials[i], auroraTexture, intensity, lastAuroraIntensity[i]);
             if (changed(intensity, lastAuroraIntensity[i])) lastAuroraIntensity[i] = intensity;
             if (intensity <= 0.0f) continue;
-            float sway = (float) Math.toRadians(4.0 * Math.sin(clock * 0.05 + i * 1.3));
+            float sway = (float) Math.toRadians(9.0 * Math.sin(clock * 0.12 + i * 1.3)
+                    + 3.0 * Math.sin(clock * 0.41 + i * 2.7));
             setTransform(sway, cameraPos);
             api.drawInstance(auroraMeshes[i].getHandle(), transform.matrix, InstanceCategoryBit.SKY, 1, blendPNext);
         }
