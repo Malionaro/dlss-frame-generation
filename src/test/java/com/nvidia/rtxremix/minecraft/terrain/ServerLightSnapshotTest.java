@@ -125,7 +125,10 @@ class ServerLightSnapshotTest {
         // would change what absent columns answer for every reader of the shared view.
         columns.defaultReturnValue(MIN_SECTION);
         assertEquals(MIN_SECTION, columns.get(SectionPos.asLong(5, 0, 5)));
-        assertThrows(UnsupportedOperationException.class, () -> columns.defaultReturnValue(MIN_SECTION + 1));
+        // A dimension change (e.g. into the End) hands a different default; the view must take
+        // it instead of crashing the light worker.
+        columns.defaultReturnValue(MIN_SECTION + 1);
+        assertEquals(MIN_SECTION + 1, columns.get(SectionPos.asLong(5, 0, 5)));
         assertThrows(UnsupportedOperationException.class, () -> columns.put(1L, 2));
         assertThrows(UnsupportedOperationException.class, () -> columns.remove(1L));
         assertThrows(UnsupportedOperationException.class, columns::clear);

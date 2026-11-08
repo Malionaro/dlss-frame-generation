@@ -71,12 +71,12 @@ public class BlockTextureManager {
     public static final InstanceInfoBlendEXT ATLAS_TRANSLUCENT_BLEND =
             InstanceInfoBlendEXT.textureTimesVertexColor();
     private static final float POM_DISPLACE_IN = 0.25f;
-    private static final float COMMON_GLASS_IOR = 1.52f;
+    private static final float COMMON_GLASS_IOR = 1.2f;
     private static final float THIN_SSS_MEASUREMENT_DISTANCE = 0.75f;
     private static final int THIN_SSS_DEFAULT_THICKNESS = Math.round(THIN_SSS_MEASUREMENT_DISTANCE * 255.0f);
-    private static final float DEFAULT_CUTOUT_SSS_TRANSMISSION_DISTANCE = THIN_SSS_MEASUREMENT_DISTANCE;
-    private static final float DEFAULT_CUTOUT_SSS_ANISOTROPY = 0.0f;
-    private static final float DEFAULT_CUTOUT_SSS_ALBEDO = 0.5f;
+    private static final float DEFAULT_CUTOUT_SSS_TRANSMISSION_DISTANCE = 1.2f;
+    private static final float DEFAULT_CUTOUT_SSS_ANISOTROPY = 0.3f;
+    private static final float DEFAULT_CUTOUT_SSS_ALBEDO = 0.65f;
     public static final float DEFAULT_TERRAIN_EMISSION_MULTIPLIER = 1.0f;
     public static final float MAX_TERRAIN_EMISSION_MULTIPLIER = 50.0f;
     private static final float BASE_TERRAIN_EMISSION_INTENSITY = 100.0f;

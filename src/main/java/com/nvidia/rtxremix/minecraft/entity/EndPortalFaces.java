@@ -44,8 +44,8 @@ final class EndPortalFaces implements VertexConsumer {
     /** Star texture tiles per block per unit of vanilla's layer scale. */
     private static final float WORLD_SCALE = 0.08f;
     /** Vanilla's colours scaled for the runtime's emissive brightness, which lit the sky grey at 1. */
-    private static final float STAR_GLOW = 4f;
-    private static final float SKY_GLOW = 0.5f;
+    private static final float STAR_GLOW = 1.6f;
+    private static final float SKY_GLOW = 0.25f;
     /** World positions wrap at this many blocks before scaling, keeping texture coordinates small. */
     private static final int WRAP = 1024;
     /** Blocks the portal's sky sinks below its top face; its star layers lie between. */

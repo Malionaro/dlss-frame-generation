@@ -91,6 +91,10 @@ public class LightManager {
      */
     private static final EntityLightSpec LIGHTNING_SPEC =
             new EntityLightSpec(3000.0f, 1.0f, new float[] {0.75f, 0.82f, 1.0f}, 0.0f);
+    /** Lit TNT glows and flashes white-orange as vanilla's does. */
+    private static final EntityLightSpec PRIMED_TNT_SPEC =
+            new EntityLightSpec(15.0f * RULELESS_ITEM_RADIANCE_PER_LIGHT_LEVEL, 0.45f,
+                    new float[] {1.0f, 0.8f, 0.55f}, 0.3f);
     /** Blocks above the strike point the bolt's light stands. */
     private static final double LIGHTNING_LIGHT_HEIGHT = 4.0;
     /**
@@ -113,7 +117,10 @@ public class LightManager {
     private static final float MIN_BEAM_LENGTH_SQ = 1.0e-12f;
     public static final float SUN_PATH_ROTATION_DEG = 30f;
     private static final float SUN_ANGULAR_DIAMETER_DEGREES = 0.53f;
+    /** Diameter the distant light casts shadows with: wider than the disc for softer shadow edges. */
+    private static final float SUN_SHADOW_DIAMETER_DEGREES = 1.6f;
     private static final float MOON_ANGULAR_DIAMETER_DEGREES = 0.52f;
+    private static final float MOON_SHADOW_DIAMETER_DEGREES = 1.5f;
     private static final float SUN_ANGULAR_RADIUS = (float) Math.toRadians(SUN_ANGULAR_DIAMETER_DEGREES * 0.5f);
     private static final float MOON_ANGULAR_RADIUS = (float) Math.toRadians(MOON_ANGULAR_DIAMETER_DEGREES * 0.5f);
     /**
@@ -318,6 +325,11 @@ public class LightManager {
                 }
             } else if (entity instanceof Display.BlockDisplay display) {
                 ensureDisplayBeaconLight(display, tickDelta);
+            } else if (entity instanceof net.minecraft.world.entity.item.PrimedTnt tnt) {
+                // Vanilla flashes the block white every five ticks of the fuse.
+                float flash = (tnt.getFuse() / 5) % 2 == 0 ? 1.0f : 0.35f;
+                ensureSphereEntityLight(EntityLightKey.item(entity.getId()), PRIMED_TNT_SPEC,
+                        tnt.getPosition(tickDelta).add(0.0, 0.5, 0.0), PRIMED_TNT_SPEC.radius, flash);
             } else if (entity instanceof LightningBolt bolt) {
                 ensureSphereEntityLight(EntityLightKey.lightning(entity.getId()), LIGHTNING_SPEC,
                         bolt.position().add(0.0, LIGHTNING_LIGHT_HEIGHT, 0.0), LIGHTNING_SPEC.radius, 1.0f);
@@ -1149,10 +1161,10 @@ public class LightManager {
         try {
             sunLight = updateDistantLight(sunLight, skyLightState.sunPosition(),
                     scaleRadiance(skyLightState.sunDirectRadiance(), 1.0f - SUN_DISC_SHARE),
-                    SUN_ANGULAR_DIAMETER_DEGREES, 1.0f);
+                    SUN_SHADOW_DIAMETER_DEGREES, 1.0f);
             moonLight = updateDistantLight(moonLight, skyLightState.moonPosition(),
                     skyLightState.moonDirectRadiance(),
-                    MOON_ANGULAR_DIAMETER_DEGREES, 1.0f);
+                    MOON_SHADOW_DIAMETER_DEGREES, 1.0f);
         } catch (RemixException e) {
             LOGGER.error("Failed to update sky light: {}", e.getMessage());
         }

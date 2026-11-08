@@ -125,7 +125,7 @@ public final class Puddles {
      * Depths over which water stands, from wet ground's sheen to a mirror: about a fifth of open
      * ground at the default amount. Water over every wet place covered nearly all of it.
      */
-    private static final float WATER_EDGE = 0.6f;
+    private static final float WATER_EDGE = 0.8f;
     private static final float WATER_FULL = 1.1f;
     /** Depth the Puddle Amount setting moves both bands by, from its middle to either end. */
     private static final float AMOUNT_RANGE = 0.8f;

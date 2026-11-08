@@ -40,7 +40,15 @@ public class HeldItemRendererMixin {
             int lightCoords,
             CallbackInfo ci) {
         EntityRenderContext context = EntityRenderContext.get();
-        if (context.isRemixPass()) context.setActiveHand(hand);
+        if (context.isRemixPass()) {
+            context.setActiveHand(hand);
+            if (hand == InteractionHand.MAIN_HAND) {
+                // Vanilla lets the hand trail the camera by (view - bob) * 0.1; under the
+                // path tracer's temporal upscaling that lag reads as a twitch. Keep a quarter.
+                state.xBob = state.viewXRot - (state.viewXRot - state.xBob) * 0.25f;
+                state.yBob = state.viewYRot - (state.viewYRot - state.yBob) * 0.25f;
+            }
+        }
     }
 
     @Inject(method = "submitArmWithItem", at = @At("RETURN"))

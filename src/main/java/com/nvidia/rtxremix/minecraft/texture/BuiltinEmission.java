@@ -29,7 +29,9 @@ public final class BuiltinEmission {
 
     /** Lava and fire read close to vanilla's colour instead of blooming to white. */
     private static final float LAVA_GAIN = 0.55f;
-    private static final float FIRE_GAIN = 0.6f;
+    private static final float FIRE_GAIN = 0.45f;
+    /** Crying obsidian and magma read as faint glows, not lamps. */
+    private static final float SOFT_GAIN = 0.5f;
     /** Surface plants glowed like lamps in daylight; a faint glow is enough. */
     private static final float PLANT_GAIN = 0.4f;
     /** The portal is a soft light source of its own. */
@@ -54,6 +56,8 @@ public final class BuiltinEmission {
             Map.entry(Identifier.withDefaultNamespace("block/red_mushroom_block"), PLANT_GAIN),
             Map.entry(Identifier.withDefaultNamespace("block/mushroom_stem"), PLANT_GAIN),
             Map.entry(Identifier.withDefaultNamespace("block/mushroom_block_inside"), PLANT_GAIN),
+            Map.entry(Identifier.withDefaultNamespace("block/crying_obsidian"), SOFT_GAIN),
+            Map.entry(Identifier.withDefaultNamespace("block/magma"), SOFT_GAIN),
             Map.entry(Identifier.withDefaultNamespace("block/nether_portal"), PORTAL_GAIN));
 
     /** Emission factor at a point of a sprite, {@code u} and {@code v} in [0, 1) across the sprite. */

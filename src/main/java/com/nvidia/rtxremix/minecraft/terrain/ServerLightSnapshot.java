@@ -340,13 +340,13 @@ public final class ServerLightSnapshot {
         public int get(long column) {
             for (ColumnLayer layer = top; layer != null; layer = layer.parent) {
                 if (!layer.removed.isEmpty() && layer.removed.contains(column)) {
-                    return base.defaultReturnValue();
+                    return defRetValue;
                 }
                 if (layer.changed.containsKey(column)) {
                     return layer.changed.get(column);
                 }
             }
-            return base.get(column);
+            return base.containsKey(column) ? base.get(column) : defRetValue;
         }
 
         @Override
@@ -364,9 +364,11 @@ public final class ServerLightSnapshot {
 
         @Override
         public void defaultReturnValue(int value) {
-            if (value != base.defaultReturnValue()) {
-                throw readOnly();
-            }
+            // Vanilla's SkyDataLayerStorageMap sets its own default (the
+            // dimension's min section) on the map it wraps; a dimension change
+            // (e.g. into the End) makes that differ from the base. The default
+            // only belongs to this view, so taking it is safe.
+            super.defaultReturnValue(value);
         }
 
         @Override

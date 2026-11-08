@@ -108,6 +108,9 @@ public class RemixEntityPass {
     private long frameCaptureNanos, frameSubmitNanos, frameOffSweepNanos;
     private int frameOffCount, frameOffDraws, frameOffReused;
     private Vec3 firstPersonShadowModelOffset = Vec3.ZERO;
+    /** {@code -Drtxremix.firstPersonShadow=true} brings the own body's shadow back. */
+    private static final boolean SKIP_FIRST_PERSON_SHADOW =
+            !"true".equalsIgnoreCase(System.getProperty("rtxremix.firstPersonShadow"));
     // Deltas of the submitter's running totals taken around this pass's own submits,
     // so what the submitter's other owners draw in the same frame stays out of them.
     private int frameDraws, frameMeshCreates;
@@ -311,6 +314,10 @@ public class RemixEntityPass {
         int drawsBefore = submitter.getLastDrawCount();
         int meshCreatesBefore = submitter.getLastMeshCreateCount();
         try {
+            // Feedback: the player's own shadow at the feet in first person is unwanted.
+            if (result.firstPersonLocalPlayer() && SKIP_FIRST_PERSON_SHADOW) {
+                return true;
+            }
             Vec3 renderOffset = result.firstPersonLocalPlayer()
                     ? firstPersonShadowModelOffset
                     : Vec3.ZERO;

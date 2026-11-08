@@ -68,12 +68,12 @@ public final class LodTerrain {
             FabricLoader.getInstance().isModLoaded("distanthorizons");
     private static final long INSTALL_BUDGET_NS = 1_000_000L;
     /** Common glass, as Minecraft's own glass takes it. */
-    private static final float GLASS_IOR = 1.52f;
+    private static final float GLASS_IOR = 1.2f;
     /** A glass face's thickness; its transmittance is measured over the same, so a face passes its tint once. */
     private static final float GLASS_WALL = 0.05f;
     /** Share of the terrain's emission at which blocks that give off light, lava aside, glow. */
     private static final float LAMP_EMISSION = Math.max(0f,
-            Float.parseFloat(System.getProperty("rtxremix.lod.lampEmission", "0.2")));
+            Float.parseFloat(System.getProperty("rtxremix.lod.lampEmission", "0.05")));
     /**
      * Low-priority threads building meshes. One fell some eighty sections behind a camera
      * flying across the city, and the sections it had not reached showed LOD ground over
@@ -790,7 +790,7 @@ public final class LodTerrain {
         if (glowMaterial != null && !glowMaterial.isDeleted()) return glowMaterial;
         // At the same share as near lava (BuiltinEmission), so distant lava fields do not
         // bloom into red patches on the horizon.
-        glowMaterial = paletteGlow(intensity * 0.55f, "glow");
+        glowMaterial = paletteGlow(intensity * 0.3f, "glow");
         return glowMaterial;
     }
 

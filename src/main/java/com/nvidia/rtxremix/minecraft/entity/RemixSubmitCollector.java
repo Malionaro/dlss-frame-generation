@@ -150,7 +150,9 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
         quadInstance.setOverlayCoords(overlayCoords);
         for (BakedQuad quad : quads.all()) {
             BakedQuad.MaterialInfo material = quad.materialInfo();
-            quadInstance.setColor(material.isTinted() ? tintLayer(tintLayers, material.tintIndex()) : -1);
+            int color = material.isTinted() ? tintLayer(tintLayers, material.tintIndex()) : -1;
+            if (foilType != ItemStackRenderState.FoilType.NONE) color = enchantTint(color);
+            quadInstance.setColor(color);
             provider.getBuffer(material.itemRenderType()).putBakedQuad(pose, quad, quadInstance);
         }
     }
@@ -179,6 +181,15 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
             quadInstance.setColor(tintIndex != -1 && tintIndex < tintLayers.length ? tintLayers[tintIndex] : -1);
             buffer.putBakedQuad(pose, quad, quadInstance);
         }
+    }
+
+    /** A subtle violet sheen for enchanted items, standing in for vanilla's glint. */
+    private static int enchantTint(int argb) {
+        int a = argb >>> 24, r = argb >> 16 & 0xFF, g = argb >> 8 & 0xFF, b = argb & 0xFF;
+        r = Math.round(r * 0.88f + 0xC0 * 0.12f);
+        g = Math.round(g * 0.80f + 0x70 * 0.10f);
+        b = Math.min(255, Math.round(b * 0.95f + 0xFF * 0.12f));
+        return a << 24 | r << 16 | g << 8 | b;
     }
 
     private static int tintLayer(int[] layers, int layer) {
@@ -294,7 +305,7 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
                     provider.getBuffer(RenderTypes.entitySolid(AbstractEndPortalRenderer.END_SKY_LOCATION)),
                     provider.getBuffer(RenderTypes.eyes(AbstractEndPortalRenderer.END_SKY_LOCATION)),
                     provider.getBuffer(RenderTypes.eyes(AbstractEndPortalRenderer.END_PORTAL_LOCATION)),
-                    time, blockOrigin, renderType.pipeline() == RenderPipelines.END_PORTAL));
+                    time, blockOrigin, false));
             return;
         }
         customGeometryRenderer.render(poseStack.last(), provider.getBuffer(renderType));
