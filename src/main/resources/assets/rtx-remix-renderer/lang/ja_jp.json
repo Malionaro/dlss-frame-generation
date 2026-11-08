@@ -225,5 +225,9 @@
   "rtxremix.settings.group.more": "その他",
   "rtxremix.settings.rtxButton.on": "RTX: オン",
   "rtxremix.settings.rtxButton.off": "RTX: オフ",
-  "rtxremix.settings.remixMenuShort": "Remix メニュー"
+  "rtxremix.settings.remixMenuShort": "Remix メニュー",
+  "rtxremix.settings.group.frameGeneration": "フレーム生成",
+  "rtxremix.setting.performance.dlssFrameGeneration": "DLSS フレーム生成",
+  "rtxremix.setting.performance.dlssFrameGeneration.tip": "DLSS フレーム生成で描画フレームの間にフレームを生成します（RTX 40 以降）。アップスケール品質は Remix メニューで。",
+  "rtxremix.settings.hint": "設定にカーソルを合わせると説明が表示されます。ホイールでスクロール。"
 }

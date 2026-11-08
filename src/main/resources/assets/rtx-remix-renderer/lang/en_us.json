@@ -225,5 +225,9 @@
   "rtxremix.settings.group.more": "More",
   "rtxremix.settings.rtxButton.on": "RTX: On",
   "rtxremix.settings.rtxButton.off": "RTX: Off",
-  "rtxremix.settings.remixMenuShort": "Remix Menu"
+  "rtxremix.settings.remixMenuShort": "Remix Menu",
+  "rtxremix.settings.group.frameGeneration": "Frame Generation",
+  "rtxremix.setting.performance.dlssFrameGeneration": "DLSS Frame Generation",
+  "rtxremix.setting.performance.dlssFrameGeneration.tip": "Lets RTX Remix generate frames between the rendered ones with DLSS Frame Generation (RTX 40-series and newer). Raises the frame rate and adds a little latency. Upscaling quality is in the Remix Menu.",
+  "rtxremix.settings.hint": "Point at a setting to read what it does. Scroll with the mouse wheel."
 }

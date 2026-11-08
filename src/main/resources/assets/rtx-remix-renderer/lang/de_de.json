@@ -218,5 +218,9 @@
   "rtxremix.settings.group.more": "Weiteres",
   "rtxremix.settings.rtxButton.on": "RTX: An",
   "rtxremix.settings.rtxButton.off": "RTX: Aus",
-  "rtxremix.settings.remixMenuShort": "Remix-Menü"
+  "rtxremix.settings.remixMenuShort": "Remix-Menü",
+  "rtxremix.settings.group.frameGeneration": "Frame Generation",
+  "rtxremix.setting.performance.dlssFrameGeneration": "DLSS Frame Generation",
+  "rtxremix.setting.performance.dlssFrameGeneration.tip": "Lässt RTX Remix mit DLSS Frame Generation Bilder zwischen die gerenderten einfügen (ab RTX 40). Erhöht die Bildrate, kostet etwas Latenz. Die Upscaling-Qualität stellst du im Remix-Menü ein.",
+  "rtxremix.settings.hint": "Zeige auf eine Einstellung, um zu lesen, was sie tut. Mit dem Mausrad scrollen."
 }

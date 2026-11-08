@@ -3,10 +3,11 @@
 The mod adds its own settings screen to the game. Open **Options**, then **RTX
 Remix Settings...**. It is available from the title screen and from the pause
 menu, or press **End** in game. It is one screen with a tab per page along the
-top (Performance, Lighting, Image, Materials, Display and Debug), a status line
-with the path tracing state and the frame rate, and quick buttons along the
-bottom: **RTX** on or off, the **Remix Menu**, **Reset to Defaults** for the
-page, and **Done**. Switching tabs saves the page you leave. The **Display**
+top (Performance, Lighting, Image, Materials, Display and Debug), a row of
+status chips (path tracing, frame rate, Java memory), two columns of controls
+under small headings, an info box that explains the control under the cursor,
+and a footer with the **Remix Menu**, **Reset to Defaults** for the page and
+**Done**. Performance also has **DLSS Frame Generation** (`rtx.dlfg.enable`). Switching tabs saves the page you leave. The **Display**
 tab holds the performance overlay (also **F7** in game), the path tracing
 switch (also **F8**), how much memory Java has, the RTX Remix Graphics Settings
 and **Reset All**. Most controls apply as you move them. Block Lights and Block Glow

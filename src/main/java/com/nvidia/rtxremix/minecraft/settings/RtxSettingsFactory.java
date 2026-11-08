@@ -291,6 +291,12 @@ public final class RtxSettingsFactory {
                 () -> (double) textures.getTerrainEmissionMultiplier(),
                 value -> textures.setTerrainEmissionMultiplier(value.floatValue())));
         RemixAPI remix = renderer.getRemixApi();
+        // Remix's own DLSS Frame Generation, off by default in rtx.conf.
+        remixBool("performance.dlssFrameGeneration", SettingGroup.FRAME_GENERATION,
+                "rtxremix.setting.performance.dlssFrameGeneration",
+                "rtx.dlfg.enable",
+                remix::getConfigVariableResolved, remix::setConfigVariable)
+                .ifPresent(list::add);
         remixBool("materials.smoothReliefMaps", SettingGroup.MATERIALS,
                 "rtxremix.setting.materials.smoothReliefMaps",
                 "rtx.materials.smoothReliefMapFiltering",
