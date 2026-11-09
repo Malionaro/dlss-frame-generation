@@ -231,8 +231,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true);
             PointerBuffer mapped = stack.mallocPointer(1);
-            check(vkMapMemory(device, probeBuffer.memory, 0, 4, 0, mapped), "map probe buffer");
-            MemoryUtil.memPutInt(mapped.get(0), 0);
+            check(vkMapMemory(device, probeBuffer.memory, 0, 256, 0, mapped), "map probe buffer");
+            MemoryUtil.memSet(mapped.get(0), 0, 256);
             vkUnmapMemory(device, probeBuffer.memory);
             probeAddress = bufferAddress(probeBuffer.buffer, stack);
         } catch (Throwable error) {
@@ -354,6 +354,10 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             bindingProbeSetLayouts[b] = NULL;
         }
         bindingProbesCreated = false;
+        if (fullLayoutProbePipeline != NULL) vkDestroyPipeline(device, fullLayoutProbePipeline, null);
+        if (fullLayoutProbeModule != NULL) vkDestroyShaderModule(device, fullLayoutProbeModule, null);
+        fullLayoutProbePipeline = NULL;
+        fullLayoutProbeModule = NULL;
     }
 
     private void destroyPushPipeline() {
@@ -499,6 +503,75 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             KHRPushDescriptor.vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
                     bindingProbeLayouts[b], 0, writes.slice(b, 1));
             vkCmdDispatch(commandBuffer, 1, 1, 1);
+        }
+    }
+
+    /** A trivial shader on the full sixteen-binding push layout, counting into value[51]. */
+    static final String FULL_LAYOUT_PROBE_SHADER = """
+            #version 460
+            #extension GL_EXT_buffer_reference : require
+            #extension GL_EXT_buffer_reference_uvec2 : require
+            layout(local_size_x = 1) in;
+            layout(buffer_reference, std430, buffer_reference_align = 4) buffer Counter { uint value[]; };
+            layout(push_constant) uniform Push { uvec2 counter; } push;
+            void main() { atomicAdd(Counter(push.counter).value[51], 1u); }
+            """;
+    private long fullLayoutProbePipeline = NULL;
+    private long fullLayoutProbeModule = NULL;
+    private boolean fullLayoutProbeFailed;
+
+    /** Runs the full-layout probe with the RT descriptors pushed, then rebinds the RT pipeline. */
+    private void recordFullLayoutProbe(VkCommandBuffer commandBuffer, MemoryStack stack) {
+        if (probeBuffer == null || frameNumber >= BINDING_PROBE_FRAMES) {
+            return;
+        }
+        if (fullLayoutProbePipeline == NULL && !fullLayoutProbeFailed) {
+            try {
+                long[] module = new long[1];
+                fullLayoutProbePipeline = createProbePipeline(FULL_LAYOUT_PROBE_SHADER,
+                        "full_layout_probe.comp", pushPipelineLayout, module);
+                fullLayoutProbeModule = module[0];
+            } catch (Throwable error) {
+                fullLayoutProbeFailed = true;
+                logger.warn("RT full-layout probe unavailable: {}", error.toString());
+            }
+        }
+        if (fullLayoutProbePipeline == NULL) {
+            return;
+        }
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, fullLayoutProbePipeline);
+        vkCmdPushConstants(commandBuffer, pushPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                stack.longs(probeAddress));
+        vkCmdDispatch(commandBuffer, 1, 1, 1);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pushPipeline);
+    }
+
+    /** The RT shader's push constant: the diagnostic counters' buffer address. */
+    private static VkPushConstantRange.Buffer rtDiagnosticsRange(MemoryStack stack) {
+        VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack);
+        range.get(0).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT).offset(0).size(8);
+        return range;
+    }
+
+    /**
+     * {workgroups the RT shader started, output width, output height, full-layout
+     * probe runs} as counted through a buffer address, or null when unavailable.
+     */
+    public long[] addressCountedShaderStarts() {
+        if (probeBuffer == null) {
+            return null;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            PointerBuffer mapped = stack.mallocPointer(1);
+            if (vkMapMemory(device, probeBuffer.memory, 0, 256, 0, mapped) != VK_SUCCESS) {
+                return null;
+            }
+            long[] values = new long[4];
+            for (int i = 0; i < 4; i++) {
+                values[i] = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 4L * (48 + i)));
+            }
+            vkUnmapMemory(device, probeBuffer.memory);
+            return values;
         }
     }
 
@@ -1108,7 +1181,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             VkPipelineLayoutCreateInfo pipelineLayoutInfo =
                     VkPipelineLayoutCreateInfo.calloc(stack)
                             .sType$Default()
-                            .pSetLayouts(stack.longs(descriptorSetLayout));
+                            .pSetLayouts(stack.longs(descriptorSetLayout))
+                            .pPushConstantRanges(rtDiagnosticsRange(stack));
             check(vkCreatePipelineLayout(device, pipelineLayoutInfo, null, result),
                     "create RT pipeline layout");
             pipelineLayout = result.get(0);
@@ -1136,7 +1210,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                             "create RT push descriptor layout");
                     pushSetLayout = result.get(0);
                     check(vkCreatePipelineLayout(device, VkPipelineLayoutCreateInfo.calloc(stack)
-                                    .sType$Default().pSetLayouts(stack.longs(pushSetLayout)), null, result),
+                                    .sType$Default().pSetLayouts(stack.longs(pushSetLayout))
+                                    .pPushConstantRanges(rtDiagnosticsRange(stack)), null, result),
                             "create RT push pipeline layout");
                     pushPipelineLayout = result.get(0);
                     pipelineInfo.get(0).layout(pushPipelineLayout);
@@ -2402,6 +2477,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pushPipeline);
                     KHRPushDescriptor.vkCmdPushDescriptorSetKHR(commandBuffer,
                             VK_PIPELINE_BIND_POINT_COMPUTE, pushPipelineLayout, 0, pushWrites);
+                    recordFullLayoutProbe(commandBuffer, stack);
                 } else {
                     // The probes' pushes disturbed set 0; bind the RT set again.
                     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
@@ -2409,6 +2485,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                             pipelineLayout, 0, stack.longs(descriptorSet), null);
                 }
             }
+            vkCmdPushConstants(commandBuffer, pushPipeline != NULL ? pushPipelineLayout : pipelineLayout,
+                    VK_SHADER_STAGE_COMPUTE_BIT, 0, stack.longs(probeBuffer != null ? probeAddress : 0L));
             if (timestampPool != NULL) {
                 vkCmdResetQueryPool(commandBuffer, timestampPool, frameSlot * 2, 2);
                 vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,

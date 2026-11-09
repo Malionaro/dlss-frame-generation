@@ -1227,12 +1227,30 @@ vec3 lensFlare(ivec2 pixel, ivec2 size) {
     return color * strength;
 }
 
+// Diagnostics through a buffer address, independent of every descriptor:
+// the self-check reads them to tell a shader that never starts from one whose
+// descriptor writes are lost. Zero address = off.
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer RtDiagnosticCounters {
+    uint value[];
+};
+layout(push_constant) uniform RtDiagnostics {
+    uvec2 counters;
+} rtDiagnostics;
+
 void main() {
+    bool diagnostics = (rtDiagnostics.counters.x | rtDiagnostics.counters.y) != 0u;
+    if (diagnostics && gl_LocalInvocationIndex == 0u) {
+        atomicAdd(RtDiagnosticCounters(rtDiagnostics.counters).value[48], 1u);
+    }
     if (gl_LocalInvocationIndex == 0u) {
         atomicAdd(exposureState.workgroups, 1u);
     }
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(targetImage);
+    if (diagnostics && pixel == ivec2(0)) {
+        RtDiagnosticCounters(rtDiagnostics.counters).value[49] = uint(size.x);
+        RtDiagnosticCounters(rtDiagnostics.counters).value[50] = uint(size.y);
+    }
     if (pixel == ivec2(0)) {
         exposureState.imageWidth = uint(size.x);
         exposureState.imageHeight = uint(size.y);

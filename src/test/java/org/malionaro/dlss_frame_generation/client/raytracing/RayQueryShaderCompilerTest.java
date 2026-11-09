@@ -39,7 +39,8 @@ class RayQueryShaderCompilerTest {
         for (String source : new String[] {
                 VulkanRayQueryRenderer.PROBE_SHADER,
                 VulkanRayQueryRenderer.LAYOUT_PROBE_SHADER,
-                VulkanRayQueryRenderer.RAY_QUERY_PROBE_SHADER}) {
+                VulkanRayQueryRenderer.RAY_QUERY_PROBE_SHADER,
+                VulkanRayQueryRenderer.FULL_LAYOUT_PROBE_SHADER}) {
             ByteBuffer spirv = RayQueryShaderCompiler.compileSource(source, "probe.comp");
             try {
                 assertEquals(0x07230203, spirv.order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt(0));

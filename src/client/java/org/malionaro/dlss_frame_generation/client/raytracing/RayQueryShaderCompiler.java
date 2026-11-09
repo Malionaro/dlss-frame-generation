@@ -34,6 +34,11 @@ final class RayQueryShaderCompiler {
         }
 
         long result = MemoryUtil.NULL;
+        // The String overload copies the source onto LWJGL's 64 KiB thread stack,
+        // which the RT shader outgrew; heap copies have no such limit.
+        ByteBuffer sourceText = MemoryUtil.memUTF8(source, false);
+        ByteBuffer inputName = MemoryUtil.memUTF8(resourcePath);
+        ByteBuffer entryPoint = MemoryUtil.memUTF8("main");
         try {
             shaderc_compile_options_set_target_env(
                     options,
@@ -46,10 +51,10 @@ final class RayQueryShaderCompiler {
             );
             result = shaderc_compile_into_spv(
                     compiler,
-                    source,
+                    sourceText,
                     shaderc_compute_shader,
-                    resourcePath,
-                    "main",
+                    inputName,
+                    entryPoint,
                     options
             );
             if (result == MemoryUtil.NULL
@@ -66,6 +71,9 @@ final class RayQueryShaderCompiler {
             copy.put(compiled).flip();
             return copy;
         } finally {
+            MemoryUtil.memFree(sourceText);
+            MemoryUtil.memFree(inputName);
+            MemoryUtil.memFree(entryPoint);
             if (result != MemoryUtil.NULL) {
                 shaderc_result_release(result);
             }

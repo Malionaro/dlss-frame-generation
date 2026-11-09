@@ -165,6 +165,17 @@ public final class HardwareRayTracingManager {
                             currentRenderer.recordedFrames(), currentRenderer.startedWorkgroups(),
                             useOwnCommandBuffer() ? "own command buffer" : "Minecraft's command buffer");
                 }
+                long[] addressCounted = currentRenderer.addressCountedShaderStarts();
+                if (addressCounted != null) {
+                    logger.info("RT shader counted through a buffer address: {} workgroups started, "
+                                    + "output seen {} x {}, trivial shader on the full push layout ran {} ({})",
+                            addressCounted[0], addressCounted[1], addressCounted[2], addressCounted[3],
+                            addressCounted[0] == 0
+                                    ? "it really never starts"
+                                    : currentRenderer.startedWorkgroups() == 0
+                                            ? "it runs, but its writes through the exposure buffer binding are lost"
+                                            : "it runs");
+                }
                 logger.info("RT binding check ({}): {}",
                         currentRenderer.usesPushDescriptors() ? "push descriptors" : "descriptor set",
                         describeBindingProbes(currentRenderer.bindingProbeDispatches()));
