@@ -1614,7 +1614,10 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 .type(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR)
                 .flags(VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR)
                 .mode(VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR)
-                .pGeometries(geometry);
+                .pGeometries(geometry)
+                // LWJGL 3.4 no longer derives geometryCount (shared with ppGeometries):
+                // without it every BLAS was built empty and no ray hit anything.
+                .geometryCount(1);
     }
 
     private static VkAccelerationStructureBuildGeometryInfoKHR blasBuildInfo(
@@ -1626,7 +1629,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 .type(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR)
                 .flags(VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR)
                 .mode(VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR)
-                .pGeometries(createAabbGeometry(stack, boxesAddress));
+                .pGeometries(createAabbGeometry(stack, boxesAddress))
+                .geometryCount(1);
     }
 
     /** Records the BLAS builds; each gets its own region of the slot's scratch arena. */
@@ -1762,7 +1766,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                             .type(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR)
                             .flags(VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR)
                             .mode(VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR)
-                            .pGeometries(createInstanceGeometry(stack, instanceAddress));
+                            .pGeometries(createInstanceGeometry(stack, instanceAddress))
+                            .geometryCount(1);
             VkAccelerationStructureBuildSizesInfoKHR sizes =
                     VkAccelerationStructureBuildSizesInfoKHR.calloc(stack).sType$Default();
             vkGetAccelerationStructureBuildSizesKHR(
