@@ -105,6 +105,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Tr
 const uint TRIANGLE_CUTOUT = 1u << 24u;
 const uint TRIANGLE_UNTEXTURED = 1u << 25u;
 // Instance masks (VulkanRayQueryRenderer): blocks 1, entity parts 2.
+// +1: image row 0 is the bottom of the screen (Minecraft 26.3 Vulkan), -1: the top.
+const float SCREEN_ROW_SIGN = 1.0;
 const uint MASK_BLOCKS = 0x01u;
 const uint MASK_ENTITIES = 0x02u;
 const uint MASK_PARTICLES = 0x04u;
@@ -396,7 +398,10 @@ vec3 rayDirectionForPixel(ivec2 pixel, ivec2 size) {
     // RT lighting and geometry move together.
     vec2 uv = (vec2(pixel) + vec2(0.5) - frame.reflectionParams.yz) / vec2(size);
     vec2 ndc = uv * 2.0 - 1.0;
-    ndc.y = -ndc.y;
+    // Minecraft 26.3's Vulkan targets keep OpenGL's row order: row 0 is the
+    // bottom of the screen, so +ndc.y grows with the row (in-game: the RT
+    // image was upside down against the raster under it).
+    ndc.y = SCREEN_ROW_SIGN * ndc.y;
     return normalize(
         frame.cameraForward.xyz
         + frame.cameraRight.xyz * ndc.x * frame.renderParameters.y
@@ -1072,7 +1077,7 @@ vec3 accumulate(ivec2 size, vec3 point, vec3 current, uint parity) {
     vec2 ndc = vec2(
         dot(offset, frame.previousRight.xyz) / (depth * tanHalfFov * aspect),
         dot(offset, frame.previousUp.xyz) / (depth * tanHalfFov));
-    vec2 uv = vec2(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
+    vec2 uv = vec2(ndc.x * 0.5 + 0.5, SCREEN_ROW_SIGN * ndc.y * 0.5 + 0.5);
     vec2 previousPixel = uv * vec2(size) - 0.5 + vec2(frame.previousUp.w, frame.previousJitter.x);
     ivec2 texel = ivec2(floor(previousPixel + 0.5));
     if (any(lessThan(texel, ivec2(0))) || any(greaterThanEqual(texel, size))) {
@@ -1194,7 +1199,7 @@ vec3 lensFlare(ivec2 pixel, ivec2 size) {
     if (abs(ndc.x) > 1.3 || abs(ndc.y) > 1.3) {
         return vec3(0.0);
     }
-    vec2 sunPixel = vec2(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5) * vec2(size);
+    vec2 sunPixel = vec2(ndc.x * 0.5 + 0.5, SCREEN_ROW_SIGN * ndc.y * 0.5 + 0.5) * vec2(size);
     // The sun is visible when the raster depth around its pixel is sky.
     float visibility = 0.0;
     for (int i = 0; i < 5; i++) {
