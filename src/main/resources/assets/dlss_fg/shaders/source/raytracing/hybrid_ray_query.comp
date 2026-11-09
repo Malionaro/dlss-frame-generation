@@ -1250,6 +1250,14 @@ void main() {
     if (diagnostics && pixel == ivec2(0)) {
         RtDiagnosticCounters(rtDiagnostics.counters).value[49] = uint(size.x);
         RtDiagnosticCounters(rtDiagnostics.counters).value[50] = uint(size.y);
+        // What the other descriptors resolve to (self-check).
+        RtDiagnosticCounters(rtDiagnostics.counters).value[52] = uint(imageSize(history0).x);
+        RtDiagnosticCounters(rtDiagnostics.counters).value[53] = uint(textureSize(rasterDepth, 0).x);
+        RtDiagnosticCounters(rtDiagnostics.counters).value[54] = uint(textureSize(blockAtlas, 0).x);
+        RtDiagnosticCounters(rtDiagnostics.counters).value[55] = lightCount;
+        RtDiagnosticCounters(rtDiagnostics.counters).value[56] = uint(sectionBoxes.length());
+        RtDiagnosticCounters(rtDiagnostics.counters).value[57] = floatBitsToUint(frame.renderParameters.x);
+        RtDiagnosticCounters(rtDiagnostics.counters).value[58] = uint(imageSize(noisyColorImage).x);
     }
     if (pixel == ivec2(0)) {
         exposureState.imageWidth = uint(size.x);

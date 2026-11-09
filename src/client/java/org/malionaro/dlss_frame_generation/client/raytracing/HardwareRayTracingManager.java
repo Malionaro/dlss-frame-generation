@@ -176,6 +176,15 @@ public final class HardwareRayTracingManager {
                                             ? "it runs, but its writes through the exposure buffer binding are lost"
                                             : "it runs");
                 }
+                if (addressCounted != null && addressCounted.length >= 11) {
+                    // Indices: value[48 + i] of the diagnostic counters (hybrid_ray_query.comp).
+                    logger.info("RT descriptors as the shader sees them: output {} x {}, history width {}, "
+                                    + "noisy color width {}, depth width {}, atlas width {}, lights {}, "
+                                    + "section table entries {}, tanHalfFov {}",
+                            addressCounted[1], addressCounted[2], addressCounted[4], addressCounted[10],
+                            addressCounted[5], addressCounted[6], addressCounted[7], addressCounted[8],
+                            Float.intBitsToFloat((int) addressCounted[9]));
+                }
                 logger.info("RT binding check ({}): {}",
                         currentRenderer.usesPushDescriptors() ? "push descriptors" : "descriptor set",
                         describeBindingProbes(currentRenderer.bindingProbeDispatches()));

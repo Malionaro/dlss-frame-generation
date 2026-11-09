@@ -566,8 +566,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             if (vkMapMemory(device, probeBuffer.memory, 0, 256, 0, mapped) != VK_SUCCESS) {
                 return null;
             }
-            long[] values = new long[4];
-            for (int i = 0; i < 4; i++) {
+            long[] values = new long[11];
+            for (int i = 0; i < 11; i++) {
                 values[i] = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 4L * (48 + i)));
             }
             vkUnmapMemory(device, probeBuffer.memory);
