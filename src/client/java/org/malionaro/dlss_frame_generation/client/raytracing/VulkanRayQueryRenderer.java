@@ -413,6 +413,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     static String bindingProbeSource(int binding) {
         String declaration;
         String use;
+        String observe;
         String extension = "";
         switch (bindingType(binding)) {
             case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR -> {
@@ -420,24 +421,29 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 declaration = "layout(set = 0, binding = " + binding + ") uniform accelerationStructureEXT res;";
                 use = "rayQueryEXT q; rayQueryInitializeEXT(q, res, gl_RayFlagsOpaqueEXT, 0xFFu, vec3(0.0), 0.0,"
                         + " vec3(0.0, -1.0, 0.0), 1.0); rayQueryProceedEXT(q);";
+                observe = "1u";
             }
             case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER -> {
                 declaration = "layout(std430, set = 0, binding = " + binding + ") buffer Res { uint v[]; } res;";
                 use = "res.v[0] = 0u;";
+                observe = "uint(res.v.length())";
             }
             case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER -> {
                 declaration = "layout(std140, set = 0, binding = " + binding + ") uniform Res { vec4 v; } res;";
                 use = "Counter(push.counter).value[40] = floatBitsToUint(res.v.x);";
+                observe = "floatBitsToUint(res.v.x)";
             }
             case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER -> {
                 declaration = "layout(set = 0, binding = " + binding + ") uniform sampler2D res;";
                 use = "Counter(push.counter).value[41] = floatBitsToUint(textureLod(res, vec2(0.5), 0.0).x);";
+                observe = "uint(textureSize(res, 0).x)";
             }
             default -> {
                 // The formats the RT shader declares (hybrid_ray_query.comp).
                 String format = binding == 1 ? "rgba8" : binding == 8 ? "r16f" : "rgba16f";
                 declaration = "layout(set = 0, binding = " + binding + ", " + format + ") uniform image2D res;";
                 use = "imageStore(res, ivec2(0), vec4(0.0));";
+                observe = "uint(imageSize(res).x)";
             }
         }
         return "#version 460\n"
@@ -450,6 +456,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                 + declaration + "\n"
                 + "void main() {\n"
                 + "    atomicAdd(Counter(push.counter).value[push.index], 1u);\n"
+                + "    Counter(push.counter).value[19u + push.index] = " + observe + ";\n"
                 + "    if (push.mode == 7u) { " + use + " }\n"
                 + "}\n";
     }
@@ -572,6 +579,29 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             }
             vkUnmapMemory(device, probeBuffer.memory);
             return values;
+        }
+    }
+
+    /**
+     * What each per-binding probe saw through its one pushed descriptor: image
+     * width, buffer length in uints, the uniform's first float bits, 1 for the
+     * TLAS. Null when unavailable.
+     */
+    public long[] bindingProbeObservations() {
+        if (probeBuffer == null || !bindingProbesCreated || bindingProbesFailed) {
+            return null;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            PointerBuffer mapped = stack.mallocPointer(1);
+            if (vkMapMemory(device, probeBuffer.memory, 0, 256, 0, mapped) != VK_SUCCESS) {
+                return null;
+            }
+            long[] seen = new long[BINDING_COUNT];
+            for (int b = 0; b < BINDING_COUNT; b++) {
+                seen[b] = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 4L * (20 + b)));
+            }
+            vkUnmapMemory(device, probeBuffer.memory);
+            return seen;
         }
     }
 

@@ -185,6 +185,18 @@ public final class HardwareRayTracingManager {
                             addressCounted[5], addressCounted[6], addressCounted[7], addressCounted[8],
                             Float.intBitsToFloat((int) addressCounted[9]));
                 }
+                long[] seen = currentRenderer.bindingProbeObservations();
+                if (seen != null) {
+                    StringBuilder line = new StringBuilder();
+                    for (int b = 0; b < seen.length; b++) {
+                        if (b > 0) line.append(", ");
+                        line.append(b).append('=').append(b == 3
+                                ? String.valueOf(Float.intBitsToFloat((int) seen[b]))
+                                : String.valueOf(seen[b]));
+                    }
+                    logger.info("RT descriptors pushed one at a time, as a probe sees them "
+                            + "(image width / buffer uints / uniform float / TLAS 1): {}", line);
+                }
                 logger.info("RT binding check ({}): {}",
                         currentRenderer.usesPushDescriptors() ? "push descriptors" : "descriptor set",
                         describeBindingProbes(currentRenderer.bindingProbeDispatches()));
