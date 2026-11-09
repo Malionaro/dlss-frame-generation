@@ -343,7 +343,184 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
         rayQueryProbePipeline = NULL;
         layoutProbeModule = NULL;
         rayQueryProbeModule = NULL;
+        for (int b = 0; b < BINDING_COUNT; b++) {
+            if (bindingProbePipelines[b] != NULL) vkDestroyPipeline(device, bindingProbePipelines[b], null);
+            if (bindingProbeModules[b] != NULL) vkDestroyShaderModule(device, bindingProbeModules[b], null);
+            if (bindingProbeLayouts[b] != NULL) vkDestroyPipelineLayout(device, bindingProbeLayouts[b], null);
+            if (bindingProbeSetLayouts[b] != NULL) vkDestroyDescriptorSetLayout(device, bindingProbeSetLayouts[b], null);
+            bindingProbePipelines[b] = NULL;
+            bindingProbeModules[b] = NULL;
+            bindingProbeLayouts[b] = NULL;
+            bindingProbeSetLayouts[b] = NULL;
+        }
+        bindingProbesCreated = false;
     }
+
+    private void destroyPushPipeline() {
+        if (pushPipeline != NULL) vkDestroyPipeline(device, pushPipeline, null);
+        if (pushPipelineLayout != NULL) vkDestroyPipelineLayout(device, pushPipelineLayout, null);
+        if (pushSetLayout != NULL) vkDestroyDescriptorSetLayout(device, pushSetLayout, null);
+        pushPipeline = NULL;
+        pushPipelineLayout = NULL;
+        pushSetLayout = NULL;
+    }
+
+    /** Whether the RT pass binds its resources with push descriptors. */
+    public boolean usesPushDescriptors() {
+        return pushPipeline != NULL;
+    }
+
+    // ---- Per-binding probes ----
+    //
+    // Nightly 7 showed that even a trivial shader with the RT descriptor set never
+    // starts. Each probe below has a layout with exactly one of the sixteen RT
+    // bindings, pushed with the very write the RT pass uses, so a probe that does
+    // not run names the broken binding.
+
+    private static final int BINDING_COUNT = 16;
+    /** Frames the per-binding probes run for; the self-check reads them at 90. */
+    private static final long BINDING_PROBE_FRAMES = 240;
+    /** {@code -Ddlss_fg.rt.pushDescriptors=false} keeps the descriptor-set path. */
+    private static final boolean PUSH_DESCRIPTORS_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("dlss_fg.rt.pushDescriptors"));
+    private boolean pushDescriptorsAvailable;
+    private long pushSetLayout = NULL;
+    private long pushPipelineLayout = NULL;
+    private long pushPipeline = NULL;
+    private final long[] bindingProbeSetLayouts = new long[BINDING_COUNT];
+    private final long[] bindingProbeLayouts = new long[BINDING_COUNT];
+    private final long[] bindingProbePipelines = new long[BINDING_COUNT];
+    private final long[] bindingProbeModules = new long[BINDING_COUNT];
+    private boolean bindingProbesCreated;
+    private boolean bindingProbesFailed;
+
+    /** The descriptor type of each RT binding, as {@link #createPipeline} lays them out. */
+    static int bindingType(int binding) {
+        return switch (binding) {
+            case 0 -> VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+            case 2, 10, 11, 13 -> VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            case 3 -> VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            case 9, 12 -> VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            default -> VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        };
+    }
+
+    /** A one-workgroup shader that counts itself and declares only RT binding {@code binding}. */
+    static String bindingProbeSource(int binding) {
+        String declaration;
+        String use;
+        String extension = "";
+        switch (bindingType(binding)) {
+            case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR -> {
+                extension = "#extension GL_EXT_ray_query : require\n";
+                declaration = "layout(set = 0, binding = " + binding + ") uniform accelerationStructureEXT res;";
+                use = "rayQueryEXT q; rayQueryInitializeEXT(q, res, gl_RayFlagsOpaqueEXT, 0xFFu, vec3(0.0), 0.0,"
+                        + " vec3(0.0, -1.0, 0.0), 1.0); rayQueryProceedEXT(q);";
+            }
+            case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER -> {
+                declaration = "layout(std430, set = 0, binding = " + binding + ") buffer Res { uint v[]; } res;";
+                use = "res.v[0] = 0u;";
+            }
+            case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER -> {
+                declaration = "layout(std140, set = 0, binding = " + binding + ") uniform Res { vec4 v; } res;";
+                use = "Counter(push.counter).value[40] = floatBitsToUint(res.v.x);";
+            }
+            case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER -> {
+                declaration = "layout(set = 0, binding = " + binding + ") uniform sampler2D res;";
+                use = "Counter(push.counter).value[41] = floatBitsToUint(textureLod(res, vec2(0.5), 0.0).x);";
+            }
+            default -> {
+                // The formats the RT shader declares (hybrid_ray_query.comp).
+                String format = binding == 1 ? "rgba8" : binding == 8 ? "r16f" : "rgba16f";
+                declaration = "layout(set = 0, binding = " + binding + ", " + format + ") uniform image2D res;";
+                use = "imageStore(res, ivec2(0), vec4(0.0));";
+            }
+        }
+        return "#version 460\n"
+                + "#extension GL_EXT_buffer_reference : require\n"
+                + "#extension GL_EXT_buffer_reference_uvec2 : require\n"
+                + extension
+                + "layout(local_size_x = 1) in;\n"
+                + "layout(buffer_reference, std430, buffer_reference_align = 4) buffer Counter { uint value[]; };\n"
+                + "layout(push_constant) uniform Push { uvec2 counter; uint index; uint mode; } push;\n"
+                + declaration + "\n"
+                + "void main() {\n"
+                + "    atomicAdd(Counter(push.counter).value[push.index], 1u);\n"
+                + "    if (push.mode == 7u) { " + use + " }\n"
+                + "}\n";
+    }
+
+    private void createBindingProbes() {
+        bindingProbesCreated = true;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer result = stack.mallocLong(1);
+            for (int b = 0; b < BINDING_COUNT; b++) {
+                VkDescriptorSetLayoutBinding.Buffer one = VkDescriptorSetLayoutBinding.calloc(1, stack);
+                one.get(0).binding(b).descriptorType(bindingType(b)).descriptorCount(1)
+                        .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+                check(vkCreateDescriptorSetLayout(device, VkDescriptorSetLayoutCreateInfo.calloc(stack)
+                        .sType$Default()
+                        .flags(KHRPushDescriptor.VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR)
+                        .pBindings(one), null, result), "create binding probe set layout " + b);
+                bindingProbeSetLayouts[b] = result.get(0);
+                VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack);
+                range.get(0).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT).offset(0).size(16);
+                check(vkCreatePipelineLayout(device, VkPipelineLayoutCreateInfo.calloc(stack)
+                        .sType$Default().pSetLayouts(stack.longs(bindingProbeSetLayouts[b]))
+                        .pPushConstantRanges(range), null, result), "create binding probe layout " + b);
+                bindingProbeLayouts[b] = result.get(0);
+                long[] module = new long[1];
+                bindingProbePipelines[b] = createProbePipeline(bindingProbeSource(b),
+                        "binding_probe_" + b + ".comp", bindingProbeLayouts[b], module);
+                bindingProbeModules[b] = module[0];
+            }
+        } catch (Throwable error) {
+            bindingProbesFailed = true;
+            logger.warn("RT per-binding probes unavailable: {}", error.toString());
+        }
+    }
+
+    /** One dispatch per RT binding, each with that binding's write pushed alone. */
+    private void recordBindingProbes(VkCommandBuffer commandBuffer, VkWriteDescriptorSet.Buffer writes,
+                                     MemoryStack stack) {
+        if (!pushDescriptorsAvailable || probePipeline == NULL) {
+            return;
+        }
+        if (!bindingProbesCreated) {
+            createBindingProbes();
+        }
+        if (bindingProbesFailed) {
+            return;
+        }
+        for (int b = 0; b < BINDING_COUNT; b++) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, bindingProbePipelines[b]);
+            vkCmdPushConstants(commandBuffer, bindingProbeLayouts[b], VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                    stack.ints((int) probeAddress, (int) (probeAddress >>> 32), 1 + b, 0));
+            KHRPushDescriptor.vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+                    bindingProbeLayouts[b], 0, writes.slice(b, 1));
+            vkCmdDispatch(commandBuffer, 1, 1, 1);
+        }
+    }
+
+    /** Runs of each per-binding probe, or null when they are unavailable. */
+    public long[] bindingProbeDispatches() {
+        if (probeBuffer == null || !bindingProbesCreated || bindingProbesFailed) {
+            return null;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            PointerBuffer mapped = stack.mallocPointer(1);
+            if (vkMapMemory(device, probeBuffer.memory, 0, 4L * (1 + BINDING_COUNT), 0, mapped) != VK_SUCCESS) {
+                return null;
+            }
+            long[] runs = new long[BINDING_COUNT];
+            for (int b = 0; b < BINDING_COUNT; b++) {
+                runs[b] = Integer.toUnsignedLong(MemoryUtil.memGetInt(mapped.get(0) + 4L * (1 + b)));
+            }
+            vkUnmapMemory(device, probeBuffer.memory);
+            return runs;
+        }
+    }
+
 
     /** Frames whose RT pass was recorded (not necessarily finished). */
     public long recordedFrames() {
@@ -456,6 +633,8 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             throw new IllegalArgumentException("Vulkan physical device is unavailable");
         }
         this.physicalDevice = access.dlss_fg$getPhysicalDevice().vkPhysicalDevice();
+        this.pushDescriptorsAvailable = access.dlss_fg$getEnabledExtensions()
+                .contains(KHRPushDescriptor.VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
     }
 
     public boolean render(
@@ -949,6 +1128,28 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             check(vkCreateComputePipelines(
                     device, NULL, pipelineInfo, null, result), "create RT compute pipeline");
             pipeline = result.get(0);
+
+            if (pushDescriptorsAvailable && PUSH_DESCRIPTORS_ENABLED) {
+                try {
+                    layoutInfo.flags(KHRPushDescriptor.VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
+                    check(vkCreateDescriptorSetLayout(device, layoutInfo, null, result),
+                            "create RT push descriptor layout");
+                    pushSetLayout = result.get(0);
+                    check(vkCreatePipelineLayout(device, VkPipelineLayoutCreateInfo.calloc(stack)
+                                    .sType$Default().pSetLayouts(stack.longs(pushSetLayout)), null, result),
+                            "create RT push pipeline layout");
+                    pushPipelineLayout = result.get(0);
+                    pipelineInfo.get(0).layout(pushPipelineLayout);
+                    check(vkCreateComputePipelines(device, NULL, pipelineInfo, null, result),
+                            "create RT push compute pipeline");
+                    pushPipeline = result.get(0);
+                    logger.info("RT pass binds its resources with push descriptors");
+                } catch (RuntimeException error) {
+                    logger.warn("RT push descriptors unavailable, using a descriptor set: {}", error.toString());
+                    destroyPushPipeline();
+                }
+                layoutInfo.flags(0);
+            }
 
             VkSamplerCreateInfo samplerInfo = VkSamplerCreateInfo.calloc(stack)
                     .sType$Default()
@@ -1901,6 +2102,17 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
     /** Rewrites one slot's descriptor set; the caller guarantees it is not in flight. */
     private void updateDescriptors(long depthView, int slot) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            vkUpdateDescriptorSets(device, buildWrites(stack, depthView, slot, descriptorSets[slot]), null);
+        }
+    }
+
+    /**
+     * The sixteen writes of the RT descriptor set for one slot, allocated on
+     * {@code stack}. {@code targetSet} is the set to update, or NULL for push
+     * descriptors, which ignore it.
+     */
+    private VkWriteDescriptorSet.Buffer buildWrites(MemoryStack stack, long depthView, int slot, long targetSet) {
+        {
             VkWriteDescriptorSetAccelerationStructureKHR accelerationInfo =
                     VkWriteDescriptorSetAccelerationStructureKHR.calloc(stack)
                             .sType$Default()
@@ -1964,7 +2176,6 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                         .range(RayTracingFrameData.BYTE_SIZE);
                 VkWriteDescriptorSet.Buffer writes =
                         VkWriteDescriptorSet.calloc(16, stack);
-                long targetSet = descriptorSets[slot];
                 writes.get(0)
                         .sType$Default()
                         .pNext(accelerationInfo.address())
@@ -2046,7 +2257,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                                     .limit(imageIndex + 1));
                 }
                 imageInfo.position(0).limit(8);
-                vkUpdateDescriptorSets(device, writes, null);
+                return writes;
             }
         }
     }
@@ -2179,6 +2390,25 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                     null
             );
             recordLayoutProbes(commandBuffer);
+            if (pushPipeline != NULL || frameNumber < BINDING_PROBE_FRAMES) {
+                VkWriteDescriptorSet.Buffer pushWrites =
+                        buildWrites(stack, descriptorDepthView, frameSlot, NULL);
+                if (frameNumber < BINDING_PROBE_FRAMES) {
+                    recordBindingProbes(commandBuffer, pushWrites, stack);
+                }
+                if (pushPipeline != NULL) {
+                    // Push descriptors bypass vkCmdBindDescriptorSets, where a
+                    // dispatch with the bound RT set never started (nightly 7).
+                    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pushPipeline);
+                    KHRPushDescriptor.vkCmdPushDescriptorSetKHR(commandBuffer,
+                            VK_PIPELINE_BIND_POINT_COMPUTE, pushPipelineLayout, 0, pushWrites);
+                } else {
+                    // The probes' pushes disturbed set 0; bind the RT set again.
+                    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            pipelineLayout, 0, stack.longs(descriptorSet), null);
+                }
+            }
             if (timestampPool != NULL) {
                 vkCmdResetQueryPool(commandBuffer, timestampPool, frameSlot * 2, 2);
                 vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
@@ -2884,6 +3114,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
             timestampPool = NULL;
         }
         java.util.Arrays.fill(slotTimed, false);
+        destroyPushPipeline();
         if (pipeline != NULL) vkDestroyPipeline(device, pipeline, null);
         if (pipelineLayout != NULL) vkDestroyPipelineLayout(device, pipelineLayout, null);
         if (descriptorSetLayout != NULL) {

@@ -165,6 +165,9 @@ public final class HardwareRayTracingManager {
                             currentRenderer.recordedFrames(), currentRenderer.startedWorkgroups(),
                             useOwnCommandBuffer() ? "own command buffer" : "Minecraft's command buffer");
                 }
+                logger.info("RT binding check ({}): {}",
+                        currentRenderer.usesPushDescriptors() ? "push descriptors" : "descriptor set",
+                        describeBindingProbes(currentRenderer.bindingProbeDispatches()));
             }
         }
         if (recorded && !successfulFrameLogged) {
@@ -268,5 +271,26 @@ public final class HardwareRayTracingManager {
 
     public String runtimeStatus() {
         return runtimeStatus;
+    }
+
+    /** "all 16 run" or the bindings whose probe never ran, by name. */
+    static String describeBindingProbes(long[] runs) {
+        if (runs == null) {
+            return "per-binding probes unavailable";
+        }
+        String[] names = {"TLAS", "output image", "section table", "frame uniforms", "noisy color",
+                "diffuse albedo", "specular albedo", "normal/roughness", "specular hit distance",
+                "raster depth", "lights", "sprite table", "block atlas", "exposure buffer",
+                "history 0", "history 1"};
+        StringBuilder dead = new StringBuilder();
+        for (int b = 0; b < runs.length; b++) {
+            if (runs[b] == 0) {
+                if (!dead.isEmpty()) dead.append(", ");
+                dead.append(b).append(" (").append(b < names.length ? names[b] : "?").append(')');
+            }
+        }
+        return dead.isEmpty()
+                ? "all " + runs.length + " bindings run on their own (" + runs[0] + " runs each)"
+                : "binding(s) whose probe never ran: " + dead;
     }
 }

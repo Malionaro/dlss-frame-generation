@@ -22,6 +22,19 @@ class RayQueryShaderCompilerTest {
     }
 
     @Test
+    void compilesEveryPerBindingProbeShader() throws Exception {
+        for (int binding = 0; binding < 16; binding++) {
+            ByteBuffer spirv = RayQueryShaderCompiler.compileSource(
+                    VulkanRayQueryRenderer.bindingProbeSource(binding), "binding_probe_" + binding + ".comp");
+            try {
+                assertEquals(0x07230203, spirv.order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt(0));
+            } finally {
+                MemoryUtil.memFree(spirv);
+            }
+        }
+    }
+
+    @Test
     void compilesDiagnosticProbeShaders() throws Exception {
         for (String source : new String[] {
                 VulkanRayQueryRenderer.PROBE_SHADER,
