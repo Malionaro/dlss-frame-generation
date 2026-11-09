@@ -1242,7 +1242,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                         .dstBinding(7)
                         .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                         .pBufferInfo(parts);
-                vkUpdateDescriptorSets(device, writes, null);
+                vkUpdateDescriptorSets(device, org.malionaro.dlss_frame_generation.client.interop.DescriptorWrites.singleDescriptors(writes), null);
             }
         }
     }
@@ -1365,7 +1365,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                                     .limit(binding + 1));
                 }
                 imageInfo.position(0).limit(2);
-                vkUpdateDescriptorSets(device, writes, null);
+                vkUpdateDescriptorSets(device, org.malionaro.dlss_frame_generation.client.interop.DescriptorWrites.singleDescriptors(writes), null);
             }
         }
     }
@@ -1518,7 +1518,7 @@ public final class VulkanFrameGenerationPipeline implements AutoCloseable {
                         .dstBinding(2)
                         .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
                         .pImageInfo(storage);
-                vkUpdateDescriptorSets(device, writes, null);
+                vkUpdateDescriptorSets(device, org.malionaro.dlss_frame_generation.client.interop.DescriptorWrites.singleDescriptors(writes), null);
             }
         }
     }

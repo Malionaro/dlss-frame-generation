@@ -2332,7 +2332,7 @@ public final class VulkanRayQueryRenderer implements AutoCloseable {
                                     .limit(imageIndex + 1));
                 }
                 imageInfo.position(0).limit(8);
-                return writes;
+                return org.malionaro.dlss_frame_generation.client.interop.DescriptorWrites.singleDescriptors(writes);
             }
         }
     }
